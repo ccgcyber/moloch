@@ -9,18 +9,20 @@
 # * build moloch-capture
 
 
-GLIB=2.52.0
-YARA=1.7
-GEOIP=1.6.9
+GLIB=2.52.3
+YARA=3.6.3
+GEOIP=1.6.11
 PCAP=1.8.1
-CURL=7.53.1
+CURL=7.55.0
 LUA=5.3.4
 DAQ=2.0.6
+NODE=6.11.2
 
 TDIR="/data/moloch"
 DOPFRING=0
 DODAQ=0
 DOCLEAN=0
+DONODE=1
 
 while :
 do
@@ -41,6 +43,10 @@ do
     DOCLEAN=1
     shift
     ;;
+  --nonode)
+    DONODE=0
+    shift
+    ;;
   -*)
     echo "Unknown option '$1'"
     exit 1
@@ -51,23 +57,25 @@ do
   esac
 done
 
+# Check the existance of sudo
+command -v sudo >/dev/null 2>&1 || { echo >&2 "MOLOCH: sudo is required to be installed"; exit 1; }
 
 MAKE=make
 
 # Installing dependencies
 echo "MOLOCH: Installing Dependencies"
 if [ -f "/etc/redhat-release" ]; then
-  sudo yum -y install wget curl pcre pcre-devel pkgconfig flex bison gcc-c++ zlib-devel e2fsprogs-devel openssl-devel file-devel make gettext libuuid-devel perl-JSON bzip2-libs bzip2-devel perl-libwww-perl libpng-devel xz libffi-devel readline-devel
+  sudo yum -y install wget curl pcre pcre-devel pkgconfig flex bison gcc-c++ zlib-devel e2fsprogs-devel openssl-devel file-devel make gettext libuuid-devel perl-JSON bzip2-libs bzip2-devel perl-libwww-perl libpng-devel xz libffi-devel readline-devel libtool libyaml-devel
   if [ $? -ne 0 ]; then
-    echo "MOLOCH - yum failed"
+    echo "MOLOCH: yum failed"
     exit 1
   fi
 fi
 
 if [ -f "/etc/debian_version" ]; then
-  sudo apt-get -y install wget curl libpcre3-dev uuid-dev libmagic-dev pkg-config g++ flex bison zlib1g-dev libffi-dev gettext libgeoip-dev make libjson-perl libbz2-dev libwww-perl libpng-dev xz-utils libffi-dev libssl-dev libreadline-dev
+  sudo apt-get -y install wget curl libpcre3-dev uuid-dev libmagic-dev pkg-config g++ flex bison zlib1g-dev libffi-dev gettext libgeoip-dev make libjson-perl libbz2-dev libwww-perl libpng-dev xz-utils libffi-dev libssl-dev libreadline-dev libtool libyaml-dev dh-autoreconf
   if [ $? -ne 0 ]; then
-    echo "MOLOCH - apt-get failed"
+    echo "MOLOCH: apt-get failed"
     exit 1
   fi
 fi
@@ -86,7 +94,7 @@ if [ ! -d "thirdparty" ]; then
 fi
 cd thirdparty || exit
 
-PWD=`pwd`
+TPWD=`pwd`
 
 # glib
 if [ "$(uname)" = "FreeBSD" ]; then
@@ -112,13 +120,14 @@ else
 fi
 
 # yara
-if [ ! -f "yara-$YARA.tar.gz" ]; then
-  wget https://storage.googleapis.com/google-code-archive-downloads/v2/code.google.com/yara-project/yara-$YARA.tar.gz
+if [ ! -f "yara/yara-$YARA.tar.gz" ]; then
+  mkdir -p yara
+  wget https://github.com/VirusTotal/yara/archive/v$YARA.tar.gz -O yara/yara-$YARA.tar.gz
 fi
 
-if [ ! -f "yara-$YARA/libyara/.libs/libyara.a" ]; then
-  tar zxf yara-$YARA.tar.gz
-  (cd yara-$YARA; ./configure --enable-static; $MAKE)
+if [ ! -f "yara/yara-$YARA/libyara/.libs/libyara.a" ]; then
+  (cd yara ; tar zxf yara-$YARA.tar.gz)
+  (cd yara/yara-$YARA; ./bootstrap.sh ; ./configure --enable-static; $MAKE)
   if [ $? -ne 0 ]; then
     echo "MOLOCH: $MAKE failed"
     exit 1
@@ -130,7 +139,6 @@ fi
 # GeoIP
 if [ ! -f "GeoIP-$GEOIP.tar.gz" ]; then
   wget https://github.com/maxmind/geoip-api-c/releases/download/v$GEOIP/GeoIP-$GEOIP.tar.gz
-  wget http://www.maxmind.com/download/geoip/api/c/GeoIP-$GEOIP.tar.gz
 fi
 
 if [ ! -f "GeoIP-$GEOIP/libGeoIP/.libs/libGeoIP.a" ]; then
@@ -166,7 +174,7 @@ if [ ! -f "libpcap-$PCAP/libpcap.a" ]; then
 else
   echo "MOLOCH: NOT rebuilding libpcap";
 fi
-PCAPDIR=$PWD/libpcap-$PCAP
+PCAPDIR=$TPWD/libpcap-$PCAP
 PCAPBUILD="--with-libpcap=$PCAPDIR"
 
 # curl
@@ -209,7 +217,7 @@ if [ $DODAQ -eq 1 ]; then
 
   if [ ! -f "daq-$DAQ/api/.libs/libdaq_static.a" ]; then
     tar zxf daq-$DAQ.tar.gz
-    ( cd daq-$DAQ; ./configure --with-libpcap-includes=$PWD/libpcap-$PCAP/ --with-libpcap-libraries=$PWD/libpcap-$PCAP; make; sudo make install)
+    ( cd daq-$DAQ; ./configure --with-libpcap-includes=$TPWD/libpcap-$PCAP/ --with-libpcap-libraries=$TPWD/libpcap-$PCAP; make; sudo make install)
     if [ $? -ne 0 ]; then
       echo "MOLOCH: $MAKE failed"
       exit 1
@@ -223,8 +231,8 @@ fi
 # Now build moloch
 echo "MOLOCH: Building capture"
 cd ..
-echo "./configure --prefix=$TDIR $PCAPBUILD --with-yara=thirdparty/yara-$YARA --with-GeoIP=thirdparty/GeoIP-$GEOIP $WITHGLIB --with-curl=thirdparty/curl-$CURL --with-lua=thirdparty/lua-$LUA"
-./configure --prefix=$TDIR $PCAPBUILD --with-yara=thirdparty/yara-$YARA --with-GeoIP=thirdparty/GeoIP-$GEOIP $WITHGLIB --with-curl=thirdparty/curl-$CURL --with-lua=thirdparty/lua-$LUA
+echo "./configure --prefix=$TDIR $PCAPBUILD --with-yara=thirdparty/yara/yara-$YARA --with-GeoIP=thirdparty/GeoIP-$GEOIP $WITHGLIB --with-curl=thirdparty/curl-$CURL --with-lua=thirdparty/lua-$LUA"
+./configure --prefix=$TDIR $PCAPBUILD --with-yara=thirdparty/yara/yara-$YARA --with-GeoIP=thirdparty/GeoIP-$GEOIP $WITHGLIB --with-curl=thirdparty/curl-$CURL --with-lua=thirdparty/lua-$LUA
 
 if [ $DOCLEAN -eq 1 ]; then
     $MAKE clean
@@ -236,8 +244,10 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
+# Build plugins
 (cd capture/plugins/lua; $MAKE)
-if [ $DOPFRING -eq 1 ]; then
+
+if [ $DOPFRING -eq 1 ] || [ -f "/usr/local/lib/libpfring.so" ]; then
     (cd capture/plugins/pfring; $MAKE)
 fi
 
@@ -249,11 +259,15 @@ if [ -f "/opt/snf/lib/libsnf.so" ]; then
     (cd capture/plugins/snf; $MAKE)
 fi
 
-if [ -f "/usr/local/lib/libpfring.so" ]; then
-    (cd capture/plugins/pfring; $MAKE)
+if [ $DONODE -eq 1 ] && [ ! -f "$TDIR/bin/node" ]; then
+    echo "MOLOCH: Installing node $NODE"
+    if [ ! -f node-v$NODE-linux-x64.tar.xz ] ; then
+        wget https://nodejs.org/download/release/v$NODE/node-v$NODE-linux-x64.tar.xz
+    fi
+    sudo tar xfC node-v$NODE-linux-x64.tar.xz $TDIR
+    (cd $TDIR/bin ; sudo ln -s ../node-v$NODE-linux-x64/bin/* .)
 fi
 
-
-echo "Now type 'sudo make install' and 'sudo make config'"
+echo "MOLOCH: Now type 'sudo make install' and 'sudo make config'"
 
 exit 0

@@ -42,6 +42,7 @@ unsigned char          moloch_char_to_hexstr[256][3];
 unsigned char          moloch_hex_to_char[256][256];
 
 extern MolochWriterQueueLength moloch_writer_queue_length;
+extern MolochPcapFileHdr_t     pcapFileHeader;
 
 MOLOCH_LOCK_DEFINE(LOG);
 
@@ -62,6 +63,7 @@ static GOptionEntry entries[] =
     { "pcapfile",  'r',                    0, G_OPTION_ARG_FILENAME_ARRAY, &config.pcapReadFiles, "Offline pcap file", NULL },
     { "pcapdir",   'R',                    0, G_OPTION_ARG_FILENAME_ARRAY, &config.pcapReadDirs,  "Offline pcap directory, all *.pcap files will be processed", NULL },
     { "monitor",   'm',                    0, G_OPTION_ARG_NONE,           &config.pcapMonitor,   "Used with -R option monitors the directory for closed files", NULL },
+    { "packetcnt",   0,                    0, G_OPTION_ARG_INT,            &config.pktsToRead,    "Number of packets to read from each offline file", NULL},
     { "delete",      0,                    0, G_OPTION_ARG_NONE,           &config.pcapDelete,    "In offline mode delete files once processed, requires --copy", NULL },
     { "skip",      's',                    0, G_OPTION_ARG_NONE,           &config.pcapSkip,      "Used with -R option and without --copy, skip files already processed", NULL },
     { "recursive",   0,                    0, G_OPTION_ARG_NONE,           &config.pcapRecursive, "When in offline pcap directory mode, recurse sub directories", NULL },
@@ -419,13 +421,11 @@ void moloch_drop_privileges()
         struct group   *grp;
         grp = getgrnam(config.dropGroup);
         if (!grp) {
-            LOG("ERROR: Group '%s' not found", config.dropGroup);
-            exit(1);
+            LOGEXIT("ERROR: Group '%s' not found", config.dropGroup);
         }
 
         if (setgid(grp->gr_gid) != 0) {
-            LOG("ERROR: Couldn't change group - %s", strerror(errno));
-            exit(1);
+            LOGEXIT("ERROR: Couldn't change group - %s", strerror(errno));
         }
     }
 
@@ -433,13 +433,11 @@ void moloch_drop_privileges()
         struct passwd   *usr;
         usr = getpwnam(config.dropUser);
         if (!usr) {
-            LOG("ERROR: User '%s' not found", config.dropUser);
-            exit(1);
+            LOGEXIT("ERROR: User '%s' not found", config.dropUser);
         }
 
         if (setuid(usr->pw_uid) != 0) {
-            LOG("ERROR: Couldn't change user - %s", strerror(errno));
-            exit(1);
+            LOGEXIT("ERROR: Couldn't change user - %s", strerror(errno));
         }
     }
 
@@ -453,8 +451,7 @@ int                       canQuitFuncsNum;
 void moloch_add_can_quit (MolochCanQuitFunc func, const char *name)
 {
     if (canQuitFuncsNum >= 20) {
-        LOG("Can't add canQuitFunc");
-        exit(1);
+        LOGEXIT("Can't add canQuitFunc");
         return;
     }
     canQuitFuncs[canQuitFuncsNum] = func;
@@ -469,11 +466,12 @@ void moloch_add_can_quit (MolochCanQuitFunc func, const char *name)
  */
 gboolean moloch_quit_gfunc (gpointer UNUSED(user_data))
 {
-static gboolean firstRun   = TRUE;
+static gboolean readerExit   = TRUE;
+static gboolean writerExit   = TRUE;
 
-// On the first run shutdown reader and stuff
-    if (firstRun) {
-        firstRun = FALSE;
+// On the first run shutdown reader and sessions
+    if (readerExit) {
+        readerExit = FALSE;
         if (moloch_reader_stop)
             moloch_reader_stop();
         moloch_readers_exit();
@@ -482,6 +480,7 @@ static gboolean firstRun   = TRUE;
         return TRUE;
     }
 
+// Wait for all the can quits to signal all clear
     int i;
     for (i = 0; i < canQuitFuncsNum; i++) {
         int val = canQuitFuncs[i]();
@@ -493,6 +492,16 @@ static gboolean firstRun   = TRUE;
         }
     }
 
+// Once all clear stop the writer and wait for all clears again
+    if (writerExit) {
+        writerExit = FALSE;
+        if (!config.dryRun && config.copyPcap) {
+            moloch_writer_exit();
+            return TRUE;
+        }
+    }
+
+// Can quit the main loop now
     g_main_loop_quit(mainLoop);
     return FALSE;
 }
@@ -531,6 +540,8 @@ gboolean moloch_ready_gfunc (gpointer UNUSED(user_data))
         }
     }
     moloch_reader_start();
+    if (!config.pcapReadOffline && (pcapFileHeader.linktype == 0 || pcapFileHeader.snaplen == 0))
+        LOGEXIT("Reader didn't call moloch_packet_set_linksnap");
     return FALSE;
 }
 /******************************************************************************/
@@ -631,6 +642,7 @@ int main(int argc, char **argv)
     moloch_parsers_init();
     moloch_session_init();
     moloch_plugins_load(config.plugins);
+    moloch_rules_init();
     g_timeout_add(1, moloch_ready_gfunc, 0);
 
     g_main_loop_run(mainLoop);
@@ -638,18 +650,14 @@ int main(int argc, char **argv)
     LOG("Final cleanup");
     moloch_plugins_exit();
     moloch_parsers_exit();
-    moloch_yara_exit();
     moloch_db_exit();
     moloch_http_exit();
     moloch_field_exit();
     moloch_config_exit();
+    moloch_rules_exit();
+    moloch_yara_exit();
 
     g_main_loop_unref(mainLoop);
-
-    if (!config.dryRun && config.copyPcap) {
-        moloch_writer_exit();
-    }
-
 
     free_args();
     exit(0);

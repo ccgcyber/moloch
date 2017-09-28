@@ -53,9 +53,14 @@
       this.dataInterval   = this.$routeParams.interval ||'5000';
       this.graphsOpen     = true;
       this.nodeStatsOpen  = true;
-      this.selectedTab    = 0; // select the first tab
+      this.selectedTab    = 0; // select the first tab by default
 
       this.expandedNodeStats = {};
+
+      // open up requested tab
+      if (this.$routeParams.statsTab) {
+        this.selectedTab = parseInt(this.$routeParams.statsTab) || 0;
+      }
 
       this.UserService.getSettings()
         .then((response) => { this.settings = response; })
@@ -63,14 +68,14 @@
 
       // build colors array from css variables
       let styles = window.getComputedStyle(document.body);
-      let primaryLighter  = styles.getPropertyValue('--color-primary-lighter').trim();
-      let primaryLight    = styles.getPropertyValue('--color-primary-light').trim();
-      let primary         = styles.getPropertyValue('--color-primary').trim();
-      let primaryDark     = styles.getPropertyValue('--color-primary-dark').trim();
-      let secondaryLighter= styles.getPropertyValue('--color-tertiary-lighter').trim();
-      let secondaryLight  = styles.getPropertyValue('--color-tertiary-light').trim();
-      let secondary       = styles.getPropertyValue('--color-tertiary').trim();
-      let secondaryDark   = styles.getPropertyValue('--color-tertiary-dark').trim();
+      let primaryLighter  = styles.getPropertyValue('--color-primary-light').trim();
+      let primaryLight    = styles.getPropertyValue('--color-primary').trim();
+      let primary         = styles.getPropertyValue('--color-primary-dark').trim();
+      let primaryDark     = styles.getPropertyValue('--color-primary-darker').trim();
+      let secondaryLighter= styles.getPropertyValue('--color-tertiary-light').trim();
+      let secondaryLight  = styles.getPropertyValue('--color-tertiary').trim();
+      let secondary       = styles.getPropertyValue('--color-tertiary-dark').trim();
+      let secondaryDark   = styles.getPropertyValue('--color-tertiary-darker').trim();
       this.colors = [primaryDark, primary, primaryLight, primaryLighter,
                      secondaryLighter, secondaryLight, secondary, secondaryDark];
 
@@ -217,13 +222,14 @@
      */
     selectTab(index) {
       this.selectedTab = index;
+      this.$location.search('statsTab', index);
 
       if (index !== 0) { // not on the nodes tab
         this.$interval.cancel(reqPromise); // cancel the node req interval
         reqPromise = null;
         // stop the graph from loading data
         if (this.context) { this.context.stop(); }
-      } else if (index === 0 && initialized) {
+      } else if (index === 0) {
         // on the nodes tab and the graph has already been initialized
         initialized = false; // reinitialize the graph
         this.loadData();
@@ -258,6 +264,8 @@
           var columnNames = this.columns.map(function(item) {return item.field || item.sort;});
           columnNames.push('memoryP');
           columnNames.push('freeSpaceP');
+
+          if (!stats) { return; }
 
           for (var i = 3; i < columnNames.length; i++) {
             var columnName = columnNames[i];
@@ -315,7 +323,17 @@
 
 
       context.on('focus', function(i) {
-        d3.selectAll('.value').style('right', i === null ? null : context.size() - i + 'px');
+        d3.selectAll('#statsGraph .value').style('right', i === null ? null : context.size() - i + 'px');
+        let panel = $('#statsGraphPanel .panel-body');
+        if (panel && panel.length) {
+          let scrollPx = panel[0].scrollLeft;
+          if (scrollPx) {
+            scrollPx = scrollPx - 12;
+            d3.selectAll('#statsGraph .rule').style('left', '-' + scrollPx + 'px');
+          } else {
+            d3.selectAll('#statsGraph .rule').style('left', '12px');
+          }
+        }
       });
 
       $('#statsGraph').empty();
@@ -408,7 +426,17 @@
       });
 
       dcontext.on('focus', function(i) {
-        d3.selectAll('.value').style('right', i === null ? null : dcontext.size() - i + 'px');
+        d3.selectAll('#statsGraph-' + id + ' .value').style('right', i === null ? null : dcontext.size() - i + 'px');
+        let panel = $('#nodeStatsPanel .panel-body');
+        if (panel && panel.length) {
+          let scrollPx = panel[0].scrollLeft;
+          if (scrollPx) {
+            scrollPx = scrollPx - 16;
+            d3.selectAll('#statsGraph-' + id + ' .rule').style('left', '-' + scrollPx + 'px');
+          } else {
+            d3.selectAll('#statsGraph-' + id + ' .rule').style('left', '16px');
+          }
+        }
       });
     }
 

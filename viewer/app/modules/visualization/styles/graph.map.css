@@ -1,7 +1,11 @@
 moloch-graph-map .inline-graph {
   position: relative;
   display : inline-block;
-  width   : calc(100% - 420px);
+  width   : calc(100% - 425px);
+}
+moloch-graph-map .whole-graph {
+  position: relative;
+  width   : 99%;
 }
 
 moloch-graph-map .inline-map {
@@ -16,16 +20,15 @@ moloch-graph-map .btn-fw {
 }
 
 moloch-graph-map .map-btn {
-  width           : 40px;
   display         : block;
   position        : absolute;
-  top             : 115px;
-  right           : 0;
+  top             : 157px;
+  right           : 8px;
   z-index         : 997;
   margin-top      : 6px;
   overflow        : hidden;
-  padding         : 2px 10px 4px 12px;
-  border-radius   : 4px 0 0 4px;
+  padding         : 2px 8px 3px 8px;;
+  border-radius   : 4px;
   cursor          : pointer;
   background-color: var(--color-primary);
   color           : #FFFFFF;
@@ -56,5 +59,19 @@ moloch-graph-map .src-dst-btns {
 moloch-graph-map.expanded .src-dst-btns,
 moloch-graph-map.expanded .btn-close-map,
 moloch-graph-map.expanded .btn-expand-map {
-  z-index: 999;
+  z-index : 999;
+  position: fixed;
+}
+
+moloch-graph-map.expanded .btn-close-map {
+  top   : 168px;
+  right : 17px;
+}
+moloch-graph-map.expanded .btn-expand-map {
+  top   : 192px;
+  right : 17px;
+}
+moloch-graph-map.expanded .src-dst-btns {
+  top   : 220px;
+  right : 17px;
 }

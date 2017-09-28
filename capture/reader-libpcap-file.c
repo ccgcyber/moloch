@@ -1,7 +1,7 @@
 /******************************************************************************/
 /* reader-libpcap-file.c  -- Reader using libpcap to a file
  *
- * Copyright 2012-2016 AOL Inc. All rights reserved.
+ * Copyright 2012-2017 AOL Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this Software except in compliance with the License.
@@ -26,18 +26,18 @@ extern MolochPcapFileHdr_t   pcapFileHeader;
 
 extern MolochConfig_t        config;
 
-static pcap_t               *pcap;
-static FILE                 *offlineFile = 0;
+LOCAL  pcap_t               *pcap;
+LOCAL  FILE                 *offlineFile = 0;
 
 extern void                 *esServer;
 LOCAL  MolochStringHead_t    monitorQ;
 
 LOCAL  char                  offlinePcapFilename[PATH_MAX+1];
 LOCAL  char                 *offlinePcapName;
+LOCAL  int                   pktsToRead;
 
 void reader_libpcapfile_opened();
 
-LOCAL struct bpf_program   *bpf_programs[MOLOCH_FILTER_MAX];
 LOCAL MolochPacketBatch_t   batch;
 
 #ifdef HAVE_SYS_INOTIFY_H
@@ -187,14 +187,14 @@ int reader_libpcapfile_next()
 
         LOG ("Processing %s", fullfilename);
         pcap = pcap_open_offline(fullfilename, errbuf);
+        pktsToRead = config.pktsToRead;
 
         if (!pcap) {
             LOG("Couldn't process '%s' error '%s'", fullfilename, errbuf);
             return reader_libpcapfile_next();
         }
         if (!realpath(fullfilename, offlinePcapFilename)) {
-            LOG("ERROR - pcap open failed - Couldn't realpath file: '%s' with %d", fullfilename, errno);
-            exit(1);
+            LOGEXIT("ERROR - pcap open failed - Couldn't realpath file: '%s' with %d", fullfilename, errno);
         }
 
         reader_libpcapfile_opened();
@@ -226,8 +226,7 @@ filesDone:
         if (!pcapGDir[pcapGDirLevel]) {
             pcapGDir[pcapGDirLevel] = g_dir_open(pcapBase[pcapGDirLevel], 0, &error);
             if (error) {
-                LOG("ERROR: Couldn't open pcap directory: Receive Error: %s", error->message);
-                exit(0);
+                LOGEXIT("ERROR: Couldn't open pcap directory: Receive Error: %s", error->message);
             }
         }
         const gchar *filename;
@@ -367,10 +366,9 @@ void reader_libpcapfile_pcap_cb(u_char *UNUSED(user), const struct pcap_pkthdr *
 
     if (unlikely(h->caplen != h->len)) {
         if (!config.readTruncatedPackets) {
-            LOG("ERROR - Moloch requires full packet captures caplen: %d pktlen: %d. "
+            LOGEXIT("ERROR - Moloch requires full packet captures caplen: %d pktlen: %d. "
                 "If using tcpdump use the \"-s0\" option, or set readTruncatedPackets in ini file",
                 h->caplen, h->len);
-            exit (0);
         }
         packet->pktlen     = h->caplen;
     } else {
@@ -401,8 +399,19 @@ gboolean reader_libpcapfile_read()
         return TRUE;
     }
 
+    int r;
     moloch_packet_batch_init(&batch);
-    int r = pcap_dispatch(pcap, 5000, reader_libpcapfile_pcap_cb, NULL);
+    if (pktsToRead > 0) {
+        r = pcap_dispatch(pcap, MIN(pktsToRead, 5000), reader_libpcapfile_pcap_cb, NULL);
+
+        if (r > 0)
+            pktsToRead -= r;
+
+        if (pktsToRead == 0)
+            r = 0;
+    } else {
+        r = pcap_dispatch(pcap, 5000, reader_libpcapfile_pcap_cb, NULL);
+    }
     moloch_packet_batch_flush(&batch);
 
     // Some kind of failure, move to the next file or quit
@@ -429,27 +438,11 @@ gboolean reader_libpcapfile_read()
     return TRUE;
 }
 /******************************************************************************/
-int reader_libpcapfile_should_filter(const MolochPacket_t *packet, enum MolochFilterType *type, int *index)
-{
-    int t, i;
-    for (t = 0; t < MOLOCH_FILTER_MAX; t++) {
-        for (i = 0; i < config.bpfsNum[t]; i++) {
-            if (bpf_filter(bpf_programs[t][i].bf_insns, packet->pkt, packet->pktlen, packet->pktlen)) {
-                *type = t;
-                *index = i;
-                return 1;
-            }
-        }
-    }
-    return 0;
-}
-/******************************************************************************/
 void reader_libpcapfile_opened()
 {
     int dlt_to_linktype(int dlt);
 
-    pcapFileHeader.linktype = dlt_to_linktype(pcap_datalink(pcap)) | pcap_datalink_ext(pcap);
-    pcapFileHeader.snaplen = pcap_snapshot(pcap);
+    moloch_packet_set_linksnap(dlt_to_linktype(pcap_datalink(pcap)) | pcap_datalink_ext(pcap), pcap_snapshot(pcap));
 
     offlineFile = pcap_file(pcap);
 
@@ -457,37 +450,11 @@ void reader_libpcapfile_opened()
         struct bpf_program   bpf;
 
         if (pcap_compile(pcap, &bpf, config.bpf, 1, PCAP_NETMASK_UNKNOWN) == -1) {
-            LOG("ERROR - Couldn't compile filter: '%s' with %s", config.bpf, pcap_geterr(pcap));
-            exit(1);
+            LOGEXIT("ERROR - Couldn't compile filter: '%s' with %s", config.bpf, pcap_geterr(pcap));
         }
 
 	if (pcap_setfilter(pcap, &bpf) == -1) {
-            LOG("ERROR - Couldn't set filter: '%s' with %s", config.bpf, pcap_geterr(pcap));
-            exit(1);
-        }
-    }
-
-    int t;
-    for (t = 0; t < MOLOCH_FILTER_MAX; t++) {
-        if (pcapFileHeader.linktype == 239) {
-            continue;
-        }
-        if (config.bpfsNum[t]) {
-            int i;
-            if (bpf_programs[t]) {
-                for (i = 0; i < config.bpfsNum[t]; i++) {
-                    pcap_freecode(&bpf_programs[t][i]);
-                }
-            } else {
-                bpf_programs[t] = malloc(config.bpfsNum[t]*sizeof(struct bpf_program));
-            }
-            for (i = 0; i < config.bpfsNum[t]; i++) {
-                if (pcap_compile(pcap, &bpf_programs[t][i], config.bpfs[t][i], 1, PCAP_NETMASK_UNKNOWN) == -1) {
-                    LOG("ERROR - Couldn't compile filter: '%s' with %s", config.bpfs[t][i], pcap_geterr(pcap));
-                    exit(1);
-                }
-            }
-            moloch_reader_should_filter = reader_libpcapfile_should_filter;
+            LOGEXIT("ERROR - Couldn't set filter: '%s' with %s", config.bpf, pcap_geterr(pcap));
         }
     }
 

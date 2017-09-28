@@ -41,6 +41,8 @@
 # 32 - Require ES >= 2.4 or ES >= 5.1.2, tags_v3, queries_v1, fields_v1, users_v4, files_v4, sequence_v1
 # 33 - user columnConfigs
 # 34 - stats_v2
+# 35 - user spiviewFieldConfigs
+# 36 - user action history
 
 use HTTP::Request::Common;
 use LWP::UserAgent;
@@ -49,12 +51,14 @@ use Data::Dumper;
 use POSIX;
 use strict;
 
-my $VERSION = 34;
+my $VERSION = 36;
 my $verbose = 0;
 my $PREFIX = "";
 my $NOCHANGES = 0;
 my $SHARDS = -1;
 my $REPLICAS = -1;
+my $HISTORY = 13;
+my $NOOPTIMIZE = 0;
 
 ################################################################################
 sub MIN ($$) { $_[$_[0] > $_[1]] }
@@ -100,6 +104,8 @@ sub showHelp($)
     print "       type                    - Same as rotateIndex in ini file = hourly,daily,weekly,monthly\n";
     print "       num                     - number of indexes to keep\n";
     print "    --replicas <num>           - Number of replicas for older sessions indices, default 0\n";
+    print "    --nooptimize               - Do not optimize session indexes during this operation\n";
+    print "    --history <num>            - Number of weeks of history to keep, by default 13\n";
     print "  field disable <exp>          - disable a field from being indexed\n";
     print "  field enable <exp>           - enable a field from being indexed\n";
     exit 1;
@@ -1660,6 +1666,80 @@ my $shardsPerNode = ceil($SHARDS * ($REPLICAS+1) / $main::numberOfNodes);
 }
 
 ################################################################################
+sub historyUpdate
+{
+    my $mapping = '
+{
+  "history": {
+    "_all": {"enabled": false},
+    "_source": {"enabled": true},
+    "dynamic": "strict",
+    "properties": {
+      "uiPage": {
+        "type": "string",
+        "index": "not_analyzed"
+      },
+      "userId": {
+        "type": "string",
+        "index": "not_analyzed"
+      },
+      "method": {
+        "type": "string",
+        "index": "not_analyzed"
+      },
+      "pathname": {
+        "type": "string",
+        "index": "not_analyzed"
+      },
+      "expression": {
+        "type": "string",
+        "index": "not_analyzed"
+      },
+      "view": {
+        "type": "object",
+        "dynamic": "true"
+      },
+      "timestamp": {
+        "type": "date"
+      },
+      "range": {
+        "type": "integer"
+      },
+      "query": {
+        "type": "string",
+        "index": "not_analyzed"
+      }
+    }
+  }
+}';
+
+ my $template = '
+{
+  "template": "' . $PREFIX . 'history_v1-*",
+  "settings": {
+      "number_of_shards": 2,
+      "number_of_replicas": 0,
+      "auto_expand_replicas": "0-1"
+    },
+  "mappings":' . $mapping . '
+}';
+
+print "Creating history template\n" if ($verbose > 0);
+esPut("/_template/${PREFIX}history_v1_template", $template);
+
+my $indices = esGet("/${PREFIX}history_v1-*/_aliases", 1);
+
+print "Updating history mapping for ", scalar(keys %{$indices}), " indices\n" if (scalar(keys %{$indices}) != 0);
+foreach my $i (keys %{$indices}) {
+    progress("$i ");
+    esPut("/$i/history/_mapping", $mapping, 1);
+}
+
+print "\n";
+}
+################################################################################
+
+################################################################################
 sub usersCreate
 {
     my $settings = '
@@ -1732,6 +1812,10 @@ sub usersUpdate
         "type": "object",
         "dynamic": "true"
       },
+      "spiviewFieldConfigs": {
+        "type": "object",
+        "dynamic": "true"
+      },
       "tableStates": {
         "type": "object",
         "dynamic": "true"
@@ -1783,23 +1867,23 @@ sub createNewAliasesFromOld
 ################################################################################
 sub time2index
 {
-my($type, $t) = @_;
+my($type, $prefix, $t) = @_;
 
     my @t = gmtime($t);
     if ($type eq "hourly") {
-        return sprintf("${PREFIX}sessions-%02d%02d%02dh%02d", $t[5] % 100, $t[4]+1, $t[3], $t[2]);
+        return sprintf("${PREFIX}${prefix}%02d%02d%02dh%02d", $t[5] % 100, $t[4]+1, $t[3], $t[2]);
     }
 
     if ($type eq "daily") {
-        return sprintf("${PREFIX}sessions-%02d%02d%02d", $t[5] % 100, $t[4]+1, $t[3]);
+        return sprintf("${PREFIX}${prefix}%02d%02d%02d", $t[5] % 100, $t[4]+1, $t[3]);
     }
 
     if ($type eq "weekly") {
-        return sprintf("${PREFIX}sessions-%02dw%02d", $t[5] % 100, int($t[7]/7));
+        return sprintf("${PREFIX}${prefix}%02dw%02d", $t[5] % 100, int($t[7]/7));
     }
 
     if ($type eq "monthly") {
-        return sprintf("${PREFIX}sessions-%02dm%02d", $t[5] % 100, $t[4]+1);
+        return sprintf("${PREFIX}${prefix}%02dm%02d", $t[5] % 100, $t[4]+1);
     }
 }
 
@@ -1978,6 +2062,11 @@ sub parseArgs {
         } elsif ($ARGV[$pos] eq "--replicas") {
             $pos++;
             $REPLICAS = int($ARGV[$pos]);
+        } elsif ($ARGV[$pos] eq "--history") {
+            $pos++;
+            $HISTORY = int($ARGV[$pos]);
+        } elsif ($ARGV[$pos] eq "--nooptimize") {
+	    $NOOPTIMIZE = 1;
         } else {
             print "Unknown option '", $ARGV[$pos], "'\n";
         }
@@ -2034,10 +2123,12 @@ if ($ARGV[1] =~ /^users-?import$/) {
     exit 0;
 } elsif ($ARGV[1] =~ /^(rotate|expire)$/) {
     showHelp("Invalid expire <type>") if ($ARGV[2] !~ /^(hourly|daily|weekly|monthly)$/);
+
+    # First handle sessions expire
     my $indices = esGet("/${PREFIX}sessions-*/_aliases", 1);
 
     my $endTime = time();
-    my $endTimeIndex = time2index($ARGV[2], $endTime);
+    my $endTimeIndex = time2index($ARGV[2], "sessions-", $endTime);
     delete $indices->{$endTimeIndex};
 
     my @startTime = gmtime;
@@ -2056,8 +2147,8 @@ if ($ARGV[1] =~ /^users-?import$/) {
     my $optimizecnt = 0;
     my $startTime = mktime(@startTime);
     while ($startTime <= $endTime) {
-        my $iname = time2index($ARGV[2], $startTime);
-        if (exists $indices->{$iname}) {
+        my $iname = time2index($ARGV[2], "sessions-", $startTime);
+        if (exists $indices->{$iname} && $indices->{$iname}->{OPTIMIZEIT} != 1) {
             $indices->{$iname}->{OPTIMIZEIT} = 1;
             $optimizecnt++;
         }
@@ -2070,16 +2161,46 @@ if ($ARGV[1] =~ /^users-?import$/) {
 
     dbESVersion();
     $main::userAgent->timeout(3600);
-    optimizeOther();
-    printf ("Expiring %s indices, optimizing %s\n", commify(scalar(keys %{$indices}) - $optimizecnt), commify($optimizecnt));
+    optimizeOther() unless $NOOPTIMIZE ;
+    printf ("Expiring %s sessions indices, %s optimizing %s\n", commify(scalar(keys %{$indices}) - $optimizecnt), $NOOPTIMIZE?"Not":"", commify($optimizecnt));
     foreach my $i (sort (keys %{$indices})) {
         progress("$i ");
         if (exists $indices->{$i}->{OPTIMIZEIT}) {
-            esGet("/$i/$main::OPTIMIZE?max_num_segments=4", 1);
+            esGet("/$i/$main::OPTIMIZE?max_num_segments=4", 1) unless $NOOPTIMIZE ;
             if ($REPLICAS != -1) {
                 esGet("/$i/_flush", 1);
                 esPut("/$i/_settings", '{index: {"number_of_replicas":' . $REPLICAS . '}}', 1);
             }
+        } else {
+            esDelete("/$i", 1);
+        }
+    }
+
+    # Now figure out history expire
+    my $hindices = esGet("/${PREFIX}history_v1-*/_aliases", 1);
+
+    $endTimeIndex = time2index("weekly", "history_v1-", $endTime);
+    delete $hindices->{$endTimeIndex};
+
+    @startTime = gmtime;
+    $startTime[3] -= 7 * $HISTORY;
+
+    $optimizecnt = 0;
+    $startTime = mktime(@startTime);
+    while ($startTime <= $endTime) {
+        my $iname = time2index("weekly", "history_v1-", $startTime);
+        if (exists $hindices->{$iname} && $hindices->{$iname}->{OPTIMIZEIT} != 1) {
+            $hindices->{$iname}->{OPTIMIZEIT} = 1;
+            $optimizecnt++;
+        }
+        $startTime += 24*60*60;
+    }
+
+    printf ("Expiring %s history indices, %s optimizing %s\n", commify(scalar(keys %{$hindices}) - $optimizecnt), $NOOPTIMIZE?"Not":"", commify($optimizecnt));
+    foreach my $i (sort (keys %{$hindices})) {
+        progress("$i ");
+        if (exists $hindices->{$i}->{OPTIMIZEIT}) {
+            esGet("/$i/$main::OPTIMIZE?max_num_segments=1", 1) unless $NOOPTIMIZE ;
         } else {
             esDelete("/$i", 1);
         }
@@ -2104,6 +2225,7 @@ if ($ARGV[1] =~ /^users-?import$/) {
     my $esversion = dbESVersion();
     my $nodes = esGet("/_nodes");
     my $status = esGet("/_stats", 1);
+
     my $sessions = 0;
     my $sessionsBytes = 0;
     my @sessions = grep /^${PREFIX}sessions-/, keys %{$status->{indices}};
@@ -2111,6 +2233,15 @@ if ($ARGV[1] =~ /^users-?import$/) {
         next if ($index !~ /^${PREFIX}sessions-/);
         $sessions += $status->{indices}->{$index}->{primaries}->{docs}->{count};
         $sessionsBytes += $status->{indices}->{$index}->{primaries}->{store}->{size_in_bytes};
+    }
+
+    my $historys = 0;
+    my $historysBytes = 0;
+    my @historys = grep /^${PREFIX}history_v1-/, keys %{$status->{indices}};
+    foreach my $index (@historys) {
+        next if ($index !~ /^${PREFIX}history_v1-/);
+        $historys += $status->{indices}->{$index}->{primaries}->{docs}->{count};
+        $historysBytes += $status->{indices}->{$index}->{primaries}->{store}->{size_in_bytes};
     }
 
     sub printIndex {
@@ -2128,6 +2259,12 @@ if ($ARGV[1] =~ /^users-?import$/) {
     if (scalar(@sessions) > 0) {
         printf "Session Density:     %10s (%s bytes)\n", commify(int($sessions/(scalar(keys %{$nodes->{nodes}})*scalar(@sessions)))),
                                                        commify(int($sessionsBytes/(scalar(keys %{$nodes->{nodes}})*scalar(@sessions))));
+    }
+    printf "History Indices:     %10s\n", commify(scalar(@historys));
+    printf "Histories:           %10s (%s bytes)\n", commify($historys), commify($historysBytes);
+    if (scalar(@historys) > 0) {
+        printf "History Density:     %10s (%s bytes)\n", commify(int($historys/(scalar(keys %{$nodes->{nodes}})*scalar(@historys)))),
+                                                       commify(int($historysBytes/(scalar(keys %{$nodes->{nodes}})*scalar(@historys))));
     }
     printIndex($status, "files_v4");
     printIndex($status, "files_v3");
@@ -2351,6 +2488,7 @@ if ($ARGV[1] =~ /(init|wipe)/) {
     esDelete("/_template/${PREFIX}sessions_template", 1);
     esDelete("/${PREFIX}fields", 1);
     esDelete("/${PREFIX}fields_v1", 1);
+    esDelete("/${PREFIX}history_v1-*", 1);
     if ($ARGV[1] =~ "init") {
         esDelete("/${PREFIX}users_v3", 1);
         esDelete("/${PREFIX}users_v4", 1);
@@ -2370,6 +2508,7 @@ if ($ARGV[1] =~ /(init|wipe)/) {
     dstatsCreate();
     sessionsUpdate();
     fieldsCreate();
+    historyUpdate();
     if ($ARGV[1] =~ "init") {
         usersCreate();
         queriesCreate();
@@ -2426,14 +2565,18 @@ if ($ARGV[1] =~ /(init|wipe)/) {
         }
 
         esDelete("/_template/${PREFIX}template_1", 1);
+        historyUpdate();
         sessionsUpdate();
         checkForOldIndices();
     } elsif ($main::versionNumber <= 33) {
         createNewAliasesFromOld("stats", "stats_v2", "stats_v1", \&statsCreate);
         usersUpdate();
+        historyUpdate();
         sessionsUpdate();
         checkForOldIndices();
-    } elsif ($main::versionNumber <= 34) {
+    } elsif ($main::versionNumber <= 36) {
+        usersUpdate();
+        historyUpdate();
         sessionsUpdate();
         checkForOldIndices();
     } else {

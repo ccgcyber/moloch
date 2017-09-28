@@ -2,10 +2,7 @@
 
   'use strict';
 
-  // save query parameters
-  let _query = {};
-
-  let interval;
+  let timeout;
 
   /**
    * @class SpigraphController
@@ -18,7 +15,7 @@
     /**
      * Initialize global variables for this controller
      * @param $scope          Angular application model object
-     * @param $interval     Angular's wrapper for window.setInterval
+     * @param $timeout        Angular's wrapper for window.setTimeout
      * @param $location       Exposes browser address bar URL (based on the window.location)
      * @param $routeParams    Retrieve the current set of route parameters
      * @param SpigraphService Transacts stats with the server
@@ -27,10 +24,10 @@
      *
      * @ngInject
      */
-    constructor($scope, $interval, $location, $routeParams,
+    constructor($scope, $timeout, $location, $routeParams,
                 SpigraphService, FieldService, UserService) {
       this.$scope             = $scope;
-      this.$interval          = $interval;
+      this.$timeout           = $timeout;
       this.$location          = $location;
       this.$routeParams       = $routeParams;
       this.SpigraphService    = SpigraphService;
@@ -53,52 +50,71 @@
         .then((response) => {
           this.fields = response.concat([{dbField: 'ip.dst:port', exp: 'ip.dst:port'}])
                                 .filter(function(a) {return a.dbField !== undefined;})
-                                .sort(function(a,b) {return (a.exp > b.exp?1:-1);}); 
+                                .sort(function(a,b) {return (a.exp > b.exp?1:-1);});
+          this.loadData(); /* IMPORTANT! kicks off initial data retrieval */
         });
 
       // load route params
-      this.sort         = _query.sort   = this.$routeParams.sort  || 'lpHisto';
-      this.field        = _query.field  = this.$routeParams.field || 'no';
-      this.maxElements  = _query.size   = this.$routeParams.size  || '20';
+      this.query        = {};
+      this.query.field  = this.$routeParams.field       || 'node';
+      this.query.size   = this.$routeParams.size        || '20';
+      this.sortBy       = this.$routeParams.sort        || 'graph';
+      this.graphType    = this.$routeParams.graphType   || 'lpHisto';
+      this.seriesType   = this.$routeParams.seriesType  || 'bars';
 
-      this.sortBy       = 'count';
+      if (this.sortBy === 'graph') { this.query.sort = this.graphType; }
+      else { this.query.sort = this.sortBy; }
+
       this.refresh      = '0';
       this.items        = [];
 
+      let initialized = false;
       this.$scope.$on('change:search', (event, args) => {
         if (args.startTime && args.stopTime) {
-          _query.startTime  = args.startTime;
-          _query.stopTime   = args.stopTime;
-          _query.date       = null;
+          this.query.startTime  = args.startTime;
+          this.query.stopTime   = args.stopTime;
+          this.query.date       = null;
         } else if (args.date) {
-          _query.date      = args.date;
-          _query.startTime = null;
-          _query.stopTime  = null;
+          this.query.startTime  = null;
+          this.query.stopTime   = null;
+          this.query.date       = args.date;
         }
 
-        _query.expression = args.expression;
-        if (args.bounding) {_query.bounding = args.bounding;}
+        this.query.expression = args.expression;
+        if (args.bounding) { this.query.bounding = args.bounding; }
 
-        this.loadData();
+        if (initialized) { this.loadData(true); }
+
+        initialized = true;
       });
 
       this.$scope.$on('change:time', (event, args) => {
-        _query.startTime  = args.start;
-        _query.stopTime   = args.stop;
-        _query.date       = null;
+        this.query.startTime  = args.start;
+        this.query.stopTime   = args.stop;
+        this.query.date       = null;
 
         // notify children (namely search component)
         this.$scope.$broadcast('update:time', args);
 
-        this.loadData();
+        this.loadData(true);
       });
 
       this.$scope.$on('change:histo:type', (event, newType) => {
-        this.sort = newType;
-        this.$location.search('sort', this.sort);
+        this.graphType = newType;
+        if (this.sortBy === 'graph') {
+          this.query.sort = this.graphType;
+        }
+        this.$location.search('graphType', this.graphType);
+
+        this.loadData(true);
 
         // update all the other graphs
         this.$scope.$broadcast('update:histo:type', newType);
+      });
+
+      this.$scope.$on('change:series:type', (event, newType) => {
+        // update all the other graphs
+        this.$scope.$broadcast('update:series:type', newType);
       });
 
       // watch for additions to search parameters from session detail or map
@@ -126,21 +142,37 @@
         let change = false;
 
         let size = current.params.size || '20';
-        if (size !== this.maxElements) {
+        if (size !== this.query.size) {
           change = true;
-          this.maxElements = _query.size = size;
+          this.query.size = size;
         }
 
         let field = current.params.field || 'no';
-        if (field !== this.field) {
+        if (field !== this.query.field) {
           change = true;
-          this.field = _query.field = field;
+          this.query.field = field;
         }
 
-        let sort = current.params.sort || 'lpHisto';
-        if (current.params.sort !== this.sort) {
-          this.sort = _query.sort = sort;
-          this.$scope.$broadcast('update:histo:type', this.sort);
+        let sort = current.params.sort || 'graph';
+        if (sort !== this.sortBy) {
+          change = true;
+          this.sortBy = sort;
+          if (sort === 'graph') {
+            this.query.sort = this.graphType;
+          } else {
+            this.query.sort = sort;
+          }
+        }
+
+        let graphType = current.params.graphType || 'lpHisto';
+        if (current.params.graphType !== this.graphType) {
+          change = true;
+          this.graphType = graphType;
+          // update sort parameter if sorting on graph
+          if (this.sortBy === 'graph') {
+            this.query.sort = this.graphType;
+          }
+          this.$scope.$broadcast('update:histo:type', this.graphType);
         }
 
         if (change) { this.loadData(true); }
@@ -149,16 +181,30 @@
 
     /* fired when controller's containing scope is destroyed */
     $onDestroy() {
-      if (interval) { this.$interval.cancel(interval); }
+      if (timeout) {
+        this.$timeout.cancel(timeout);
+        timeout = null;
+      }
     }
 
     loadData(reload) {
       this.loading  = true;
       this.error    = false;
 
-      if (reload && interval) { this.$interval.cancel(interval); }
+      if (reload && timeout) {
+        this.$timeout.cancel(timeout);
+        timeout = null;
+      }
 
-      this.SpigraphService.get(_query)
+      // server takes the dbField value
+      for (let i = 0, len = this.fields.length; i < len; ++i) {
+        if (this.fields[i].exp === this.query.field) {
+          this.query.field = this.fields[i].dbField;
+          break;
+        }
+      }
+
+      this.SpigraphService.get(this.query)
         .then((response) => {
           this.loading = false;
           this.processData(response);
@@ -167,14 +213,18 @@
           this.recordsFiltered  = response.recordsFiltered;
 
           if (reload && this.refresh && this.refresh > 0) {
-            interval = this.$interval(() => {
-              this.loadData();
+            // reset the timeout for the request interval
+            timeout = this.$timeout(() => {
+              this.shiftTime();
             }, this.refresh * 1000);
           }
         })
         .catch((error) => {
-          this.loading  = false;
-          this.error    = error.text;
+          this.loading    = false;
+          this.error      = error.text || error;
+          this.items      = null;
+          this.mapData    = null;
+          this.graphData  = null;
         });
     }
 
@@ -182,34 +232,41 @@
     /* exposed functions --------------------------------------------------- */
     /* fired when a field is selected from the typeahead */
     changeField() {
-      _query.field = this.field;
-      this.$location.search('field', this.field);
-      this.loadData();
+      this.$location.search('field', this.query.field);
+      this.$scope.$broadcast('apply:expression');
     }
 
     /* fired when max elements input is changed */
     changeMaxElements() {
-      _query.size = this.maxElements;
-      this.$location.search('size', this.maxElements);
-      this.loadData();
+      this.$location.search('size', this.query.size);
+      this.$scope.$broadcast('apply:expression');
     }
 
     changeSortBy() {
-      if (this.sortBy === 'name') {
-        this.items = this.items.sort(function (a, b) {
-          return a.name.localeCompare(b.name);
-        });
+      if (this.sortBy === 'graph') {
+        this.query.sort = this.graphType;
       } else {
-        this.items = this.items.sort(function (a, b) {
-          return a.count < b.count;
-        });
+        this.query.sort = this.sortBy;
       }
+
+      this.$location.search('sort', this.sortBy);
+
+      this.$scope.$broadcast('apply:expression');
     }
 
     changeRefreshInterval() {
-      if (interval) { this.$interval.cancel(interval); }
+      if (timeout) {
+        this.$timeout.cancel(timeout);
+        timeout = null;
+      }
 
-      if (this.refresh && this.refresh > 0) { this.loadData(true); }
+      if (this.refresh && this.refresh > 0) {
+        this.shiftTime();
+      }
+    }
+
+    shiftTime() {
+      this.$scope.$broadcast('shift:time');
     }
 
     db2Field(dbField) {
@@ -227,12 +284,6 @@
       this.mapData    = json.map;
       this.graphData  = json.graph;
 
-      if (this.sortBy === 'name') {
-        json.items = json.items.sort(function (a, b) {
-          return a.name.localeCompare(b.name);
-        });
-      }
-
       let finfo = this.db2Field(this.filed);
 
       for (let i = 0, len = json.items.length; i < len; i++) {
@@ -243,7 +294,7 @@
     }
 
     addExpression(item) {
-      let field = this.db2Field(this.field);
+      let field = this.db2Field(this.query.field);
       let fullExpression = `${field.exp} == ${item.name}`;
 
       this.$scope.$broadcast('add:to:typeahead', { expression: fullExpression});
@@ -256,6 +307,7 @@
     formatField(value) {
       for (let i = 0, len = this.fields.length; i < len; i++) {
         if (value === this.fields[i].dbField) {
+          this.fieldObj = this.fields[i];
           return this.fields[i].exp;
         }
       }
@@ -263,7 +315,7 @@
 
   }
 
-  SpigraphController.$inject = ['$scope','$interval','$location','$routeParams',
+  SpigraphController.$inject = ['$scope','$timeout','$location','$routeParams',
     'SpigraphService','FieldService','UserService'];
 
   /**

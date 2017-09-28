@@ -56,4 +56,9 @@ require('./visualization/components/graph.map');
 require('./visualization/components/graph');
 require('./visualization/components/map');
 
+require('./upload/upload');
+
+require('./history/history');
+require('./history/history.service');
+
 require('./404/404');

@@ -5,11 +5,11 @@ Please report and bugs or feature requests by opening an issue at https://github
 Basic Moloch Installation steps:
  1) Download a Moloch build for 64bit Ubuntu 14.04, Ubuntu 16.04, Centos 6, or Centos 7 from http://molo.ch/index.html#downloads
  2) Install package
- 3) Configure basic moloch items (only need to do once)
+ 3) Configure basic moloch items by running the Configure script (this needs to be done only once)
      /data/moloch/bin/Configure
- 4a) If NOT using the demo Elasticsearch, download, install, start elasticsearch 2.4.0
-      http://download.elastic.co/elasticsearch/elasticsearch/elasticsearch-2.4.0.tar.gz
- 4b) If using the demo Elasticsearch
+ 4a) If NOT using the demo Elasticsearch, download, install, start elasticsearch, > 5.4.x recommended
+      https://www.elastic.co/downloads/past-releases
+ 4b) If using the demo Elasticsearch, these won't work with real Elasticsearch installs
       /sbin/start elasticsearch # for upstart/Centos 6/Ubuntu 14.04
       systemctl start elasticsearch.service # for systemd/Centos 7/Ubuntu 16.04
  5) Initialize/Upgrade Elasticsearch Moloch configuration

@@ -1,38 +1,67 @@
+/* navbar with pagination */
+session form.sessions-nav {
+  z-index         : 999;
+  position        : fixed;
+  top             : 115px;
+  left            : 0;
+  right           : 0;
+  height          : 42px;
+  padding         : var(--px-xlg) var(--px-lg) var(--px-md) var(--px-lg);
+  background-color: var(--color-quaternary-lightest);
+
+  -webkit-box-shadow: var(--px-none) var(--px-none) var(--px-xlg) var(--px-sm) #333;
+     -moz-box-shadow: var(--px-none) var(--px-none) var(--px-xlg) var(--px-sm) #333;
+          box-shadow: var(--px-none) var(--px-none) var(--px-xlg) var(--px-sm) #333;
+}
+
+session form.sessions-nav .form-inline {
+  margin-top: -3px;
+}
+
 /* sessions table -------------------------- */
-session .table-responsive {
-  overflow: visible;
+session table {
+  table-layout  : fixed;
+  border-top    : var(--color-gray-light) solid 1px;
+  margin-bottom : 20px;
 }
 
-session .table {
-  table-layout: fixed;
-  border-top  : var(--color-gray-light) solid 1px;
-}
-
-session .table thead tr th {
+session table thead tr th {
   vertical-align: top;
+  border-bottom : 2px solid var(--color-gray);
+  border-right  : 1px dotted var(--color-gray);
+}
+session table thead tr th:first-child {
+  border-right: none;
 }
 
-session .table thead tr th:first-child {
+session table thead tr th:first-child {
   padding       : 0;
   vertical-align: middle;
 }
 
-session .table tbody tr:not(.session-detail-row):hover {
+session table tbody tr:not(.session-detail-row):hover {
   background-color: var(--color-tertiary-lightest);
 }
 
-session .table tbody tr:not(.session-detail-row):hover td.active {
+session table tbody tr:not(.session-detail-row):hover td.active {
   background-color: var(--color-tertiary-light);
 }
 
-session .table tbody tr.session-detail-row {
-  background-color: var(--color-quaternary-lightest);
+session table tbody tr.session-detail-row {
+  background-color: var(--color-quaternary-lightest) !important;
 }
 
-session .table tbody tr td {
-  padding: 0 2px;
+session table tbody tr td {
+  padding       : 0 2px;
+  line-height   : 1.42857143;
+  vertical-align: top;
+  border-top    : 1px solid #ddd;
 }
 
+/*!* table column reorder *!*/
+.JColResizer > tbody > tr > td, .JColResizer > tbody > tr > th {
+  overflow: visible !important; /* show overflow for clickable fields */
+}
 
 /* table column headers -------------------- */
 session .moloch-col-header {
@@ -62,6 +91,11 @@ session .moloch-col-header .header-sort {
   display       : inline-block;
   width         : 8px;
   vertical-align: top;
+}
+
+session .moloch-col-header ul.dropdown-menu {
+  max-height: 250px;
+  overflow  : auto;
 }
 
 

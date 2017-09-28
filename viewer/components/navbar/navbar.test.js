@@ -22,7 +22,7 @@
       $httpBackend = _$httpBackend_;
 
       $httpBackend.expectGET('eshealth.json').respond({});
-      $httpBackend.expectGET('users/current').respond({});
+      $httpBackend.expectGET('user/current').respond({});
 
       scope = $rootScope.$new();
 
@@ -78,7 +78,7 @@
       // navigating from the settings page to the help page should append
       // #settings to the url
       navbar.$location.url('settings');
-      navbar.navTabClick('help');
+      navbar.navTabClick('help', { preventDefault: () => {}, stopPropagation: () => {} });
 
       expect(navbar.$location.hash()).toEqual('settings');
     });

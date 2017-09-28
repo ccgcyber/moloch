@@ -53,6 +53,8 @@
         this.$scope.$emit('close:maps');
         if (localStorage) { localStorage[`${basePath}-open-map`] = false; }
       }
+
+      if (!this.showMap) { this.$scope.$broadcast('close:map'); }
     }
 
   }
@@ -69,8 +71,8 @@
       controller  : GraphMapController,
       bindings    : {
         graphData : '<',
-        graphType : '@',
         mapData   : '<',
+        graphType : '@',
         primary   : '@',
         open      : '@',
         timezone  : '@'

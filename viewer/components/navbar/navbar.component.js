@@ -12,6 +12,7 @@
 
     /**
      * Initialize global variables for this controller
+     * @param $filter       Filters format the value of an expression
      * @param $window       Angular's reference to the browser's window object
      * @param $location     Exposes browser address bar URL
      *                      (based on the window.location)
@@ -21,7 +22,9 @@
      *
      * @ngInject
      */
-    constructor($window, $location, $rootScope, $routeParams, Constants) {
+    constructor($filter, $window, $location, $rootScope, $routeParams,
+                Constants) {
+      this.$filter        = $filter;
       this.$window        = $window;
       this.$location      = $location;
       this.$rootScope     = $rootScope;
@@ -43,8 +46,9 @@
       };
 
       if (!this.demoMode) {
-        this.menu.settings  = { title: 'Settings', link: 'settings' };
-        this.menu.users     = { title: 'Users', link: 'users', permission: 'createEnabled' };
+        this.menu.history   = { title: 'History',   link: 'history' };
+        this.menu.settings  = { title: 'Settings',  link: 'settings' };
+        this.menu.users     = { title: 'Users',     link: 'users', permission: 'createEnabled' };
       }
     }
 
@@ -59,10 +63,23 @@
     }
 
     /**
-     * Redirects to the desired link preserving query parameters
-     * @param {string} link The link to redirect to
+     * Creates an href for the tab buttons
+     * @param {string} link The link of the nav item
+     * @returns {string} href
      */
-    navTabClick(link) {
+    createHref(link) {
+      return this.$filter('buildUrl')(link);
+    }
+
+    /**
+     * Redirects to the desired link preserving query parameters
+     * @param {string} link   The link to redirect to
+     * @param {object} event  The click event that triggered this function
+     */
+    navTabClick(link, $event) {
+      $event.preventDefault();
+      $event.stopPropagation();
+
       if (link === 'help') { // help link is special!
         // must set the section of the help page to navigate to
         this.$location.hash(this.$location.path().split('/')[1]);
@@ -72,34 +89,9 @@
           // if the expression input doesn't match the expression url parameter,
           // the url needs to be constructed so that there is only one entry
           // in the browser history
-          let newUrl = link;
-          let paramLen = Object.keys(this.$routeParams).length;
-          let count = 1;
-          if (paramLen > 0) {
-            newUrl += '?';
-            for (let key in this.$routeParams) {
-              if (this.$routeParams.hasOwnProperty(key)) {
-                let param = this.$routeParams[key];
-                if (key !== 'expression') {
-                  newUrl += `${key}=${encodeURIComponent(param)}`;
-                  if (count !== paramLen) {
-                    newUrl += '&';
-                  }
-                }
-                ++count;
-              }
-            }
-          }
-
-          if (this.$rootScope.expression) {
-            if (paramLen > 0) { newUrl += '&'; }
-            else { newUrl += '?'; }
-            newUrl += `expression=${encodeURIComponent(this.$rootScope.expression)}`;
-          }
-
+          let newUrl = this.$filter('buildUrl')(link);
           this.$window.location.href = newUrl;
-        } else {
-          // the expression hasn't changed, so just go to the link
+        } else { // the expression hasn't changed, so just go to the link
           this.$location.path(link);
         }
       }
@@ -107,8 +99,8 @@
 
   }
 
-  NavbarController.$inject = ['$window','$location','$rootScope','$routeParams',
-    'Constants'];
+  NavbarController.$inject = ['$filter','$window','$location','$rootScope',
+    '$routeParams','Constants'];
 
   /**
    * Navbar Directive

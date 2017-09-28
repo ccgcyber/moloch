@@ -18,19 +18,20 @@
 
     /**
      * Initialize global variables for this controller
-     * @param $window       Angular's reference to the browser's window object
-     * @param $document     Angular's jQuery wrapper for window.document object
-     * @param $interval     Angular's wrapper for window.setInterval
-     * @param $location     Exposes browser address bar URL (window.location)
-     * @param $routeParams  Retrieves the current set of route parameters
-     * @param UserService   Transacts users and user data with the server
-     * @param FieldService  Transacts fields with the server
-     * @param ConfigService Transacts app configurations with the server
+     * @param $window         Angular's reference to the browser's window object
+     * @param $document       Angular's jQuery wrapper for window.document object
+     * @param $interval       Angular's wrapper for window.setInterval
+     * @param $location       Exposes browser address bar URL (window.location)
+     * @param $routeParams    Retrieves the current set of route parameters
+     * @param UserService     Transacts users and user data with the server
+     * @param FieldService    Transacts fields with the server
+     * @param ConfigService   Transacts app configurations with the server
+     * @param SessionService  Transacts sessions with the server
      *
      * @ngInject
      */
     constructor($window, $document, $interval, $location, $routeParams,
-                UserService, FieldService, ConfigService) {
+                UserService, FieldService, ConfigService, SessionService) {
       this.$window        = $window;
       this.$document      = $document;
       this.$interval      = $interval;
@@ -39,6 +40,7 @@
       this.UserService    = UserService;
       this.FieldService   = FieldService;
       this.ConfigService  = ConfigService;
+      this.SessionService = SessionService;
     }
 
     /* Callback when component is mounted and ready */
@@ -127,6 +129,19 @@
             let field = this.fields[i];
             this.fieldsMap[field.dbField] = field;
           }
+
+          this.SessionService.getState('sessionsNew')
+             .then((response) => {
+               this.setupColumns(response.data.visibleHeaders);
+               // if the sort column setting does not match any of the visible
+               // headers, set the sort column setting to last
+               if (response.data.visibleHeaders.indexOf(this.settings.sortColumn === -1)) {
+                 this.settings.sortColumn = 'last';
+               }
+             })
+             .catch(() => {
+               this.setupColumns(['fp','lp','src','p1','dst','p2','pa','dbby','no','info']);
+             });
         });
     }
 
@@ -277,6 +292,17 @@
         if (dbField === this.fields[i].dbField) {
           return this.fields[i];
         }
+      }
+    }
+
+    /**
+     * Setup this.columns with a list of field objects
+     * @param {array} colIdArray The array of column ids
+     */
+    setupColumns(colIdArray) {
+      this.columns = [];
+      for (let i = 0, len = colIdArray.length; i < len; ++i) {
+        this.columns.push(this.getField(colIdArray[i]));
       }
     }
 
@@ -696,7 +722,7 @@
   }
 
   SettingsController.$inject = ['$window','$document','$interval','$location',
-    '$routeParams','UserService','FieldService','ConfigService'];
+    '$routeParams','UserService','FieldService','ConfigService','SessionService'];
 
   /**
    * ES Health Directive

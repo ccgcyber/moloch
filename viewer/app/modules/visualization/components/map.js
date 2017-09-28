@@ -34,6 +34,21 @@
             landColorLight = styles.getPropertyValue('--color-primary-lightest').trim();
           }
 
+          let initialized = false;
+          $(mapEl).on('resize', () => {
+            if(initialized && scope.state.expanded) {
+              mapEl.css({
+                position  : 'fixed',
+                right     : '15px',
+                'z-index' : 998,
+                top       : '166px',
+                width     : $(window).width() * 0.95,
+                height    : $(window).height() - 175
+              });
+            }
+            initialized = true;
+          });
+
           mapEl.vectorMap({ // setup map
             map             : 'world_en',
             backgroundColor : waterColor,
@@ -60,7 +75,6 @@
 
           // save reference to the map
           map = mapEl.children('.jvectormap-container').data('mapObject');
-
 
           function setup(data) {
             map.series.regions[0].clear();
@@ -89,6 +103,23 @@
             } else if (scope.state.dst) {
               map.series.regions[0].setValues(data.dst);
             }
+
+            let region = map.series.regions[0];
+            scope.legend = [];
+            for (var key in region.values) {
+              if (region.values.hasOwnProperty(key) &&
+                 region.elements.hasOwnProperty(key)) {
+                scope.legend.push({
+                  name  : key,
+                  value : region.values[key],
+                  color : region.elements[key].element.properties.fill
+                });
+              }
+            }
+
+            scope.legend.sort((a, b) => {
+              return b.value - a.value;
+            });
           }
 
 
@@ -115,6 +146,11 @@
             if (changed) { setup(scope.mapData); }
           });
 
+          /* watch for map close event to make sure the map is not expanded */
+          scope.$on('close:map', () => {
+            if (scope.status.expanded) { scope.toggleMapSize(); }
+          });
+
 
           /* utility functions --------------------------------------------- */
           /* shrinks the map element and resizes the map */
@@ -123,7 +159,7 @@
               position  : 'relative',
               top       : '0',
               right     : '0',
-              height    : '180px',
+              height    : '160px',
               width     : '100%',
               'z-index' : 996,
               'margin-bottom': '-25px'
@@ -151,15 +187,13 @@
 
           /* expands the map element and resizes the map */
           function expandMapElement() {
-            let top = Math.max(mapEl.offset().top - $(window).scrollTop(), 0);
-
             mapEl.css({
-              position: 'fixed',
-              right   : '15px',
+              position  : 'fixed',
+              right     : '15px',
               'z-index' : 998,
-              top     : Math.min(top, $(window).height() * 0.25),
-              width   : $(window).width()*0.75,
-              height  : $(window).height()*0.75
+              top       : '166px',
+              width     : $(window).width() * 0.95,
+              height    : $(window).height() - 175
             });
 
             mapEl.closest('moloch-graph-map').addClass('expanded');
@@ -173,7 +207,7 @@
           scope.status = { expanded:false };
 
           /* Expands/shrinks the opened map panel */
-          scope.expandMap = function() {
+          scope.toggleMapSize = function() {
             scope.status.expanded = !scope.status.expanded;
 
             if (scope.status.expanded) {
@@ -199,6 +233,8 @@
           /* cleanup ------------------------------------------------------- */
           element.on('$destroy', function onDestroy () {
             $document.off('mouseup', isOutsideClick);
+
+            $(mapEl).off('resize');
 
             if (timeout) { $timeout.cancel(timeout); }
 

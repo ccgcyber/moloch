@@ -59,12 +59,15 @@ var internals = {
   tuple: {
     sources: []
   },
+  ja3: {
+    sources: []
+  },
   sources: [],
-  requestStats: [0,0,0,0,0],
-  foundStats: [0,0,0,0,0],
-  cacheHitStats: [0,0,0,0,0],
-  cacheSrcHitStats: [0,0,0,0,0],
-  cacheSrcRefreshStats: [0,0,0,0,0],
+  requestStats: [0,0,0,0,0,0,0],
+  foundStats: [0,0,0,0,0,0,0],
+  cacheHitStats: [0,0,0,0,0,0,0],
+  cacheSrcHitStats: [0,0,0,0,0,0,0],
+  cacheSrcRefreshStats: [0,0,0,0,0,0,0],
   views: {},
   rightClicks: {},
   workers: 1
@@ -93,7 +96,7 @@ if (internals.workers > 1) {
     for (var i = 0; i < internals.workers; i++) {
       cluster.fork();
     }
-    cluster.on('exit', function(worker, code, signal) {
+    cluster.on('exit', (worker, code, signal) => {
       console.log('worker ' + worker.process.pid + ' died, restarting new worker');
       cluster.fork();
     });
@@ -176,7 +179,7 @@ internals.sourceApi = {
   },
   debug: internals.debug,
   addSource: function(section, src) {
-    src.srcInProgress = {ip: {}, domain: {}, email: {}, md5: {}, url: {}, tuple: {}};
+    src.srcInProgress = {ip: {}, domain: {}, email: {}, md5: {}, url: {}, tuple: {}, ja3: {}};
     internals.sources[section] = src;
     if (src.getIp) {
       internals.ip.sources.push(src);
@@ -196,13 +199,16 @@ internals.sourceApi = {
     if (src.getTuple) {
       internals.tuple.sources.push(src);
     }
+    if (src.getJa3) {
+      internals.ja3.sources.push(src);
+    }
   },
   app: app
 };
 //////////////////////////////////////////////////////////////////////////////////
 function loadSources() {
-  glob(getConfig("wiseService", "sourcePath", "./") + "source.*.js", function (err, files) {
-    files.forEach(function(file) {
+  glob(getConfig("wiseService", "sourcePath", "./") + "source.*.js", (err, files) => {
+    files.forEach((file) => {
       var src = require(file);
       src.initSource(internals.sourceApi);
     });
@@ -223,9 +229,9 @@ app.get("/rightClicks", function(req, res) {
   res.send(internals.rightClicks);
 });
 //////////////////////////////////////////////////////////////////////////////////
-internals.type2Func = ["getIp", "getDomain", "getMd5", "getEmail", "getURL", "getTuple"];
-internals.type2Name = ["ip", "domain", "md5", "email", "url", "tuple"];
-internals.name2Type = {ip:0, 0:0, domain:1, 1:1, md5:2, 2:2, email:3, 3:3, url:4, 4:4, tuple:5, 5:5};
+internals.type2Func = ["getIp", "getDomain", "getMd5", "getEmail", "getURL", "getTuple", "getJa3"];
+internals.type2Name = ["ip", "domain", "md5", "email", "url", "tuple", "ja3"];
+internals.name2Type = {ip:0, 0:0, domain:1, 1:1, md5:2, 2:2, email:3, 3:3, url:4, 4:4, tuple:5, 5:5, ja3:6, 6:6};
 
 //////////////////////////////////////////////////////////////////////////////////
 function processQuery(req, query, cb) {
@@ -248,7 +254,7 @@ function processQuery(req, query, cb) {
   }
 
   // Fetch the cache for this query
-  internals.cache.get(query, function(err, cacheResult) {
+  internals.cache.get(query, (err, cacheResult) => {
     if (req.timedout) {
       return cb("Timed out " + typeName + " " + query.value);
     }
@@ -262,7 +268,7 @@ function processQuery(req, query, cb) {
       internals.cacheHitStats[query.type]++;
     }
 
-    async.map(query.sources || typeInfo.sources, function(src, cb) {
+    async.map(query.sources || typeInfo.sources, (src, cb) => {
       if (!typeInfo.source_allowed(src, query.value)) {
         // This source isn't allowed for query
         return setImmediate(cb, undefined);
@@ -288,7 +294,7 @@ function processQuery(req, query, cb) {
         // First query for this value
         src.srcInProgress[typeName][query.value] = [cb];
         let startTime = Date.now();
-        src[funcName](src.fullQuery===true?query:query.value, function (err, result) {
+        src[funcName](src.fullQuery===true?query:query.value, (err, result) => {
           src.average100MS = (99.0 * src.average100MS + (Date.now() - startTime))/100.0;
 
           if (!err && src.cacheTimeout !== -1 && result !== undefined) { // If err or cacheTimeout is -1 then don't cache
@@ -313,7 +319,7 @@ function processQuery(req, query, cb) {
         // Woot, we can use the cache
         setImmediate(cb, null, cacheResult[src.section].result);
       }
-    }, function (err, results) {
+    }, (err, results) => {
       // Combine all the results together
       if (err) {
         return cb(err);
@@ -340,9 +346,9 @@ app.post("/get", function(req, res) {
   var offset = 0;
 
   var buffers = [];
-  req.on('data', function (chunk) {
+  req.on('data', (chunk) => {
     buffers.push(chunk);
-  }).once('end', function (err) {
+  }).once('end', (err) => {
     var queries = [];
     for (var buf = Buffer.concat(buffers); offset < buf.length; ) {
       var type = buf[offset];
@@ -356,9 +362,9 @@ app.post("/get", function(req, res) {
       internals.requestStats[type]++;
     }
 
-    async.map(queries, function (query, cb) {
+    async.map(queries, (query, cb) => {
       processQuery(req, query, cb);
-    }, function (err, results) {
+    }, (err, results) => {
       if (err || req.timedout) {
         console.log("Error", err || "Timed out" );
         return;
@@ -392,7 +398,7 @@ app.get("/:source/:type/:value", function(req, res) {
     return res.end("Unknown type " + req.params.type);
   }
 
-  processQuery(req, query, function (err, result) {
+  processQuery(req, query, (err, result) => {
     if (err || !result) {
       return res.end("Not found");
     }
@@ -421,18 +427,18 @@ app.get("/bro/:type", function(req, res) {
 
   var fn = internals.type2Func[req.params.type];
   var srcs = internals[fn + "s"];
-  async.map(hashes, function(hash, doneCb) {
-    async.map(srcs, function(src, cb) {
+  async.map(hashes, (hash, doneCb) => {
+    async.map(srcs, (src, cb) => {
       if (internals.source_allowed[req.params.type](src, hash)) {
         src[fn](hash, cb);
       } else {
         setImmediate(cb, undefined);
       }
-    }, function (err, results) {
+    }, (err, results) => {
       doneCb(null, results);
     });
   },
-  function (err, results) {
+  (err, results) => {
 
     for (var hashi = 0; hashi < hashes.length; hashi++) {
       if (hashi !== 0) {
@@ -482,7 +488,7 @@ app.get("/:type/:value", function(req, res) {
   var query = {type: type,
                value: req.params.value};
 
-  processQuery(req, query, function (err, result) {
+  processQuery(req, query, (err, result) => {
     if (err || !result) {
       return res.end("Not found");
     }
@@ -491,7 +497,7 @@ app.get("/:type/:value", function(req, res) {
 });
 //////////////////////////////////////////////////////////////////////////////////
 if (getConfig("wiseService", "regressionTests")) {
-  app.post('/shutdown', function(req, res) {
+  app.post('/shutdown', (req, res) => {
     process.exit(0);
     throw new Error("Exiting");
   });
@@ -499,16 +505,16 @@ if (getConfig("wiseService", "regressionTests")) {
 //////////////////////////////////////////////////////////////////////////////////
 function printStats()
 {
-  console.log(sprintf("REQUESTS:          domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d",
-      internals.requestStats[1], internals.requestStats[0], internals.requestStats[3], internals.requestStats[2], internals.requestStats[4], internals.requestStats[5]));
-  console.log(sprintf("FOUND:             domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d",
-      internals.foundStats[1], internals.foundStats[0], internals.foundStats[3], internals.foundStats[2], internals.foundStats[4], internals.foundStats[5]));
-  console.log(sprintf("CACHE HIT:         domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d",
-      internals.cacheHitStats[1], internals.cacheHitStats[0], internals.cacheHitStats[3], internals.cacheHitStats[2], internals.cacheHitStats[4], internals.cacheHitStats[5]));
-  console.log(sprintf("CACHE SRC HIT:     domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d",
-      internals.cacheSrcHitStats[1], internals.cacheSrcHitStats[0], internals.cacheSrcHitStats[3], internals.cacheSrcHitStats[2], internals.cacheSrcHitStats[4], internals.cacheSrcHitStats[5]));
-  console.log(sprintf("CACHE SRC REFRESH: domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d",
-      internals.cacheSrcRefreshStats[1], internals.cacheSrcRefreshStats[0], internals.cacheSrcRefreshStats[3], internals.cacheSrcRefreshStats[2], internals.cacheSrcRefreshStats[4], internals.cacheSrcRefreshStats[5]));
+  console.log(sprintf("REQUESTS:          domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d",
+      internals.requestStats[1], internals.requestStats[0], internals.requestStats[3], internals.requestStats[2], internals.requestStats[4], internals.requestStats[5], internals.requestStats[6]));
+  console.log(sprintf("FOUND:             domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d",
+      internals.foundStats[1], internals.foundStats[0], internals.foundStats[3], internals.foundStats[2], internals.foundStats[4], internals.foundStats[5], internals.foundStats[6]));
+  console.log(sprintf("CACHE HIT:         domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d",
+      internals.cacheHitStats[1], internals.cacheHitStats[0], internals.cacheHitStats[3], internals.cacheHitStats[2], internals.cacheHitStats[4], internals.cacheHitStats[5], internals.cacheHitStats[6]));
+  console.log(sprintf("CACHE SRC HIT:     domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d",
+      internals.cacheSrcHitStats[1], internals.cacheSrcHitStats[0], internals.cacheSrcHitStats[3], internals.cacheSrcHitStats[2], internals.cacheSrcHitStats[4], internals.cacheSrcHitStats[5], internals.cacheSrcHitStats[6]));
+  console.log(sprintf("CACHE SRC REFRESH: domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d",
+      internals.cacheSrcRefreshStats[1], internals.cacheSrcRefreshStats[0], internals.cacheSrcRefreshStats[3], internals.cacheSrcRefreshStats[2], internals.cacheSrcRefreshStats[4], internals.cacheSrcRefreshStats[5], internals.cacheSrcRefreshStats[6]));
 
   for (var section in internals.sources) {
     let src = internals.sources[section];
@@ -571,6 +577,7 @@ internals.tuple.global_allowed = function(value) {
   }
   return true;
 };
+internals.ja3.global_allowed = function(value) {return true;};
 
 internals.ip.source_allowed = function(src, value) {
   if (src.excludeIPs.find(value)) {
@@ -629,20 +636,21 @@ internals.tuple.source_allowed = function(src, value) {
   }
   return true;
 };
+internals.ja3.source_allowed = function(src, value) {return true;};
 //////////////////////////////////////////////////////////////////////////////////
 function loadExcludes() {
-  ["excludeDomains", "excludeEmails", "excludeURLs", "excludeTuples"].forEach(function(type) {
+  ["excludeDomains", "excludeEmails", "excludeURLs", "excludeTuples"].forEach((type) => {
     var items = getConfig("wiseService", type);
     internals[type] = [];
     if (!items) {return;}
-    items.split(";").forEach(function(item) {
+    items.split(";").forEach((item) => {
       internals[type].push(RegExp.fromWildExp(item, "ailop"));
     });
   });
 
   internals.excludeIPs = new iptrie.IPTrie();
   var items = getConfig("wiseService", "excludeIPs", "");
-  items.split(";").forEach(function(item) {
+  items.split(";").forEach((item) => {
     if (item === "") {
       return;
     }
@@ -678,11 +686,11 @@ function main() {
   setInterval(printStats, 60*1000);
   var server = http.createServer(app);
   server
-    .on('error', function (e) {
+    .on('error', (e) => {
       console.log("ERROR - couldn't listen on port", getConfig("wiseService", "port", 8081), "is wiseService already running?");
       process.exit(1);
     })
-    .on('listening', function (e) {
+    .on('listening', (e) => {
       console.log("Express server listening on port %d in %s mode", server.address().port, app.settings.env);
     })
     .listen(getConfig("wiseService", "port", 8081));

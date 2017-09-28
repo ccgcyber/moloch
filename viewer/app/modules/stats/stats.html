@@ -7,7 +7,7 @@
     <div class="form-inline">
       <!-- graph type select -->
       <div class="form-group margined-bottom">
-        <div class="input-group input-group-sm">
+        <div class="input-group input-group-sm" ng-if="$ctrl.selectedTab === 0">
           <span class="input-group-addon help-cursor"
             uib-tooltip="The type of graph data to display"
             tooltip-placement="bottom-left">
@@ -45,7 +45,7 @@
       </div> <!-- /graph type select -->
 
       <!-- graph interval select -->
-      <div class="form-group margined-bottom">
+      <div class="form-group margined-bottom" ng-if="$ctrl.selectedTab === 0">
         <div class="input-group input-group-sm">
           <span class="input-group-addon help-cursor"
             uib-tooltip="Graph data bins and graph data refresh interval"
@@ -57,12 +57,11 @@
             <option value="5">Seconds</option>
             <option value="60">Minutes</option>
             <option value="600">10 Minutes</option>
-            <option value="0">None</option>
           </select>
         </div>
       </div> <!-- /graph interval select -->
 
-      <!-- graph interval select -->
+      <!-- table data interval select -->
       <div class="form-group margined-bottom">
         <div class="input-group input-group-sm">
           <span class="input-group-addon help-cursor"
@@ -80,14 +79,18 @@
             <option value="0">None</option>
           </select>
         </div>
-      </div> <!-- /graph interval select -->
+      </div> <!-- /table data interval select -->
 
     </div> <!-- /form-inlne -->
   </form>
 
   <div class="container-fluid">
 
-    <uib-tabset ng-if="!$ctrl.error">
+    <span class="fa fa-lg fa-question-circle-o pull-right margined-top-lg cursor-help"
+      uib-tooltip="HINT: These graphs are 1440 pixels wide. Expand your browser window to at least 1500 pixels wide for best viewing."
+      tooltip-placement="left"></span>
+
+    <uib-tabset ng-if="!$ctrl.error" active="$ctrl.selectedTab">
 
       <uib-tab index="0" heading="Nodes" select="$ctrl.selectTab(0)">
 
@@ -114,7 +117,7 @@
           </div>
 
           <!-- stats graphs -->
-          <div uib-accordion-group class="panel-default"
+          <div uib-accordion-group class="panel-default" id="statsGraphPanel"
             is-open="$ctrl.graphsOpen">
             <uib-accordion-heading>
               <div ng-click="$ctrl.toggleGraphSection()">
@@ -123,11 +126,11 @@
                   ng-class="{'fa-minus':$ctrl.graphsOpen, 'fa-plus':!$ctrl.graphsOpen}"></span>
               </div>
             </uib-accordion-heading>
-            <div id="statsGraph"></div>
+            <div id="statsGraph" style="width: 1440px;"></div>
           </div> <!-- /stats graphs -->
 
           <!-- node stats table -->
-          <div uib-accordion-group class="panel-default"
+          <div uib-accordion-group class="panel-default" id="nodeStatsPanel"
             is-open="$ctrl.nodeStatsOpen">
             <uib-accordion-heading>
               Node Stats
@@ -169,7 +172,7 @@
                 <td class="no-wrap">{{stat.memory|humanReadable}} ({{stat.memoryP|number:1}}%)</td>
                 <td class="no-wrap">{{stat.packetQueue|number:0}}</td>
                 <td class="no-wrap">{{stat.deltaPacketsPerSec|number:0}}</td>
-                <td class="no-wrap">{{stat.deltaBytesPerSec|number:0}}</td>
+                <td class="no-wrap">{{stat.deltaBytesPerSec|humanReadable}}</td>
                 <td class="no-wrap">{{stat.deltaSessionsPerSec|number:0}}</td>
                 <td class="no-wrap">{{stat.deltaDroppedPerSec|number:0}}</td>
                 <td class="no-wrap">{{stat.deltaOverloadDroppedPerSec|number:0}}</td>
@@ -177,12 +180,12 @@
               </tr>
               <tr ng-repeat-end ng-show="$ctrl.expandedNodeStats[stat.id]">
                 <td colspan="{{::$ctrl.columns.length}}">
-                  <div id="statsGraph-{{stat.id}}">
+                  <div id="statsGraph-{{stat.id}}" style="width: 1440px;">
                   </div>
                 </td>
               </tr>
-              <tr ng-if="!$ctrl.stats.data.length">
-                <td colspan="{{::$ctrl.columns.length}}" class="text-danger">
+              <tr ng-if="$ctrl.stats.data && !$ctrl.stats.data.length">
+                <td colspan="{{::$ctrl.columns.length}}" class="text-danger text-center">
                   <span class="fa fa-warning"></span>&nbsp;
                   No results match your search
                 </td>
@@ -199,7 +202,7 @@
                 <td class="no-wrap">{{$ctrl.averageValues.memory|humanReadable}} ({{$ctrl.averageValues.memoryP|number:1}}%)</td>
                 <td class="no-wrap">{{$ctrl.averageValues.packetQueue|number:0}}</td>
                 <td class="no-wrap">{{$ctrl.averageValues.deltaPacketsPerSec|number:0}}</td>
-                <td class="no-wrap">{{$ctrl.averageValues.deltaBytesPerSec|number:0}}</td>
+                <td class="no-wrap">{{$ctrl.averageValues.deltaBytesPerSec|humanReadable}}</td>
                 <td class="no-wrap">{{$ctrl.averageValues.deltaSessionsPerSec|number:0}}</td>
                 <td class="no-wrap">{{$ctrl.averageValues.deltaDroppedPerSec|number:0}}</td>
                 <td class="no-wrap">{{$ctrl.averageValues.deltaOverloadDroppedPerSec|number:0}}</td>
@@ -215,7 +218,7 @@
                 <td class="no-wrap">{{$ctrl.totalValues.memory|humanReadable}} ({{$ctrl.totalValues.memoryP|number:1}}%)</td>
                 <td class="no-wrap">{{$ctrl.totalValues.packetQueue|number:0}}</td>
                 <td class="no-wrap">{{$ctrl.totalValues.deltaPacketsPerSec|number:0}}</td>
-                <td class="no-wrap">{{$ctrl.totalValues.deltaBytesPerSec|number:0}}</td>
+                <td class="no-wrap">{{$ctrl.totalValues.deltaBytesPerSec|humanReadable}}</td>
                 <td class="no-wrap">{{$ctrl.totalValues.deltaSessionsPerSec|number:0}}</td>
                 <td class="no-wrap">{{$ctrl.totalValues.deltaDroppedPerSec|number:0}}</td>
                 <td class="no-wrap">{{$ctrl.totalValues.deltaOverloadDroppedPerSec|number:0}}</td>

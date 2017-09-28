@@ -52,6 +52,8 @@
 
 @import './modules/404/404.css';
 
+@import './modules/history/history.css';
+
 
 
 /* appwide styles ============================ */
@@ -122,6 +124,7 @@ body {
 .margin-for-main-navbar         { margin-top: 36px; }
 .margin-for-search-navbar       { margin-top: 85px; }
 .margin-for-main-and-sub-navbar { margin-top: 100px; }
+.margin-for-main-search-sub-nav { margin-top: 130px; }
 
 
 /* padding */
@@ -261,6 +264,23 @@ a.no-decoration { text-decoration: none; }
 }
 
 
+/* themed radio/checkbox buttons */
+label.btn-radio, button.btn-checkbox {
+  background-image: none;
+  background-color: transparent;
+  border-color    : var(--color-primary);
+  color           : var(--color-primary);
+}
+label.btn-radio:hover, button.btn-checkbox:hover {
+  color: var(--color-primary-dark);
+}
+label.btn-radio.active, button.btn-checkbox.active {
+  color           : var(--color-white);
+  border-color    : var(--color-primary);
+  background-color: var(--color-primary);
+}
+
+
 /* themed labels */
 .label.label-theme-primary {
   background-color: var(--color-primary);
@@ -293,6 +313,14 @@ a.no-decoration { text-decoration: none; }
   align-items     : center;
   justify-content : center;
   text-align      : center;
+  flex-direction  : column;
+}
+
+.vertical-center {
+  min-height      : 40vh;
+  display         : flex;
+  align-items     : center;
+  justify-content : center;
   flex-direction  : column;
 }
 
@@ -377,6 +405,25 @@ a.no-decoration { text-decoration: none; }
 
 
 
+/* condense dropdown menus =================== */
+ul.dropdown-menu {
+  font-size: 1.25rem;
+}
+
+ul.dropdown-menu li a,
+ul.dropdown-menu div li a {
+  padding         : 2px 8px;
+  line-height     : 1.42857143;
+  color           : var(--color-black);
+  text-decoration : none;
+}
+
+ul.dropdown-menu .divider {
+  margin: 2px 0;
+}
+
+
+
 /* animations ================================ */
 .animate-opacity { opacity: 1; }
 
@@ -423,8 +470,6 @@ table tr.ng-move.ng-move-active,
 table tr.ng-enter.ng-enter-active {
   opacity: 1;
 }
-
-
 
 
 

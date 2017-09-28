@@ -61,7 +61,6 @@
       </tr>
     </thead>
     <tbody>
-    <tbody>
       <tr class="animate-repeat"
         ng-repeat="user in $ctrl.filteredUsers = ($ctrl.users.data) track by user.userId">
         <td class="no-wrap">{{user.userId}}</td>
@@ -83,6 +82,11 @@
             uib-tooltip="Settings for {{user.userId}}">
             <span class="fa fa-gear"></span>
           </a>
+          <a class="btn btn-sm btn-theme-tertiary"
+            ng-href="history?userId={{user.userId}}"
+            uib-tooltip="History for {{user.userId}}">
+            <span class="fa fa-history"></span>
+          </a>
           <a class="btn btn-sm btn-danger"
             ng-click="$ctrl.deleteUser(user)"
             uib-tooltip="Delete {{user.userId}}">
@@ -99,7 +103,7 @@
       <tr ng-if="$ctrl.users.data.length === 0">
         <td colspan="10" class="text-danger text-center">
           <span class="fa fa-warning"></span>&nbsp;
-          <strong>No users. Create one by filling out the form below.</strong>
+          <strong>No users or none that match your search. Create one by filling out the form below.</strong>
         </td>
       </tr>
     </tbody>

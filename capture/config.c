@@ -1,7 +1,7 @@
 /******************************************************************************/
 /* config.c  -- Functions dealing with the config file
  *
- * Copyright 2012-2016 AOL Inc. All rights reserved.
+ * Copyright 2012-2017 AOL Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this Software except in compliance with the License.
@@ -338,33 +338,6 @@ void moloch_config_load()
         g_strfreev(tags);
     }
 
-    char *bpfsStrs[MOLOCH_FILTER_MAX] = {"dontSaveBPFs", "minPacketsSaveBPFs"};
-    int t;
-    for (t = 0; t < MOLOCH_FILTER_MAX; t++) {
-        config.bpfs[t]     = moloch_config_str_list(keyfile, bpfsStrs[t], NULL);
-        if (config.bpfs[t]) {
-            for (i = 0; config.bpfs[t][i]; i++);  //empty loop, counting
-            config.bpfsNum[t] = i;
-            config.bpfsVal[t] = malloc(config.bpfsNum[t]*sizeof(int));
-
-            GRegex     *regex = g_regex_new(":\\s*(\\d+)\\s*$", 0, 0, 0);
-            GMatchInfo *match_info;
-            for (i = 0; config.bpfs[t][i]; i++) {
-                g_regex_match(regex, config.bpfs[t][i], 0, &match_info);
-                if (g_match_info_matches(match_info)) {
-                    config.bpfsVal[t][i] = atoi(g_match_info_fetch(match_info, 1));
-                    gint pos;
-                    g_match_info_fetch_pos(match_info, 0, &pos, NULL);
-                    config.bpfs[t][i][pos] = 0;
-                } else {
-                    config.bpfsVal[t][i] = 1;
-                }
-                g_match_info_free(match_info);
-            }
-            g_regex_unref(regex);
-        }
-    }
-
     config.plugins          = moloch_config_str_list(keyfile, "plugins", NULL);
     config.rootPlugins      = moloch_config_str_list(keyfile, "rootPlugins", NULL);
     config.smtpIpHeaders    = moloch_config_str_list(keyfile, "smtpIpHeaders", NULL);
@@ -450,6 +423,7 @@ void moloch_config_load()
     config.fragsTimeout          = moloch_config_int(keyfile, "fragsTimeout", 60*8, 60, 0xffff);
     config.maxFrags              = moloch_config_int(keyfile, "maxFrags", 50000, 1000, 0xffffff);
     config.snapLen               = moloch_config_int(keyfile, "snapLen", 16384, 1, MOLOCH_PACKET_MAX_LEN);
+    config.maxMemPercentage      = moloch_config_int(keyfile, "maxMemPercentage", 100, 5, 100);
 
     config.packetThreads         = moloch_config_int(keyfile, "packetThreads", 1, 1, MOLOCH_MAX_PACKET_THREADS);
 
@@ -486,8 +460,7 @@ void moloch_config_load_local_ips()
     gsize keys_len;
     gchar **keys = g_key_file_get_keys (molochKeyFile, "override-ips", &keys_len, &error);
     if (error) {
-        LOG("Error with override-ips: %s", error->message);
-        exit(1);
+        LOGEXIT("Error with override-ips: %s", error->message);
     }
 
     gsize k, v;
@@ -526,8 +499,7 @@ void moloch_config_load_packet_ips()
     gsize keys_len;
     gchar **keys = g_key_file_get_keys (molochKeyFile, "packet-drop-ips", &keys_len, &error);
     if (error) {
-        LOG("Error with packet-drop-ips: %s", error->message);
-        exit(1);
+        LOGEXIT("Error with packet-drop-ips: %s", error->message);
     }
 
     gsize k, v;
@@ -576,8 +548,7 @@ void moloch_config_load_header(char *section, char *group, char *helpBase, char 
     gsize keys_len;
     gchar **keys = g_key_file_get_keys (molochKeyFile, section, &keys_len, &error);
     if (error) {
-        LOG("Error with %s: %s", section, error->message);
-        exit(1);
+        LOGEXIT("Error with %s: %s", section, error->message);
     }
 
     gsize k, v;
@@ -688,6 +659,11 @@ void moloch_config_init()
 
     if (config.debug) {
         LOG("maxFileSizeB: %" PRIu64, config.maxFileSizeB);
+    }
+
+    if (config.interface && !config.interface[0]) {
+        printf("interface set in config file, but it is empty\n");
+        exit (1);
     }
 
     if (!config.interface && !config.pcapReadOffline) {

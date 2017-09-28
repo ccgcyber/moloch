@@ -79,6 +79,16 @@
     </button>
     <ul class="dropdown-menu" uib-dropdown-menu role="menu">
       <li role="menuitem" class="cursor-pointer"
+        ng-click="$ctrl.createView()"
+        uib-tooltip="Create a new view"
+        tooltip-placement="left">
+        <div><a>
+          <span class="fa fa-plus-circle"></span>&nbsp;
+          New View
+        </a></div>
+      </li>
+      <li class="divider"></li>
+      <li role="menuitem" class="cursor-pointer"
         ng-click="$ctrl.setView(null)"
         ng-class="{'active':!$ctrl.view}"
         uib-tooltip="Apply no view"
@@ -103,22 +113,12 @@
           </div>
         </div>
       </li>
-      <li class="divider"></li>
-      <li role="menuitem" class="cursor-pointer"
-        ng-click="$ctrl.createView()"
-        uib-tooltip="Create a new view"
-        tooltip-placement="left">
-        <div><a>
-          <span class="fa fa-plus-circle"></span>&nbsp;
-          Create View
-        </a></div>
-      </li>
     </ul>
   </div> <!-- /views dropdown -->
 
   <!-- search button -->
   <a class="btn btn-sm btn-theme-tertiary pull-right margined-left"
-    ng-click="$ctrl.applyParams()">Search</a>
+    ng-click="$ctrl.applyParams()" tabindex="2">Search</a>
 
   <!-- search box typeahead -->
   <expression-typeahead enter-click="$ctrl.applyParams()">
@@ -136,6 +136,7 @@
           <span class="fa fa-clock-o"></span>
         </span>
         <select class="form-control time-range-control" convert-to-number
+          tabindex="3"
           ng-model="$ctrl.timeRange"
           ng-change="$ctrl.changeTimeRange()">
           <option value="1">Last hour</option>
@@ -166,11 +167,11 @@
           uib-datepicker-popup="{{$ctrl.dateTimeFormat}}" epoch-date="{{::$ctrl.timezone}}"
           ng-model="$ctrl.startTime" is-open="$ctrl.startTimePopup.opened"
           close-text="Close" enter-click="$ctrl.applyDate()"
-          ng-change="$ctrl.changeDate()"
+          ng-change="$ctrl.changeDate()" tabindex="4"
           ng-model-options="{ debounce: 500 }"
           alt-input-formats="$ctrl.altInputFormats" />
         <div class="input-group-btn">
-          <button type="button" class="btn btn-default"
+          <button type="button" class="btn btn-default" tabindex="-1"
             ng-click="$ctrl.startTimePopup.opened = !$ctrl.startTimePopup.opened">
             <span class="fa fa-calendar-o"></span>
           </button>
@@ -192,11 +193,11 @@
           uib-datepicker-popup="{{$ctrl.dateTimeFormat}}" epoch-date="{{::$ctrl.timezone}}"
           ng-model="$ctrl.stopTime" is-open="$ctrl.stopTimePopup.opened"
           close-text="Close" enter-click="$ctrl.applyDate()"
-          ng-change="$ctrl.changeDate()"
+          ng-change="$ctrl.changeDate()" tabindex="5"
           ng-model-options="{ debounce: 500 }"
           alt-input-formats="$ctrl.altInputFormats" />
         <div class="input-group-btn">
-          <button type="button" class="btn btn-default"
+          <button type="button" class="btn btn-default" tabindex="-1"
             ng-click="$ctrl.stopTimePopup.opened = !$ctrl.stopTimePopup.opened">
             <span class="fa fa-calendar-o"></span>
           </button>
@@ -213,7 +214,7 @@
           Bounding
         </span>
         <select class="form-control time-range-control"
-          ng-model="$ctrl.timeBounding"
+          ng-model="$ctrl.timeBounding" tabindex="6"
           ng-change="$ctrl.changeTimeBounding()">
           <option value="first">First Packet</option>
           <option value="last">Last Packet</option>
@@ -248,21 +249,21 @@
     <hr class="action-form-separator">
     <div class="col-md-3" ng-if="$ctrl.showApplyButtons">
       <div class="btn-group">
-        <label class="btn btn-sm btn-default"
+        <label class="btn btn-sm btn-radio"
           ng-model="$ctrl.actionFormItemRadio"
           uib-btn-radio="'open'" ng-if="$ctrl.openSessions"
           uib-tooltip="Apply action for {{$ctrl.openSessions.length}} opened sessions"
           tooltip-placement="top-left" tooltip-append-to-body="true">
           Open Items
         </label>
-        <label class="btn btn-sm btn-default"
+        <label class="btn btn-sm btn-radio"
           ng-model="$ctrl.actionFormItemRadio"
           uib-btn-radio="'visible'" ng-if="$ctrl.numVisibleSessions"
           uib-tooltip="Apply action for {{[$ctrl.numVisibleSessions,$ctrl.numMatchingSessions] | min}} visible sessions"
           tooltip-placement="top-left" tooltip-append-to-body="true">
           Visible Items
         </label>
-        <label class="btn btn-sm btn-default"
+        <label class="btn btn-sm btn-radio"
           ng-model="$ctrl.actionFormItemRadio"
           uib-btn-radio="'matching'"
           uib-tooltip="Apply action for {{$ctrl.numMatchingSessions | commaString}} query matching sessions"

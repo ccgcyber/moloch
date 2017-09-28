@@ -17,7 +17,7 @@
  */
 'use strict';
 
-var MIN_DB_VERSION = 34;
+var MIN_DB_VERSION = 36;
 
 //// Modules
 //////////////////////////////////////////////////////////////////////////////////
@@ -42,7 +42,6 @@ var Config         = require('./config.js'),
     molochversion  = require('./version'),
     http           = require('http'),
     pug            = require('pug'),
-    jade           = require('jade'),
     https          = require('https'),
     EventEmitter   = require('events').EventEmitter,
     decode         = require('./decode.js');
@@ -162,6 +161,12 @@ app.use(methodOverride());
 app.use('/font-awesome', express.static(__dirname + '/node_modules/font-awesome', { maxAge: 600 * 1000}));
 app.use('/bootstrap', express.static(__dirname + '/node_modules/bootstrap', { maxAge: 600 * 1000}));
 
+app.use('/cyberchef.htm', function(req, res, next) {
+  res.setHeader("Vary", "Accept-Encoding");
+  res.setHeader("Content-Encoding", "gzip");
+  res.sendFile(__dirname + "/public/cyberchef.htm.gz");
+});
+
 
 app.use("/", express.static(__dirname + '/public', { maxAge: 600 * 1000}));
 if (Config.get("passwordSecret")) {
@@ -233,12 +238,26 @@ if (Config.get("passwordSecret")) {
       }
     });
   });
+} else if (Config.get("regressionTests", false)) {
+  app.locals.alwaysShowESStatus = true;
+  app.locals.noPasswordSecret   = true;
+  app.use(function(req, res, next) {
+    var username = req.query["molochRegressionUser"] || "anonymous";
+    req.user = {userId: username, enabled: true, createEnabled: username === "anonymous", webEnabled: true, headerAuthEnabled: false, emailSearch: true, removeEnabled: true, settings: {}};
+    Db.getUserCache(username, function(err, suser) {
+        if (!err && suser && suser.found) {
+          req.user.settings = suser._source.settings;
+          req.user.views = suser._source.views;
+        }
+      next();
+    });
+  });
 } else {
   /* Shared password isn't set, who cares about auth, db is only used for settings */
   app.locals.alwaysShowESStatus = true;
   app.locals.noPasswordSecret   = true;
   app.use(function(req, res, next) {
-    req.user = {userId: "anonymous", enabled: true, createEnabled: Config.get("regressionTests", false), webEnabled: true, headerAuthEnabled: false, emailSearch: true, removeEnabled: true, settings: {}};
+    req.user = {userId: "anonymous", enabled: true, createEnabled: false, webEnabled: true, headerAuthEnabled: false, emailSearch: true, removeEnabled: true, settings: {}};
     Db.getUserCache("anonymous", function(err, suser) {
         if (!err && suser && suser.found) {
           req.user.settings = suser._source.settings;
@@ -255,6 +274,13 @@ app.use(function(req, res, next) {
   }
 
   var mrc = {};
+
+  mrc['httpAuthorizationDecode'] = {fields: "http.authorization", func: `{
+    if (value.substring(0,5) === "Basic")
+      return {name: "Decoded:", value: atob(value.substring(6))};
+    return undefined;
+  }`};
+
   for (var key in internals.rightClicks) {
     var rc = internals.rightClicks[key];
     if (!rc.users || rc.users[req.user.userId]) {
@@ -574,7 +600,6 @@ function proxyRequest (req, res, errCb) {
     var info = url.parse(viewUrl);
     info.path = req.url;
     info.agent = (client === http?internals.httpAgent:internals.httpsAgent);
-    info.rejectUnauthorized = true;
     addAuth(info, req.user, req.params.nodeName);
     addCaTrust(info, req.params.nodeName);
 
@@ -672,17 +697,56 @@ function checkWebEnabled(req, res, next) {
 
   return next();
 }
+
+function logAction(uiPage) {
+  return function(req, res, next) {
+    var log = {
+      timestamp : Math.floor(Date.now()/1000),
+      method    : req.method,
+      userId    : req.user.userId,
+      pathname  : req._parsedUrl.pathname,
+      query     : req._parsedUrl.query,
+      expression: req.query.expression
+    }
+
+    if (uiPage) { log.uiPage = uiPage; }
+
+    if (req.query.date && parseInt(req.query.date) === -1) {
+      log.range = log.timestamp;
+    } else if(req.query.startTime && req.query.stopTime) {
+      log.range = req.query.stopTime - req.query.startTime;
+    }
+
+    if (req.query.view && req.user.views) {
+      var view = req.user.views[req.query.view];
+      if (view) {
+        log.view = {
+          name: req.query.view,
+          expression: view.expression
+        };
+      }
+    }
+
+    Db.historyIt(log, function(err, info) {
+      if (err) { console.log('log history error', err, info); }
+    });
+
+    return next();
+  }
+}
+
+
 //////////////////////////////////////////////////////////////////////////////////
 //// Pages
 //////////////////////////////////////////////////////////////////////////////////
 // APIs disabled in demoMode, needs to be before real callbacks
 if (Config.get('demoMode', false)) {
   console.log("WARNING - Starting in demo mode, some APIs disabled");
-  app.all(['/settings', '/users'], function(req, res) {
+  app.all(['/settings', '/users', '/history/list'], function(req, res) {
     return res.send('Disabled in demo mode.');
   });
 
-  app.get(['/user/settings', '/user/cron'], function(req, res) {
+  app.get(['/user/settings', '/user/cron', '/history/list'], function(req, res) {
     res.status(403);
     return res.send(JSON.stringify({success: false, text: "Disabled in demo mode."}));
   });
@@ -770,14 +834,29 @@ app.get('/vendor.bundle.js.map', function(req, res) {
 // custom user css
 app.get('/user.css', function(req, res) {
   fs.readFile("./views/user.styl", 'utf8', function(err, str) {
-    if (err) { return console.log("ERROR - ", err); }
-    if (!req.user.settings.theme) {
-      return console.log("ERROR - no custom theme defined");
+    function error(msg) {
+      console.log('ERROR -', msg);
+      return res.status(404).end();
     }
+
+    var date = new Date().toUTCString();
+    res.setHeader('Content-Type', 'text/css');
+    res.setHeader('Date', date);
+    res.setHeader('Cache-Control', 'public, max-age=0');
+    res.setHeader('Last-Modified', date);
+
+    if (err) { return error(err) }
+    if (!req.user.settings.theme) { return error('no custom theme defined'); }
+
+    var theme = req.user.settings.theme.split(':');
+
+    if (!theme[1]) { return error('custom theme corrupted'); }
 
     var style = stylus(str);
 
-    var colors = req.user.settings.theme.split(':')[1].split(',');
+    var colors = theme[1].split(',');
+
+    if (!colors) { return error('custom theme corrupted'); }
 
     style.define('colorBackground', new stylus.nodes.Literal(colors[0]));
     style.define('colorForeground', new stylus.nodes.Literal(colors[1]));
@@ -806,13 +885,8 @@ app.get('/user.css', function(req, res) {
     style.define('colorDst', new stylus.nodes.Literal(colors[14]));
 
     style.render(function(err, css){
-      if (err) {return console.log("ERROR - ", err);}
-      var date = new Date().toUTCString();
-      res.setHeader('Content-Type', 'text/css');
-      res.setHeader('Date', date);
-      res.setHeader('Cache-Control', 'public, max-age=0');
-      res.setHeader('Last-Modified', date);
-      res.send(css);
+      if (err) { return error(err); }
+      return res.send(css);
     });
   });
 });
@@ -912,7 +986,7 @@ app.get('/user/settings', function(req, res) {
 });
 
 // updates a user's settings
-app.post('/user/settings/update', checkCookieToken, function(req, res) {
+app.post('/user/settings/update', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -978,7 +1052,7 @@ app.get('/user/views', function(req, res) {
 });
 
 // creates a new view for a user
-app.post('/user/views/create', checkCookieToken, function(req, res) {
+app.post('/user/views/create', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1036,7 +1110,7 @@ app.post('/user/views/create', checkCookieToken, function(req, res) {
 });
 
 // deletes a user's specified view
-app.post('/user/views/delete', checkCookieToken, function(req, res) {
+app.post('/user/views/delete', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1076,7 +1150,7 @@ app.post('/user/views/delete', checkCookieToken, function(req, res) {
 });
 
 // updates a user's specified view
-app.post('/user/views/update', function(req, res) {
+app.post('/user/views/update', logAction(), function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1185,7 +1259,7 @@ app.get('/user/cron', function(req, res) {
 });
 
 // creates a new cron query for a user
-app.post('/user/cron/create', checkCookieToken, function(req, res) {
+app.post('/user/cron/create', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1240,7 +1314,7 @@ app.post('/user/cron/create', checkCookieToken, function(req, res) {
 });
 
 // deletes a user's specified cron query
-app.post('/user/cron/delete', checkCookieToken, function(req, res) {
+app.post('/user/cron/delete', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1316,7 +1390,7 @@ app.post('/user/cron/update', checkCookieToken, function(req, res) {
 });
 
 // changes a user's password
-app.post('/user/password/change', checkCookieToken, function(req, res) {
+app.post('/user/password/change', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1382,7 +1456,7 @@ app.get('/user/columns', function(req, res) {
 });
 
 // creates a new custom column configuration for a user
-app.post('/user/columns/create', checkCookieToken, function(req, res) {
+app.post('/user/columns/create', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1446,7 +1520,7 @@ app.post('/user/columns/create', checkCookieToken, function(req, res) {
 });
 
 // deletes a user's specified custom column configuration
-app.post('/user/columns/delete', checkCookieToken, function(req, res) {
+app.post('/user/columns/delete', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -1490,6 +1564,134 @@ app.post('/user/columns/delete', checkCookieToken, function(req, res) {
     });
   });
 });
+
+// gets custom spiview fields configurations for a user
+app.get('/user/spiview/fields', function(req, res) {
+  Db.getUserCache(req.user.userId, function(err, user) {
+    if (err || !user || !user.found) {
+      if (app.locals.noPasswordSecret) {
+        // TODO: send anonymous user's opened fields
+        return res.send('[]');
+      } else {
+        console.log('Unknown user', err, user);
+        return res.send('[]');
+      }
+    }
+
+    var fieldConfigurations = user._source.spiviewFieldConfigs || [];
+
+    return res.send(fieldConfigurations);
+  });
+});
+
+// creates a new custom spiview fields configuration for a user
+app.post('/user/spiview/fields/create', [checkCookieToken, logAction()], function(req, res) {
+  function error(status, text) {
+    res.status(status || 403);
+    return res.send(JSON.stringify({ success: false, text: text }));
+  }
+
+  if (req.query.userId && (req.query.userId !== req.user.userId) && !req.user.createEnabled) {
+    // user is trying to create a view for another user without admin privilege
+    return error(403, 'Need admin privileges');
+  }
+
+  if (!req.body.name)   { return error(403, 'Missing custom spiview field configuration name'); }
+  if (!req.body.fields) { return error(403, 'Missing fields'); }
+
+  var userId = req.user.userId;                         // get current user
+  if (req.query.userId) { userId = req.query.userId; }  // or requested user
+
+  Db.getUser(userId, function(err, user) {
+    if (err || !user.found) {
+      console.log('/user/columns/create failed', err, user);
+      return error(403, 'Unknown user');
+    }
+
+    req.body.name = req.body.name.replace(/[^-a-zA-Z0-9\s_:]/g, '');
+
+    if (req.body.name.length < 1) {
+      return error(403, 'Invalid custom spiview fields configuration name');
+    }
+
+    user = user._source;
+    user.spiviewFieldConfigs = user.spiviewFieldConfigs || [];
+
+    var duplicate = false;
+    // don't let user use duplicate names
+    for (var i = 0, len = user.spiviewFieldConfigs.length; i < len; ++i) {
+      if (req.body.name === user.spiviewFieldConfigs[i].name) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (duplicate) { return error(403, 'There is already a custom spiview fields configuration with that name'); }
+
+    user.spiviewFieldConfigs.push({
+      name  : req.body.name,
+      fields: req.body.fields
+    });
+
+    Db.setUser(user.userId, user, function(err, info) {
+      if (err) {
+        console.log('/user/spiview/fields/create error', err, info);
+        return error(500, 'Create custom spiview fields configuration failed');
+      }
+      return res.send(JSON.stringify({
+        success : true,
+        text    : 'Created custom spiview fields configuration successfully',
+        name    : req.body.name
+      }));
+    });
+  });
+});
+
+// deletes a user's specified custom spiview fields configuration
+app.post('/user/spiview/fields/delete', [checkCookieToken, logAction()], function(req, res) {
+  function error(status, text) {
+    res.status(status || 403);
+    return res.send(JSON.stringify({ success: false, text: text }));
+  }
+
+  if (req.query.userId && (req.query.userId !== req.user.userId) && !req.user.createEnabled) {
+    // user is trying to delete another user's view without admin privilege
+    return error(403, 'Need admin privileges');
+  }
+
+  if (!req.body.name) { return error(403, 'Missing custom spiview fields configuration name'); }
+
+  var userId = req.user.userId;                         // get current user
+  if (req.query.userId) { userId = req.query.userId; }  // or requested user
+
+  Db.getUser(userId, function(err, user) {
+    if (err || !user.found) {
+      console.log('/user/spiview/fields/delete failed', err, user);
+      return error(403, 'Unknown user');
+    }
+
+    user = user._source;
+    user.spiviewFieldConfigs = user.spiviewFieldConfigs || [];
+
+    for (var i = 0, len = user.spiviewFieldConfigs.length; i < len; ++i) {
+      if (req.body.name === user.spiviewFieldConfigs[i].name) {
+        user.spiviewFieldConfigs.splice(i, 1);
+        break;
+      }
+    }
+
+    Db.setUser(user.userId, user, function(err, info) {
+      if (err) {
+        console.log('/user/spiview/fields/delete failed', err, info);
+        return error(500, 'Delete custom spiview fields configuration failed');
+      }
+      return res.send(JSON.stringify({
+        success : true,
+        text    : 'Deleted custom spiview fields configuration successfully'
+      }));
+    });
+  });
+});
+
 
 app.get('/decodings', function(req, res) {
   var decodeItems = decode.settings();
@@ -1921,20 +2123,20 @@ function buildSessionQuery(req, buildCb) {
     }
   }
 
-
   if (req.query.facets) {
     query.aggregations = {mapG1: {terms: {field: "g1", size:1000, min_doc_count:1}},
-                          mapG2: {terms: {field: "g2", size:1000, min_doc_count:1}}
-                 };
+                          mapG2: {terms: {field: "g2", size:1000, min_doc_count:1}}};
+    query.aggregations.dbHisto = {aggregations: {db1: {sum: {field:"db1"}}, db2: {sum: {field:"db2"}}, pa1: {sum: {field:"pa1"}}, pa2: {sum: {field:"pa2"}}}};
+
     switch (req.query.bounding) {
     case "first":
-      query.aggregations.dbHisto = {histogram : {field: "fp", interval: interval, min_doc_count:1}, aggregations: {db : {sum: {field:"db"}}, pa: {sum: {field:"pa"}}}};
+       query.aggregations.dbHisto.histogram = { field:'fp', interval:interval, min_doc_count:1 };
       break;
     case "database":
-      query.aggregations.dbHisto = {histogram : {field: "timestamp", interval: interval*1000, min_doc_count:1}, aggregations: {db : {sum: {field:"db"}}, pa: {sum: {field:"pa"}}}};
+      query.aggregations.dbHisto.histogram = { field:'timestamp', interval:interval*1000, min_doc_count:1 };
       break;
     default:
-      query.aggregations.dbHisto = {histogram : {field: "lp", interval: interval, min_doc_count:1}, aggregations: {db : {sum: {field:"db"}}, pa: {sum: {field:"pa"}}}};
+      query.aggregations.dbHisto.histogram = { field:'lp', interval:interval, min_doc_count:1 };
       break;
     }
   }
@@ -2016,7 +2218,6 @@ function sessionsListAddSegments(req, indices, query, list, cb) {
     processedRo[fields.ro] = true;
 
     query.query.bool.filter.push({term: {ro: fields.ro}});
-
     Db.searchPrimary(indices, 'session', query, function(err, result) {
       if (err || result === undefined || result.hits === undefined || result.hits.hits === undefined) {
         console.log("ERROR fetching matching sessions", err, result);
@@ -2030,13 +2231,15 @@ function sessionsListAddSegments(req, indices, query, list, cb) {
       });
       return nextCb(null);
     });
+    query.query.bool.filter.pop();
+
   }, function (err) {
     cb(err, list);
   });
 }
 
 function sessionsListFromQuery(req, res, fields, cb) {
-  if (req.query.segments && fields.indexOf("ro") === -1) {
+  if (req.query.segments && req.query.segments.match(/^(time|all)$/) && fields.indexOf("ro") === -1) {
     fields.push("ro");
   }
 
@@ -2048,7 +2251,7 @@ function sessionsListFromQuery(req, res, fields, cb) {
           return res.send("Could not fetch list of sessions.  Err: " + err + " Result: " + result);
       }
       var list = result.hits.hits;
-      if (req.query.segments) {
+      if (req.query.segments && req.query.segments.match(/^(time|all)$/)) {
         sessionsListAddSegments(req, indices, query, list, function(err, list) {
           cb(err, list);
         });
@@ -2086,7 +2289,7 @@ function sessionsListFromIds(req, ids, fields, cb) {
       nextCb(null);
     });
   }, function(err) {
-    if (req && req.query.segments) {
+    if (req && req.query.segments && req.query.segments.match(/^(time|all)$/)) {
       buildSessionQuery(req, function(err, query, indices) {
         query._source = fields;
         sessionsListAddSegments(req, indices, query, list, function(err, list) {
@@ -2102,6 +2305,121 @@ function sessionsListFromIds(req, ids, fields, cb) {
 //////////////////////////////////////////////////////////////////////////////////
 //// APIs
 //////////////////////////////////////////////////////////////////////////////////
+app.get('/history/list', function(req, res) {
+  function error(status, text) {
+    res.status(status || 403);
+    return res.send(JSON.stringify({ success: false, text: text }));
+  }
+
+  var userId;
+  if (req.user.createEnabled) { // user is an admin, they can view all logs
+    // if the admin has requested a specific user
+    if (req.query.userId) { userId = req.query.userId; }
+  } else { // user isn't an admin, so they can only view their own logs
+    if (req.query.userId && req.query.userId !== req.user.userId) { return error(403, 'Need admin privileges'); }
+    userId = req.user.userId;
+  }
+
+  var query = {
+    sort: {},
+    from: +req.query.start  || 0,
+    size: +req.query.length || 1000
+  };
+
+  query.sort[req.query.sortField || 'timestamp'] = { order: req.query.desc === 'true' ? 'desc': 'asc'};
+
+  if (req.query.searchTerm || userId) {
+    query.query = { bool:{} };
+
+    if (req.query.searchTerm) { // apply search term
+      query.query.bool.must = [{
+        simple_query_string: {
+          fields: ['expression','userId','pathname','view.name','view.expression'],
+          query : req.query.searchTerm
+        }
+      }]
+    }
+
+    if (userId) { // filter on userId
+      query.query.bool.filter = {
+        term: { userId:userId }
+      };
+    }
+  }
+
+  if (req.query.pathname) { // filter on pathname (api endpoint)
+    if (!query.query) { query.query = { bool:{} }; }
+    if (!query.query.bool.filter) { query.query.bool.filter = { term:{} }; }
+    query.query.bool.filter.term.pathname = req.query.pathname;
+  }
+
+  if (req.query.exists) {
+    if (!query.query) { query.query = { bool:{} }; }
+    if (!query.query.bool.must) { query.query.bool.must = []; }
+    let existsArr = req.query.exists.split(',');
+    for (var i = 0, len = existsArr.length; i < len; ++i) {
+      query.query.bool.must.push({
+        exists: { field:existsArr[i] }
+      });
+    }
+  }
+
+  async.parallel({
+     logs: function (cb) {
+       Db.searchHistory(query, function(err, result) {
+         if (err || result.error) {
+           console.log("ERROR - history logs", err || result.error);
+           return error(500, 'Error retrieving log history');
+         } else {
+           var results = { total:result.hits.total, results:[] };
+           for (var i = 0, ilen = result.hits.hits.length; i < ilen; i++) {
+             var hit = result.hits.hits[i];
+             var log = hit._source;
+             log.id = hit._id;
+             log.index = hit._index;
+             results.results.push(log);
+           }
+           cb(null, results);
+         }
+       });
+     },
+     total: function (cb) {
+       Db.numberOfLogs(cb);
+     }
+   },
+   function(err, results) {
+     var r = {
+       recordsTotal: results.total,
+       recordsFiltered: results.logs.total,
+       data: results.logs.results
+     };
+     res.send(r);
+   });
+});
+
+app.delete('/history/list/:id', function(req, res) {
+  if (!req.user.createEnabled) {
+    res.status(403);
+    return res.send(JSON.stringify({ success: false, text: 'Need admin privileges' }));
+  }
+
+  if (!req.user.removeEnabled) {
+    res.status(403);
+    return res.send(JSON.stringify({ success: false, text: 'Need remove data privileges' }));
+  }
+
+  Db.deleteHistoryItem(req.params.id, req.query.index, function(err, result) {
+    if (err || result.error) {
+      console.log("ERROR - deleting history item", err || result.error);
+      res.status(500);
+      return res.send(JSON.stringify({ success: false, text: 'Error deleting history item' }));
+    } else {
+      res.send(JSON.stringify({success: true, text: "Deleted history item successfully"}));
+    }
+  });
+})
+
+
 app.get('/fields', function(req, res) {
   if (!app.locals.fieldsMap) {
     res.status(404);
@@ -2115,7 +2433,7 @@ app.get('/fields', function(req, res) {
   }
 });
 
-app.get('/file/list', function(req, res) {
+app.get('/file/list', logAction('files'), function(req, res) {
   var columns = ["num", "node", "name", "locked", "first", "filesize"];
 
   var query = {_source: columns,
@@ -2296,8 +2614,17 @@ app.get('/stats.json', function(req, res) {
                size: Math.min(10000, +req.query.length || 500)
               };
 
-  if (req.query.filter !== undefined) {
-    query.query = {wildcard: {nodeName: "*" + req.query.filter + "*"}};
+  if (req.query.filter !== undefined && req.query.filter !== '') {
+    let names = req.query.filter.split(',');
+    query.query = { bool: { should: [] } };
+    for (let i = 0, len = names.length; i < len; ++i) {
+      let name = names[i].trim();
+      if (name !== '') {
+        query.query.bool.should.push({
+          wildcard: {nodeName: '*' + name + '*'}
+        });
+      }
+    }
   }
 
   if (req.query.sortField !== undefined || req.query.desc !== undefined) {
@@ -2500,8 +2827,10 @@ function mapMerge(aggregations) {
 function graphMerge(req, query, aggregations) {
   var graph = {
     lpHisto: [],
-    dbHisto: [],
-    paHisto: [],
+    db1Histo: [],
+    db2Histo: [],
+    pa1Histo: [],
+    pa2Histo: [],
     xmin: req.query.startTime * 1000|| null,
     xmax: req.query.stopTime * 1000 || null,
     interval: query.aggregations?query.aggregations.dbHisto.histogram.interval || 60 : 60
@@ -2516,15 +2845,19 @@ function graphMerge(req, query, aggregations) {
     aggregations.dbHisto.buckets.forEach(function (item) {
       var key = item.key;
       graph.lpHisto.push([key, item.doc_count]);
-      graph.paHisto.push([key, item.pa.value]);
-      graph.dbHisto.push([key, item.db.value]);
+      graph.pa1Histo.push([key, item.pa1.value]);
+      graph.pa2Histo.push([key, item.pa2.value]);
+      graph.db1Histo.push([key, item.db1.value]);
+      graph.db2Histo.push([key, item.db2.value]);
     });
   } else {
     aggregations.dbHisto.buckets.forEach(function (item) {
       var key = item.key*1000;
       graph.lpHisto.push([key, item.doc_count]);
-      graph.paHisto.push([key, item.pa.value]);
-      graph.dbHisto.push([key, item.db.value]);
+      graph.pa1Histo.push([key, item.pa1.value]);
+      graph.pa2Histo.push([key, item.pa2.value]);
+      graph.db1Histo.push([key, item.db1.value]);
+      graph.db2Histo.push([key, item.db2.value]);
     });
   }
   return graph;
@@ -2639,7 +2972,7 @@ function flattenFields(fields) {
   return fields;
 }
 
-app.get('/sessions.json', function(req, res) {
+app.get('/sessions.json', logAction('sessions'), function(req, res) {
   var i;
 
   var graph = {};
@@ -2744,7 +3077,7 @@ app.get('/sessions.json', function(req, res) {
   });
 });
 
-app.get('/spigraph.json', function(req, res) {
+app.get('/spigraph.json', logAction('spigraph'), function(req, res) {
   function error(text) {
     res.status(403);
     return res.send(JSON.stringify({success: false, text: text}));
@@ -2833,11 +3166,11 @@ app.get('/spigraph.json', function(req, res) {
 
           r.graph = graphMerge(req, query, result.responses[i].aggregations);
           if (r.graph.xmin === null) {
-            r.graph.xmin = results.graph.xmin || results.graph.paHisto[0][0];
+            r.graph.xmin = results.graph.xmin || results.graph.pa1Histo[0][0];
           }
 
           if (r.graph.xmax === null) {
-            r.graph.xmax = results.graph.xmax || results.graph.paHisto[results.graph.paHisto.length-1][0];
+            r.graph.xmax = results.graph.xmax || results.graph.pa1Histo[results.graph.pa1Histo.length-1][0];
           }
 
           r.map = mapMerge(result.responses[i].aggregations);
@@ -2849,13 +3182,17 @@ app.get('/spigraph.json', function(req, res) {
             var graph = r.graph;
             for (var i = 0; i < graph.lpHisto.length; i++) {
               r.lpHisto += graph.lpHisto[i][1];
-              r.dbHisto += graph.dbHisto[i][1];
-              r.paHisto += graph.paHisto[i][1];
+              r.dbHisto += graph.db1Histo[i][1] + graph.db2Histo[i][1];
+              r.paHisto += graph.pa2Histo[i][1] + graph.pa2Histo[i][1];
             }
             if (results.items.length === result.responses.length) {
               var s = req.query.sort || "lpHisto";
-              results.items = results.items.sort(function(a,b) {return b[s]- a[s];});
-              //console.log("results", util.inspect(results, false, 50));
+              results.items = results.items.sort(function (a, b) {
+                var result;
+                if (s === 'name') { result = a.name.localeCompare(b.name); }
+                else { result = b[s] - a[s]; }
+                return result;
+              });
               return res.send(results);
             }
           });
@@ -2865,7 +3202,7 @@ app.get('/spigraph.json', function(req, res) {
   });
 });
 
-app.get('/spiview.json', function(req, res) {
+app.get('/spiview.json', logAction('spiview'), function(req, res) {
   if (req.query.spi === undefined) {
     return res.send({spi:{}, recordsTotal: 0, recordsFiltered: 0});
   }
@@ -2961,7 +3298,6 @@ app.get('/spiview.json', function(req, res) {
             });
 
             delete result.aggregations.dbHisto;
-            delete result.aggregations.paHisto;
             delete result.aggregations.mapG1;
             delete result.aggregations.mapG2;
             delete result.aggregations.protocols;
@@ -3038,7 +3374,7 @@ app.get('/spiview.json', function(req, res) {
   });
 });
 
-app.get('/dns.json', function(req, res) {
+app.get('/dns.json', logAction(), function(req, res) {
   console.log("dns.json", req.query);
   dns.reverse(req.query.ip, function (err, data) {
     if (err) {
@@ -3226,7 +3562,7 @@ function buildConnections(req, res, cb) {
   });
 }
 
-app.get('/connections.json', function(req, res) {
+app.get('/connections.json', logAction('connections'), function(req, res) {
   var health;
   Db.healthCache(function(err, h) {health = h;});
   buildConnections(req, res, function (err, nodes, links, total) {
@@ -3238,7 +3574,7 @@ app.get('/connections.json', function(req, res) {
   });
 });
 
-app.get('/connections.csv', function(req, res) {
+app.get('/connections.csv', logAction(), function(req, res) {
   res.setHeader("Content-Type", "application/force-download");
   var seperator = req.query.seperator || ",";
   buildConnections(req, res, function (err, nodes, links, total) {
@@ -3320,7 +3656,7 @@ function csvListWriter(req, res, list, fields, pcapWriter, extension) {
   res.end();
 }
 
-app.get(/\/sessions.csv.*/, function(req, res) {
+app.get(/\/sessions.csv.*/, logAction(), function(req, res) {
   noCache(req, res, "text/csv");
   // default fields to display in csv
   var fields = ["pr", "fp", "lp", "a1", "p1", "g1", "a2", "p2", "g2", "by", "db", "pa", "no"];
@@ -3344,7 +3680,7 @@ app.get(/\/sessions.csv.*/, function(req, res) {
   }
 });
 
-app.get('/uniqueValue.json', function(req, res) {
+app.get('/uniqueValue.json', logAction(), function(req, res) {
   if (!Config.get('valueAutoComplete', !Config.get('multiES', false))) {
     res.send([]);
     return;
@@ -3379,12 +3715,19 @@ app.get('/uniqueValue.json', function(req, res) {
   });
 });
 
-app.get('/unique.txt', function(req, res) {
-  if (req.query.field === undefined) {
-    return res.send("Missing field parameter");
+app.get('/unique.txt', logAction(), function(req, res) {
+  if (req.query.field === undefined && req.query.exp === undefined) {
+    return res.send("Missing field or exp parameter");
   }
 
   noCache(req, res);
+
+  // look up the field based on the expression
+  if (req.query.exp && !req.query.field) {
+    var field = Config.getFieldsMap()[req.query.exp];
+    if (field) { req.query.field = field.dbField; }
+    else { req.query.field = req.query.exp; }
+  }
 
   /* How should the results be written.  Use setImmediate to not blow stack frame */
   var writeCb;
@@ -3472,7 +3815,8 @@ app.get('/unique.txt', function(req, res) {
     break;
   }
 
-  if (req.query.field === "a1:p1" || req.query.field === "a2:p2") {
+  if (req.query.field === "ip.src:p1" || req.query.field === "ip.dst:p2" ||
+      req.query.field === "a1:p1" || req.query.field == "a2:p2") {
     eachCb = function(item, cb) {
       var key = Pcap.inet_ntoa(item.key);
       item.field2.buckets.forEach(function (item2) {
@@ -3526,9 +3870,9 @@ app.get('/unique.txt', function(req, res) {
         });
       });
     } else {
-      if (req.query.field === "a1:p1") {
+      if (req.query.field === "ip.src:p1" || req.query.field === "a1:p1") {
         query.aggregations = {field: { terms : {field : "a1", size: aggSize}, aggregations: {field2: {terms: {field: "p1", size: 100}}}}};
-      } else if (req.query.field === "a2:p2") {
+      } else if (req.query.field === "ip.dst:p2" || req.query.field === "a2:p2") {
         query.aggregations = {field: { terms : {field : "a2", size: aggSize}, aggregations: {field2: {terms: {field: "p2", size: 100}}}}};
       } else  {
         query.aggregations = {field: { terms : {field : req.query.field, size: aggSize}}};
@@ -3714,7 +4058,7 @@ function processSessionIdAndDecode(id, numPackets, doneCb) {
     } else if (packets[0].ip === undefined) {
       return doneCb(null, session, []);
     } else if (packets[0].ip.p === 1) {
-      Pcap.reassemble_icmp(packets, function(err, results) {
+      Pcap.reassemble_icmp(packets, numPackets, function(err, results) {
         return doneCb(err, session, results);
       });
     } else if (packets[0].ip.p === 6) {
@@ -3724,11 +4068,11 @@ function processSessionIdAndDecode(id, numPackets, doneCb) {
       } else {
         key = Pcap.inet_ntoa(session.a1);
       }
-      Pcap.reassemble_tcp(packets, key + ':' + session.p1, function(err, results) {
+      Pcap.reassemble_tcp(packets, numPackets, key + ':' + session.p1, function(err, results) {
         return doneCb(err, session, results);
       });
     } else if (packets[0].ip.p === 17) {
-      Pcap.reassemble_udp(packets, function(err, results) {
+      Pcap.reassemble_udp(packets, numPackets, function(err, results) {
         return doneCb(err, session, results);
       });
     } else {
@@ -3959,7 +4303,7 @@ function localSessionDetail(req, res) {
       session._err = "Couldn't decode pcap file, check viewer log";
       localSessionDetailReturn(req, res, session, []);
     } else if (packets[0].ip.p === 1) {
-      Pcap.reassemble_icmp(packets, function(err, results) {
+      Pcap.reassemble_icmp(packets, +req.query.packets || 200, function(err, results) {
         session._err = err;
         localSessionDetailReturn(req, res, session, results || []);
       });
@@ -3970,17 +4314,17 @@ function localSessionDetail(req, res) {
       } else {
         key = Pcap.inet_ntoa(session.a1);
       }
-      Pcap.reassemble_tcp(packets, key + ':' + session.p1, function(err, results) {
+      Pcap.reassemble_tcp(packets, +req.query.packets || 200, key + ':' + session.p1, function(err, results) {
         session._err = err;
         localSessionDetailReturn(req, res, session, results || []);
       });
     } else if (packets[0].ip.p === 17) {
-      Pcap.reassemble_udp(packets, function(err, results) {
+      Pcap.reassemble_udp(packets, +req.query.packets || 200, function(err, results) {
         session._err = err;
         localSessionDetailReturn(req, res, session, results || []);
       });
     } else if (packets[0].ip.p === 58) {
-      Pcap.reassemble_icmp(packets, function(err, results) {
+      Pcap.reassemble_icmp(packets, +req.query.packets || 200, function(err, results) {
         session._err = err;
         localSessionDetailReturn(req, res, session, results || []);
       });
@@ -3995,7 +4339,7 @@ function localSessionDetail(req, res) {
 /**
  * Get SPI data for a session
  */
-app.get('/:nodeName/session/:id/detail', function(req, res) {
+app.get('/:nodeName/session/:id/detail', logAction(), function(req, res) {
   Db.getWithOptions(Db.id2Index(req.params.id), 'session', req.params.id, {}, function(err, session) {
     if (err || !session.found) {
       return res.end("Couldn't look up SPI data, error for session " + req.params.id + " Error: " +  err);
@@ -4045,7 +4389,7 @@ app.get('/:nodeName/session/:id/detail', function(req, res) {
 /**
  * Get Session Packets
  */
-app.get('/:nodeName/session/:id/packets', function(req, res) {
+app.get('/:nodeName/session/:id/packets', logAction(), function(req, res) {
   isLocalView(req.params.nodeName, function () {
      noCache(req, res);
      req.packetsOnly = true;
@@ -4274,7 +4618,7 @@ app.get('/:nodeName/raw/:id.png', checkProxyRequest, function(req, res) {
     return res.send (internals.emptyPNG);
   }
 
-  processSessionIdAndDecode(req.params.id, 100, function(err, session, results) {
+  processSessionIdAndDecode(req.params.id, 1000, function(err, session, results) {
     if (err) {
       return res.send (internals.emptyPNG);
     }
@@ -4415,16 +4759,15 @@ function sessionsPcap(req, res, pcapWriter, extension) {
   }
 }
 
-app.get(/\/sessions.pcapng.*/, function(req, res) {
+app.get(/\/sessions.pcapng.*/, logAction(), function(req, res) {
   return sessionsPcap(req, res, writePcapNg, "pcapng");
 });
 
-app.get(/\/sessions.pcap.*/, function(req, res) {
+app.get(/\/sessions.pcap.*/, logAction(), function(req, res) {
   return sessionsPcap(req, res, writePcap, "pcap");
 });
 
-
-app.post('/changeSettings', checkToken, function(req, res) {
+app.post('/changeSettings', [checkToken, logAction()] , function(req, res) {
   function error(text) {
     return res.send(JSON.stringify({success: false, text: text}));
   }
@@ -4523,7 +4866,7 @@ internals.usersMissing = {
   emailSearch: 0,
   removeEnabled: 0
 };
-app.post('/user/list', function(req, res) {
+app.post('/user/list', logAction('users'), function(req, res) {
   var columns = ["userId", "userName", "expression", "enabled", "createEnabled", "webEnabled", "headerAuthEnabled", "emailSearch", "removeEnabled"];
 
   var query = {_source: columns,
@@ -4579,7 +4922,7 @@ app.post('/user/list', function(req, res) {
   });
 });
 
-app.post('/user/create', checkCookieToken, function(req, res) {
+app.post('/user/create', logAction(), checkCookieToken, function(req, res) {
   function error(text) {
     res.status(403);
     return res.send(JSON.stringify({success: false, text: text}));
@@ -4628,7 +4971,7 @@ app.post('/user/create', checkCookieToken, function(req, res) {
   });
 });
 
-app.post('/user/delete', checkCookieToken, function(req, res) {
+app.post('/user/delete', logAction(), checkCookieToken, function(req, res) {
   function error(text) {
     res.status(403);
     return res.send(JSON.stringify({success: false, text: text}));
@@ -4649,7 +4992,7 @@ app.post('/user/delete', checkCookieToken, function(req, res) {
   });
 });
 
-app.post('/user/update', checkCookieToken, function(req, res) {
+app.post('/user/update', logAction(), checkCookieToken, function(req, res) {
   function error(text) {
     res.status(403);
     return res.send(JSON.stringify({success: false, text: text}));
@@ -4695,7 +5038,7 @@ app.post('/user/update', checkCookieToken, function(req, res) {
     user.removeEnabled = req.body.removeEnabled === true;
 
     // Can only change createEnabled if it is currently turned on
-    if (req.body.createEnabled !== undefined && req.user.createEnabled && req.body.createEnabled) {
+    if (req.body.createEnabled !== undefined && req.user.createEnabled) {
       user.createEnabled = req.body.createEnabled === true;
     }
 
@@ -4706,14 +5049,14 @@ app.post('/user/update', checkCookieToken, function(req, res) {
   });
 });
 
-app.post('/tableState/:tablename', function(req, res) {
+app.post('/state/:name', function(req, res) {
   function error(text) {
     return res.send(JSON.stringify({success: false, text: text}));
   }
 
   Db.getUser(req.user.userId, function(err, user) {
     if (err || !user.found) {
-      console.log("save tableState failed", err, user);
+      console.log("save state failed", err, user);
       return error("Unknown user");
     }
     user = user._source;
@@ -4721,28 +5064,28 @@ app.post('/tableState/:tablename', function(req, res) {
     if (!user.tableStates) {
       user.tableStates = {};
     }
-    user.tableStates[req.params.tablename] = req.body;
+    user.tableStates[req.params.name] = req.body;
     Db.setUser(user.userId, user, function(err, info) {
       if (err) {
-        console.log("tableState error", err, info);
-        return error("tableState update failed");
+        console.log("state error", err, info);
+        return error("state update failed");
       }
-      return res.send(JSON.stringify({success: true, text: "updated table state successfully"}));
+      return res.send(JSON.stringify({success: true, text: "updated state successfully"}));
     });
   });
 });
 
-app.get('/tableState/:tablename', function(req, res) {
+app.get('/state/:name', function(req, res) {
   Db.getUserCache(req.user.userId, function(err, user) {
     if (err || !user.found) {
       console.log("Unknown user", err, user);
       return res.send("{}");
     }
     user = user._source;
-    if (!user.tableStates || !user.tableStates[req.params.tablename]) {
+    if (!user.tableStates || !user.tableStates[req.params.name]) {
       return res.send("{}");
     }
-    return res.send(user.tableStates[req.params.tablename]);
+    return res.send(user.tableStates[req.params.name]);
   });
 });
 
@@ -5645,9 +5988,9 @@ app.post('/sendSessions', function(req, res) {
   }
 });
 
-app.post('/upload', function(req, res) {
+app.post('/upload', multer({dest:'/tmp'}).single('file'), function (req, res) {
   var exec = require('child_process').exec,
-      child;
+     child;
 
   var tags = "";
   if (req.body.tag) {
@@ -5660,10 +6003,10 @@ app.post('/upload', function(req, res) {
   }
 
   var cmd = Config.get("uploadCommand")
-              .replace("{TAGS}", tags)
-              .replace("{NODE}", Config.nodeName())
-              .replace("{TMPFILE}", req.files.file.path)
-              .replace("{CONFIG}", Config.getConfigFile());
+     .replace("{TAGS}", tags)
+     .replace("{NODE}", Config.nodeName())
+     .replace("{TMPFILE}", req.file.path)
+     .replace("{CONFIG}", Config.getConfigFile());
   console.log("upload command: ", cmd);
   child = exec(cmd, function (error, stdout, stderr) {
     res.write("<b>" + cmd + "</b><br>");
@@ -5673,7 +6016,7 @@ app.post('/upload', function(req, res) {
     if (error !== null) {
       console.log("exec error: " + error);
     }
-    fs.unlink(req.files.file.path);
+    fs.unlink(req.file.path);
   });
 });
 
@@ -5687,7 +6030,30 @@ if (Config.get("regressionTests")) {
     Db.flushCache();
     res.send("{}");
   });
+  app.get('/processCronQueries', function(req, res) {
+    processCronQueries();
+    res.send("{}");
+  });
 }
+
+app.use('/cyberchef.htm', function(req, res) {
+  res.sendFile('./public/cyberchef.htm');
+});
+
+/* cyberchef endpoint - loads the src or dst packets for a session and
+ * sends them to cyberchef */
+app.get("/:nodeName/session/:id/cyberchef", checkWebEnabled, checkProxyRequest, function(req, res) {
+  processSessionIdAndDecode(req.params.id, 10000, function(err, session, results) {
+    if (err) { return res.send("Error"); }
+
+    let data = '';
+    for (var i = (req.query.type !== 'dst'?0:1), ilen = results.length; i < ilen; i+=2) {
+      data += results[i].data.toString('hex');
+    }
+
+    res.render('cyberchef.pug', { value: data });
+  });
+});
 
 
 app.use(express.static(__dirname + '/views'));
@@ -5765,10 +6131,14 @@ function processCronQuery(cq, options, query, endTime, cb) {
             Db.update("queries", "query", options.qid, document, {refresh: 1}, function () {});
           }
 
-          Db.scroll({
-            body: result._scroll_id,
+          query = {
+            body: {
+              scroll_id: result._scroll_id,
+            },
             scroll: '600s'
-          }, getMoreUntilDone);
+          };
+
+          Db.scroll(query, getMoreUntilDone);
         }
 
         if (err || result.error) {

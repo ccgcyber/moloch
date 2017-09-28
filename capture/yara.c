@@ -1,6 +1,6 @@
 /* yara.c  -- Functions dealing with yara library
  *
- * Copyright 2012-2016 AOL Inc. All rights reserved.
+ * Copyright 2012-2017 AOL Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this Software except in compliance with the License.
@@ -402,49 +402,29 @@ int moloch_yara_callback(RULE* rule, MolochSession_t* session)
 /******************************************************************************/
 int yr_scan_mem_blocks(MEMORY_BLOCK* block, YARA_CONTEXT* context, YARACALLBACK callback, void* user_data);
 
-void  moloch_yara_execute(MolochSession_t *session, const uint8_t *data, int len, int first)
+void  moloch_yara_execute(MolochSession_t *session, const uint8_t *data, int len, int UNUSED(first))
 {
     MEMORY_BLOCK block;
 
-    if (first) {
-        block.data = (uint8_t *)data;
-        block.size = len;
-        block.base = 0;
-    } else if (len == 1) {
-        block.data = (uint8_t *)data+1;
-        block.size = len-1;
-        block.base = 1;
-    } else {
-        block.data = (uint8_t *)data+2;
-        block.size = len-2;
-        block.base = 2;
-    }
+    block.data = (uint8_t *)data;
+    block.size = len;
+    block.base = 0;
     block.next = NULL;
 
     yr_scan_mem_blocks(&block, yContext[session->thread], (YARACALLBACK)moloch_yara_callback, session);
     return;
 }
 /******************************************************************************/
-void moloch_yara_email_execute(MolochSession_t *session, const uint8_t *data, int len, int first)
+void moloch_yara_email_execute(MolochSession_t *session, const uint8_t *data, int len, int UNUSED(first))
 {
     MEMORY_BLOCK block;
 
     if (!config.emailYara)
         return;
 
-    if (first) {
-        block.data = (uint8_t *)data;
-        block.size = len;
-        block.base = 0;
-    } else if (len == 1) {
-        block.data = (uint8_t *)data+1;
-        block.size = len-1;
-        block.base = 1;
-    } else {
-        block.data = (uint8_t *)data+2;
-        block.size = len-2;
-        block.base = 2;
-    }
+    block.data = (uint8_t *)data;
+    block.size = len;
+    block.base = 0;
     block.next = NULL;
 
     yr_scan_mem_blocks(&block, yEmailContext[session->thread], (YARACALLBACK)moloch_yara_callback, session);

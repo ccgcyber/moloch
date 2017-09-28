@@ -9,7 +9,7 @@
    * @example
    * '<session-field field="::fieldObj" expr="src.ip"
    *   value="{{::sessionObj.field}}" session="::sessionObj"
-   *   parse="true"></session-field>'
+   *   parse="true" session-btn="true"></session-field>'
    */
   class SessionFieldController {
 
@@ -17,6 +17,7 @@
      * Initialize global variables for this controller
      * @param $scope          Angular application model object
      * @param $filter         Filters format the value of an expression
+     * @param $window         Angular's reference to the browser's window object
      * @param $location       Exposes browser address bar URL (based on the window.location)
      * @param FieldService    Retrieves available fields from the server
      * @param ConfigService   Transacts app configurations with the server
@@ -24,9 +25,11 @@
      *
      * @ngInject
      */
-    constructor($scope, $filter, $location, FieldService, ConfigService, SessionService) {
+    constructor($scope, $filter, $window, $location,
+                FieldService, ConfigService, SessionService) {
       this.$scope         = $scope;
       this.$filter        = $filter;
+      this.$window        = $window;
       this.$location      = $location;
       this.FieldService   = FieldService;
       this.ConfigService  = ConfigService;
@@ -59,22 +62,46 @@
      * @param {string} op     The relational operator
      * @param {object} $event The click event that triggered this function
      */
-    fieldClick(field, value, op, $event) {
+    fieldClick(field, value, op, andor, $event) {
       $event.preventDefault();
       $event.stopPropagation();
 
-      // close the dropdown
-      this.isopen = false;
+      this.isopen = false; // close the dropdown
 
-      // for values required to be strings in the search expression
-      let str = /[^-+a-zA-Z0-9_.@:*?/]+/.test(value);
-      // escape unescaped quotes
-      value = value.replace(/\\([\s\S])|(")/g, "\\$1$2");
-      if (str) { value = `"${value}"`; }
+      let fullExpression = this.buildExpression(field, value, op);
 
-      let fullExpression = `${field} ${op} ${value}`;
+      this.$scope.$emit('add:to:search', { expression: fullExpression, op: andor });
+    }
 
-      this.$scope.$emit('add:to:search', { expression: fullExpression });
+    /**
+     * Triggered when a the Open in Sessions menu item is clicked for a field
+     * Redirects the user to the sessions page with the new expression
+     * The url needs to be constructed so there is only one browser history entry
+     * @param {string} field  The field name
+     * @param {string} value  The field value
+     * @param {string} op     The relational operator
+     * @param {object} $event The click event that triggered this function
+     */
+    goToSessions(field, value, op, $event) {
+      this.fieldClick(field, value, op, null, $event);
+
+      let newUrl = this.$filter('buildUrl')('sessions');
+      this.$window.location.href = newUrl;
+    }
+
+    /**
+     * Triggered when a the Open in Sessions New Tab menu item is clicked for a field
+     * Opens a new tab of the sessions page with the new expression
+     * @param {string} field  The field name
+     * @param {string} value  The field value
+     * @param {string} op     The relational operator
+     * @param {object} $event The click event that triggered this function
+     */
+    newTabSessions(field, value, op, $event) {
+      let fullExpression = this.buildExpression(field, value, op);
+
+      let url = this.$filter('buildUrl')('sessions', fullExpression);
+      this.$window.open(url, '_blank');
     }
 
     /**
@@ -146,6 +173,24 @@
       } else {
         return { field:this.expr, category:[this.field.category], info:this.field };
       }
+    }
+
+    /**
+     * Builds an expression for search.
+     * Stringifies necessary values and escapes necessary characters
+     * @param {string} field  The field name
+     * @param {string} value  The field value
+     * @param {string} op     The relational operator
+     * @returns {string}      The fully built expression
+     */
+    buildExpression(field, value, op) {
+      // for values required to be strings in the search expression
+      let str = /[^-+a-zA-Z0-9_.@:*?/]+/.test(value);
+      // escape unescaped quotes
+      value = value.replace(/\\([\s\S])|(")/g, "\\$1$2");
+      if (str) { value = `"${value}"`; }
+
+      return `${field} ${op} ${value}`;
     }
 
     /* Parses a session field value based on its type */
@@ -253,6 +298,14 @@
             continue;
           }
 
+          if (this.molochClickables[key].func !== undefined) {
+            let v = this.molochClickables[key].func(key, text);
+            if (v !== undefined) {
+              this.menuItems[key] = v;
+            }
+            continue;
+          }
+
           let result = this.molochClickables[key].url
              .replace('%EXPRESSION%', encodeURIComponent(urlParams.expression))
              .replace('%DATE%', dateparams)
@@ -291,7 +344,7 @@
 
   }
 
-  SessionFieldController.$inject = ['$scope','$filter','$location',
+  SessionFieldController.$inject = ['$scope','$filter','$window','$location',
     'FieldService','ConfigService','SessionService'];
 
 
@@ -330,7 +383,12 @@
 
         // what timezone date fields should be in ('gmt' or 'local')
         // [required for time values]
-        timezone  : '@'
+        timezone  : '@',
+
+        // whether to display a button to add the field value to
+        // the expression and open the sessions tab
+        // [optional, default is false]
+        sessionBtn: '@'
       }
     });
 

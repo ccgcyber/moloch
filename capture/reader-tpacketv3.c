@@ -1,7 +1,7 @@
 /******************************************************************************/
 /* reader-tpacketv3.c  -- Reader using tpacketv3
  *
- * Copyright 2012-2016 AOL Inc. All rights reserved.
+ * Copyright 2012-2017 AOL Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this Software except in compliance with the License.
@@ -65,7 +65,6 @@ LOCAL MolochTPacketV3_t infos[MAX_INTERFACES];
 LOCAL int numThreads;
 
 extern MolochPcapFileHdr_t   pcapFileHeader;
-LOCAL struct bpf_program    *bpf_programs[MOLOCH_FILTER_MAX];
 LOCAL struct bpf_program     bpf;
 
 LOCAL MolochReaderStats_t gStats;
@@ -88,21 +87,6 @@ int reader_tpacketv3_stats(MolochReaderStats_t *stats)
     }
     *stats = gStats;
     MOLOCH_UNLOCK(gStats);
-    return 0;
-}
-/******************************************************************************/
-int reader_tpacketv3_should_filter(const MolochPacket_t *packet, enum MolochFilterType *type, int *index)
-{
-    int t, i;
-    for (t = 0; t < MOLOCH_FILTER_MAX; t++) {
-        for (i = 0; i < config.bpfsNum[t]; i++) {
-            if (bpf_filter(bpf_programs[t][i].bf_insns, packet->pkt, packet->pktlen, packet->pktlen)) {
-                *type = t;
-                *index = i;
-                return 1;
-            }
-        }
-    }
     return 0;
 }
 /******************************************************************************/
@@ -160,7 +144,7 @@ static void *reader_tpacketv3_thread(gpointer infov)
         for (p = 0; p < tbd->hdr.bh1.num_pkts; p++) {
             if (unlikely(th->tp_snaplen != th->tp_len)) {
                 LOGEXIT("ERROR - Moloch requires full packet captures caplen: %d pktlen: %d\n"
-                    "turning offloading off may fix, something like 'ethtool -K INTERFACE tx off sg off gro off gso off lro off tso off'",
+                    "See https://github.com/aol/moloch/wiki/FAQ#Moloch_requires_full_packet_captures_error",
                     th->tp_snaplen, th->tp_len);
             }
 
@@ -183,30 +167,7 @@ static void *reader_tpacketv3_thread(gpointer infov)
 }
 /******************************************************************************/
 void reader_tpacketv3_start() {
-    pcap_t *dpcap = pcap_open_dead(pcapFileHeader.linktype, pcapFileHeader.snaplen);
-
-    int t;
-    for (t = 0; t < MOLOCH_FILTER_MAX; t++) {
-        if (config.bpfsNum[t]) {
-            int i;
-            if (bpf_programs[t]) {
-                for (i = 0; i < config.bpfsNum[t]; i++) {
-                    pcap_freecode(&bpf_programs[t][i]);
-                }
-            } else {
-                bpf_programs[t] = malloc(config.bpfsNum[t]*sizeof(struct bpf_program));
-            }
-            for (i = 0; i < config.bpfsNum[t]; i++) {
-                if (pcap_compile(dpcap, &bpf_programs[t][i], config.bpfs[t][i], 1, PCAP_NETMASK_UNKNOWN) == -1) {
-                    LOG("ERROR - Couldn't compile filter: '%s' with %s", config.bpfs[t][i], pcap_geterr(dpcap));
-                    exit(1);
-                }
-            }
-            moloch_reader_should_filter = reader_tpacketv3_should_filter;
-        }
-    }
-
-    int i;
+    int i, t;
     char name[100];
     for (i = 0; i < MAX_INTERFACES && config.interface[i]; i++) {
         for (t = 0; t < numThreads; t++) {
@@ -238,8 +199,8 @@ void reader_tpacketv3_init(char *UNUSED(name))
         LOGEXIT("block size %d not divisible by %d", blocksize, config.snapLen);
     }
 
-    pcapFileHeader.linktype = 1;
-    pcapFileHeader.snaplen = config.snapLen;
+    moloch_packet_set_linksnap(1, config.snapLen);
+
     pcap_t *dpcap = pcap_open_dead(pcapFileHeader.linktype, pcapFileHeader.snaplen);
 
     if (config.bpf) {
@@ -291,7 +252,7 @@ void reader_tpacketv3_init(char *UNUSED(name))
         if (unlikely(infos[i].map == MAP_FAILED)) {
             LOGEXIT("ERROR - MMap64 failure in reader_tpacketv3_init, %d: %s",errno, strerror(errno));
         }
-        infos[i].rd = malloc(infos[i].req.tp_block_nr * sizeof(*infos[i].rd));
+        infos[i].rd = malloc(infos[i].req.tp_block_nr * sizeof(struct iovec));
 
         uint16_t j;
         for (j = 0; j < infos[i].req.tp_block_nr; j++) {

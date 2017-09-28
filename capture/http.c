@@ -1,6 +1,6 @@
 /* http.c  -- Functions dealing with http connections.
  *
- * Copyright 2012-2016 AOL Inc. All rights reserved.
+ * Copyright 2012-2017 AOL Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this Software except in compliance with the License.
@@ -83,9 +83,6 @@ static int                     requestsTimer;
 static MOLOCH_LOCK_DEFINE(requests);
 
 uint64_t connectionsSet[2048];
-#define BIT_ISSET(bit, bits) ((bits[bit/64] & (1 << (bit % 64))) != 0)
-#define BIT_SET(bit, bits) bits[bit/64] |= (1 << (bit % 64))
-#define BIT_CLR(bit, bits) bits[bit/64] &= ~(1 << (bit % 64))
 
 struct molochhttpserver_t {
     uint64_t              dropped;
