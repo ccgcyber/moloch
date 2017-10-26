@@ -17,7 +17,7 @@
  */
 'use strict';
 
-var MIN_DB_VERSION = 36;
+var MIN_DB_VERSION = 37;
 
 //// Modules
 //////////////////////////////////////////////////////////////////////////////////
@@ -138,6 +138,7 @@ app.use(function(req, res, next) {
   if (res.setTimeout) {
     res.setTimeout(10 * 60 * 1000); // Increase default from 2 min to 10 min
   }
+
   req.url = req.url.replace(Config.basePath(), "/");
   return next();
 });
@@ -704,7 +705,7 @@ function logAction(uiPage) {
       timestamp : Math.floor(Date.now()/1000),
       method    : req.method,
       userId    : req.user.userId,
-      pathname  : req._parsedUrl.pathname,
+      api       : req._parsedUrl.pathname,
       query     : req._parsedUrl.query,
       expression: req.query.expression
     }
@@ -727,9 +728,36 @@ function logAction(uiPage) {
       }
     }
 
-    Db.historyIt(log, function(err, info) {
-      if (err) { console.log('log history error', err, info); }
-    });
+    // save the request body
+    var avoidProps  = { password:true, newPassword:true, currentPassword:true };
+    var bodyClone   = {};
+
+    for (var key in req.body) {
+      if (req.body.hasOwnProperty(key) && !avoidProps[key]) {
+        bodyClone[key] = req.body[key];
+      }
+    }
+
+    if (Object.keys(bodyClone).length > 0) {
+      log.body = bodyClone;
+    }
+
+    res.logCounts = function(recordsReturned, recordsFiltered, recordsTotal) {
+      log.recordsReturned = recordsReturned;
+      log.recordsFiltered = recordsFiltered;
+      log.recordsTotal    = recordsTotal;
+    }
+
+    req._molochStartTime = new Date();
+    function finish () {
+      log.queryTime = new Date() - req._molochStartTime;
+      res.removeListener('finish', finish);
+      Db.historyIt(log, function(err, info) {
+        if (err) { console.log('log history error', err, info); }
+      });
+    }
+
+    res.on('finish', finish);
 
     return next();
   }
@@ -1340,7 +1368,7 @@ app.post('/user/cron/delete', [checkCookieToken, logAction()], function(req, res
 });
 
 // updates a user's specified cron query
-app.post('/user/cron/update', checkCookieToken, function(req, res) {
+app.post('/user/cron/update', [checkCookieToken, logAction()], function(req, res) {
   function error(status, text) {
     res.status(status || 403);
     return res.send(JSON.stringify({ success: false, text: text }));
@@ -2123,6 +2151,24 @@ function buildSessionQuery(req, buildCb) {
     }
   }
 
+  switch (req.query.interval) {
+  case "second":
+    interval = 1;
+    break;
+  case "minute":
+    interval = 60;
+    break;
+  case "hour":
+    interval = 60*60;
+    break;
+  case "day":
+    interval = 60*60*24;
+    break;
+  case "week":
+    interval = 60*60*24*7;
+    break;
+  }
+
   if (req.query.facets) {
     query.aggregations = {mapG1: {terms: {field: "g1", size:1000, min_doc_count:1}},
                           mapG2: {terms: {field: "g2", size:1000, min_doc_count:1}}};
@@ -2329,33 +2375,33 @@ app.get('/history/list', function(req, res) {
   query.sort[req.query.sortField || 'timestamp'] = { order: req.query.desc === 'true' ? 'desc': 'asc'};
 
   if (req.query.searchTerm || userId) {
-    query.query = { bool:{} };
+    query.query = { bool: { must: [] } };
 
     if (req.query.searchTerm) { // apply search term
-      query.query.bool.must = [{
-        simple_query_string: {
-          fields: ['expression','userId','pathname','view.name','view.expression'],
-          query : req.query.searchTerm
+      query.query.bool.must.push({
+        query_string: {
+          query : req.query.searchTerm,
+          fields: ['expression','userId','api','view.name','view.expression']
         }
-      }]
+      });
     }
 
     if (userId) { // filter on userId
-      query.query.bool.filter = {
-        term: { userId:userId }
-      };
+      query.query.bool.must.push({
+        wildcard: { userId: '*' + userId + '*' }
+      });
     }
   }
 
-  if (req.query.pathname) { // filter on pathname (api endpoint)
-    if (!query.query) { query.query = { bool:{} }; }
-    if (!query.query.bool.filter) { query.query.bool.filter = { term:{} }; }
-    query.query.bool.filter.term.pathname = req.query.pathname;
+  if (req.query.api) { // filter on api endpoint
+    if (!query.query) { query.query = { bool: { must: [] } }; }
+    query.query.bool.must.push({
+      wildcard: { api: '*' + req.query.api + '*' }
+    });
   }
 
   if (req.query.exists) {
-    if (!query.query) { query.query = { bool:{} }; }
-    if (!query.query.bool.must) { query.query.bool.must = []; }
+    if (!query.query) { query.query = { bool: { must: [] } }; }
     let existsArr = req.query.exists.split(',');
     for (var i = 0, len = existsArr.length; i < len; ++i) {
       query.query.bool.must.push({
@@ -2364,12 +2410,35 @@ app.get('/history/list', function(req, res) {
     }
   }
 
+  // filter history table by a time range
+  if (req.query.startTime && req.query.stopTime) {
+    if (! /^[0-9]+$/.test(req.query.startTime)) {
+      req.query.startTime = Date.parse(req.query.startTime.replace("+", " "))/1000;
+    } else {
+      req.query.startTime = parseInt(req.query.startTime, 10);
+    }
+
+    if (! /^[0-9]+$/.test(req.query.stopTime)) {
+      req.query.stopTime = Date.parse(req.query.stopTime.replace("+", " "))/1000;
+    } else {
+      req.query.stopTime = parseInt(req.query.stopTime, 10);
+    }
+
+    if (!query.query) { query.query = { bool: {} }; }
+    query.query.bool.filter = [{
+      range: { timestamp: {
+        gte: req.query.startTime,
+        lte: req.query.stopTime
+      } }
+    }];
+  }
+
   async.parallel({
      logs: function (cb) {
        Db.searchHistory(query, function(err, result) {
          if (err || result.error) {
            console.log("ERROR - history logs", err || result.error);
-           return error(500, 'Error retrieving log history');
+           return error(500, 'Error retrieving log history - ' + err || result.error);
          } else {
            var results = { total:result.hits.total, results:[] };
            for (var i = 0, ilen = result.hits.hits.length; i < ilen; i++) {
@@ -2480,6 +2549,7 @@ app.get('/file/list', logAction('files'), function(req, res) {
     var r = {recordsTotal: results.total,
              recordsFiltered: results.files.total,
              data: results.files.results};
+    res.logCounts(r.data.length, r.recordsFiltered, r.total);
     res.send(r);
   });
 });
@@ -3069,6 +3139,7 @@ app.get('/sessions.json', logAction('sessions'), function(req, res) {
                health: results.health,
                map: map,
                data: (results.sessions?results.sessions.results:[])};
+      res.logCounts(r.data.length, r.recordsFiltered, r.recordsTotal);
       try {
         res.send(r);
       } catch (c) {
@@ -3364,6 +3435,7 @@ app.get('/spiview.json', logAction('spiview'), function(req, res) {
                protocols: protocols,
                bsqErr: bsqErr
           };
+          res.logCounts(r.spi.count, r.recordsFiltered, r.total);
           try {
             res.send(r);
           } catch (c) {
@@ -3897,12 +3969,16 @@ app.get('/unique.txt', logAction(), function(req, res) {
 });
 
 function processSessionIdDisk(session, headerCb, packetCb, endCb, limit) {
+  var fields;
+
   function processFile(pcap, pos, i, nextCb) {
     pcap.ref();
     pcap.readPacket(pos, function(packet) {
       switch(packet) {
       case null:
-        endCb("Error loading data for session " + session._id, null);
+        var msg = util.format(session._id, "in file", pcap.filename, "couldn't read packet at", pos, "packet #", i, "of", fields.ps.length);
+        console.log("ERROR - processSessionIdDisk -", msg);
+        endCb(msg, null);
         break;
       case undefined:
         break;
@@ -3913,8 +3989,6 @@ function processSessionIdDisk(session, headerCb, packetCb, endCb, limit) {
       pcap.unref();
     });
   }
-
-  var fields;
 
   fields = session._source || session.fields;
 
@@ -4050,7 +4124,8 @@ function processSessionIdAndDecode(id, numPackets, doneCb) {
   },
   function(err, session) {
     if (err) {
-      return doneCb("error");
+      console.log("ERROR - processSessionIdAndDecode", err);
+      return doneCb(err);
     }
     packets = packets.filter(Boolean);
     if (packets.length === 0) {
@@ -4273,8 +4348,8 @@ function localSessionDetail(req, res) {
     cb(null);
   },
   function(err, session) {
-    if (err && session === null) {
-      return res.end("Couldn't look up SPI data, error for session " + req.params.id + " Error: " +  err);
+    if (err) {
+      return res.end("Problem loading packets for " + req.params.id + " Error: " + err);
     }
     session.id = req.params.id;
 
@@ -4490,7 +4565,7 @@ app.get('/:nodeName/:id/bodypng/:bodyType/:bodyNum/:bodyName', checkProxyRequest
 });
 
 function writePcap(res, id, options, doneCb) {
-  var b = new Buffer(0xfffe);
+  var b = Buffer.alloc(0xfffe);
   var nextPacket = 0;
   var boffset = 0;
   var packets = {};
@@ -4514,7 +4589,7 @@ function writePcap(res, id, options, doneCb) {
       if (boffset + buffer.length > b.length) {
         res.write(b.slice(0, boffset));
         boffset = 0;
-        b = new Buffer(0xfffe);
+        b = Buffer.alloc(0xfffe);
       }
       buffer.copy(b, boffset, 0, buffer.length);
       boffset += buffer.length;
@@ -4531,7 +4606,7 @@ function writePcap(res, id, options, doneCb) {
 }
 
 function writePcapNg(res, id, options, doneCb) {
-  var b = new Buffer(0xfffe);
+  var b = Buffer.alloc(0xfffe);
   var boffset = 0;
 
   processSessionId(id, true, function (pcap, buffer) {
@@ -4544,7 +4619,7 @@ function writePcapNg(res, id, options, doneCb) {
     if (boffset + buffer.length + 20 > b.length) {
       res.write(b.slice(0, boffset));
       boffset = 0;
-      b = new Buffer(0xfffe);
+      b = Buffer.alloc(0xfffe);
     }
 
     /* Need to write the ng block, and conver the old timestamp */
@@ -4581,7 +4656,7 @@ function writePcapNg(res, id, options, doneCb) {
     var json = JSON.stringify(session);
 
     var len = ((json.length + 20 + 3) >> 2) << 2;
-    b = new Buffer(len);
+    b = Buffer.alloc(len);
 
     b.writeUInt32LE(0x80808080, 0);               // Block Type
     b.writeUInt32LE(len, 4);                      // Block Len 1
@@ -4627,7 +4702,7 @@ app.get('/:nodeName/raw/:id.png', checkProxyRequest, function(req, res) {
     for (i = (req.query.type !== 'dst'?0:1), ilen = results.length; i < ilen; i+=2) {
       size += results[i].data.length + 2*internals.PNG_LINE_WIDTH - (results[i].data.length % internals.PNG_LINE_WIDTH);
     }
-    var buffer = new Buffer(size);
+    var buffer = Buffer.alloc(size);
     var pos = 0;
     if (size === 0) {
       return res.send (internals.emptyPNG);
@@ -4702,7 +4777,7 @@ function sessionsPcapList(req, res, list, pcapWriter, extension) {
     function () {
       // Get from remote DISK
       getViewUrl(fields.no, function(err, viewUrl, client) {
-        var buffer = new Buffer(fields.pa*20 + fields.by);
+        var buffer = Buffer.alloc(fields.pa*20 + fields.by);
         var bufpos = 0;
         var info = url.parse(viewUrl);
         info.path = Config.basePath(fields.no) + fields.no + "/" + extension + "/" + item._id + "." + extension;
@@ -4713,7 +4788,7 @@ function sessionsPcapList(req, res, list, pcapWriter, extension) {
         var preq = client.request(info, function(pres) {
           pres.on('data', function (chunk) {
             if (bufpos + chunk.length > buffer.length) {
-              var tmp = new Buffer(buffer.length + chunk.length*10);
+              var tmp = Buffer.alloc(buffer.length + chunk.length*10);
               buffer.copy(tmp, 0, 0, bufpos);
               buffer = tmp;
             }
@@ -4767,31 +4842,6 @@ app.get(/\/sessions.pcap.*/, logAction(), function(req, res) {
   return sessionsPcap(req, res, writePcap, "pcap");
 });
 
-app.post('/changeSettings', [checkToken, logAction()] , function(req, res) {
-  function error(text) {
-    return res.send(JSON.stringify({success: false, text: text}));
-  }
-
-  Db.getUser(req.token.suserId, function(err, user) {
-    if (err || !user.found) {
-      console.log("changeSettings failed", err, user);
-      return error("Unknown user");
-    }
-
-    user = user._source;
-    user.settings = req.body;
-    delete user.settings.token;
-
-    Db.setUser(user.userId, user, function(err, info) {
-      if (err) {
-        console.log("changeSettings error", err, info);
-        return error("Change settings update failed");
-      }
-      return res.send(JSON.stringify({success: true, text: "Changed password successfully"}));
-    });
-  });
-});
-
 app.get('/user/settings', function(req, res) {
   Db.getUserCache(req.user.userId, function(err, user) {
     if (err || !user || !user.found) {
@@ -4825,33 +4875,6 @@ app.get('/user/views', function(req, res) {
     var views = user._source.views || {};
 
     return res.send(views);
-  });
-});
-
-app.post('/user/views/delete', checkCookieToken, function(req, res) {
-  function error(text) {
-    return res.send(JSON.stringify({success: false, text: text}));
-  }
-
-  if (!req.body.view) { return error("Missing view"); }
-
-  Db.getUser(req.token.userId, function(err, user) {
-    if (err || !user.found) {
-      console.log("Delete view failed", err, user);
-      return error("Unknown user");
-    }
-
-    user = user._source;
-    user.views = user.views || {};
-    delete user.views[req.body.view];
-
-    Db.setUser(user.userId, user, function(err, info) {
-      if (err) {
-        console.log("Delete view failed", err, info);
-        return error("Delete view failed");
-      }
-      return res.send(JSON.stringify({success: true, text: "Deleted view successfully"}));
-    });
   });
 });
 
@@ -5049,7 +5072,7 @@ app.post('/user/update', logAction(), checkCookieToken, function(req, res) {
   });
 });
 
-app.post('/state/:name', function(req, res) {
+app.post('/state/:name', logAction(), function(req, res) {
   function error(text) {
     return res.send(JSON.stringify({success: false, text: text}));
   }
@@ -5205,7 +5228,7 @@ function mapTags(tags, prefix, tagsCb) {
   });
 }
 
-app.post('/addTags', function(req, res) {
+app.post('/addTags', logAction(), function(req, res) {
   var tags = [];
   if (req.body.tags) {
     tags = req.body.tags.replace(/[^-a-zA-Z0-9_:,]/g, "").split(",");
@@ -5234,7 +5257,7 @@ app.post('/addTags', function(req, res) {
   });
 });
 
-app.post('/removeTags', function(req, res) {
+app.post('/removeTags', logAction(), function(req, res) {
   if (!req.user.removeEnabled) {
     return res.send(JSON.stringify({success: false, text: "Need remove data privileges"}));
   }
@@ -5291,7 +5314,7 @@ function searchAndTagList(allTagIds, list, doneCb) {
   }, doneCb);
 }
 
-app.post('/searchAndTag', function(req, res) {
+app.post('/searchAndTag', logAction(), function(req, res) {
   var tags = [];
   var regex = req.body.regex;
   if (req.body.tags) {
@@ -5331,7 +5354,7 @@ app.post('/searchAndTag', function(req, res) {
 
 function pcapScrub(req, res, id, entire, endCb) {
   if (pcapScrub.scrubbingBuffers === undefined) {
-    pcapScrub.scrubbingBuffers = [new Buffer(5000), new Buffer(5000), new Buffer(5000)];
+    pcapScrub.scrubbingBuffers = [Buffer.alloc(5000), Buffer.alloc(5000), Buffer.alloc(5000)];
     pcapScrub.scrubbingBuffers[0].fill(0);
     pcapScrub.scrubbingBuffers[1].fill(1);
     var str = "Scrubbed! Hoot! ";
@@ -5486,7 +5509,7 @@ function scrubList(req, res, entire, list) {
   });
 }
 
-app.post('/scrub', function(req, res) {
+app.post('/scrub', logAction(), function(req, res) {
   if (!req.user.removeEnabled) {
     return res.send(JSON.stringify({success: false, text: "Need remove data privileges"}));
   }
@@ -5507,7 +5530,7 @@ app.post('/scrub', function(req, res) {
   }
 });
 
-app.post('/delete', function(req, res) {
+app.post('/delete', logAction(), function(req, res) {
   if (!req.user.removeEnabled) {
     return res.send(JSON.stringify({success: false, text: "Need remove data privileges"}));
   }
@@ -5556,10 +5579,10 @@ function sendSessionWorker(options, cb) {
     var buffer;
     if (err || !packetshdr) {
       console.log("WARNING - No PCAP only sending SPI data err:", err);
-      buffer = new Buffer(0);
+      buffer = Buffer.alloc(0);
       ps = [];
     } else {
-      buffer = new Buffer(packetshdr.length + packetslen);
+      buffer = Buffer.alloc(packetshdr.length + packetslen);
       var pos = 0;
       packetshdr.copy(buffer);
       pos += packetshdr.length;
@@ -5624,7 +5647,7 @@ function sendSessionWorker(options, cb) {
     });
 
     var sessionStr = JSON.stringify(session);
-    var b = new Buffer(12);
+    var b = Buffer.alloc(12);
     b.writeUInt32BE(Buffer.byteLength(sessionStr), 0);
     b.writeUInt32BE(buffer.length, 8);
     preq.write(b);
@@ -6044,7 +6067,10 @@ app.use('/cyberchef.htm', function(req, res) {
  * sends them to cyberchef */
 app.get("/:nodeName/session/:id/cyberchef", checkWebEnabled, checkProxyRequest, function(req, res) {
   processSessionIdAndDecode(req.params.id, 10000, function(err, session, results) {
-    if (err) { return res.send("Error"); }
+    if (err) {
+      console.log("ERROR - /cyberchef.htm", err);
+      return res.end("Error - " + err);
+    }
 
     let data = '';
     for (var i = (req.query.type !== 'dst'?0:1), ilen = results.length; i < ilen; i+=2) {

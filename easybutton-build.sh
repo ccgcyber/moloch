@@ -16,7 +16,7 @@ PCAP=1.8.1
 CURL=7.55.0
 LUA=5.3.4
 DAQ=2.0.6
-NODE=6.11.2
+NODE=6.11.4
 
 TDIR="/data/moloch"
 DOPFRING=0
@@ -261,6 +261,7 @@ fi
 
 if [ $DONODE -eq 1 ] && [ ! -f "$TDIR/bin/node" ]; then
     echo "MOLOCH: Installing node $NODE"
+    sudo mkdir -p $TDIR/bin $TDIR/etc
     if [ ! -f node-v$NODE-linux-x64.tar.xz ] ; then
         wget https://nodejs.org/download/release/v$NODE/node-v$NODE-linux-x64.tar.xz
     fi

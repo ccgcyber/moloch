@@ -27,7 +27,6 @@ try {
 var Config         = require('./config.js'),
     express        = require('express'),
     async          = require('async'),
-    sprintf        = require('./public/sprintf.js'),
     os             = require('os'),
     util           = require('util'),
     URL            = require('url'),
@@ -131,7 +130,7 @@ function simpleGather(req, res, bodies, doneCb) {
       });
       pres.on('end', () => {
         if (result.length) {
-          result = result.replace(new RegExp('(index":\s*|[,{]|  )"' + prefix + "(sessions|stats|tags|dstats|sequence|files|users)", "g"), "$1\"MULTIPREFIX_$2");
+          result = result.replace(new RegExp('(index":\s*|[,{]|  )"' + prefix + "(sessions|stats|tags|dstats|sequence|files|users|history)", "g"), "$1\"MULTIPREFIX_$2");
           result = result.replace(new RegExp('(index":\s*)"' + prefix + "(fields_v1)\"", "g"), "$1\"MULTIPREFIX_$2\"");
           result = JSON.parse(result);
         } else {
@@ -931,6 +930,8 @@ app.post("/_msearch", msearch);
 
 app.get("/:index/_count", simpleGatherAdd);
 app.post("/:index/_count", simpleGatherAdd);
+app.get("/:index/:type/_count", simpleGatherAdd);
+app.post("/:index/:type/_count", simpleGatherAdd);
 
 
 if (Config.get("regressionTests")) {

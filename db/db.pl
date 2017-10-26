@@ -43,6 +43,7 @@
 # 34 - stats_v2
 # 35 - user spiviewFieldConfigs
 # 36 - user action history
+# 37 - add request body to history
 
 use HTTP::Request::Common;
 use LWP::UserAgent;
@@ -51,7 +52,7 @@ use Data::Dumper;
 use POSIX;
 use strict;
 
-my $VERSION = 36;
+my $VERSION = 37;
 my $verbose = 0;
 my $PREFIX = "";
 my $NOCHANGES = 0;
@@ -1687,7 +1688,7 @@ sub historyUpdate
         "type": "string",
         "index": "not_analyzed"
       },
-      "pathname": {
+      "api": {
         "type": "string",
         "index": "not_analyzed"
       },
@@ -1708,6 +1709,22 @@ sub historyUpdate
       "query": {
         "type": "string",
         "index": "not_analyzed"
+      },
+      "queryTime": {
+        "type": "integer"
+      },
+      "recordsReturned": {
+        "type": "integer"
+      },
+      "recordsFiltered": {
+        "type": "long"
+      },
+      "recordsTotal": {
+        "type": "long"
+      },
+      "body": {
+        "type": "object",
+        "dynamic": "true"
       }
     }
   }
@@ -2574,7 +2591,7 @@ if ($ARGV[1] =~ /(init|wipe)/) {
         historyUpdate();
         sessionsUpdate();
         checkForOldIndices();
-    } elsif ($main::versionNumber <= 36) {
+    } elsif ($main::versionNumber <= 37) {
         usersUpdate();
         historyUpdate();
         sessionsUpdate();

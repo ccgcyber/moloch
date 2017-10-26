@@ -14,7 +14,7 @@
     visibleHeaders: ['fp','lp','src','p1','dst','p2','pa','dbby','no','info']
   };
 
-  let customCols = require('json!./custom.columns.json');
+  let customCols = require('./custom.columns.json');
 
   let componentInitialized = false, colResizeInitialized = false;
   let holdingClick = false, timeout;
@@ -110,6 +110,7 @@
 
         _query.expression = this.query.expression = args.expression;
         if (args.bounding) {_query.bounding = this.query.bounding = args.bounding;}
+        if (args.interval) {_query.interval = this.query.interval = args.interval;}
 
         // reset to the first page, because we are issuing a new query
         // and there may only be 1 page of results
@@ -272,7 +273,8 @@
       this.SessionService.getState('sessionsNew')
          .then((response) => {
            this.tableState = response.data;
-           if (Object.keys(this.tableState).length === 0) {
+           if (Object.keys(this.tableState).length === 0 ||
+              !this.tableState.visibleHeaders || !this.tableState.order) {
              this.tableState = defaultTableState;
            } else if (this.tableState.visibleHeaders[0] === '') {
              this.tableState.visibleHeaders.shift();
@@ -282,14 +284,20 @@
            this.query.sorts = this.tableState.order;
 
            this.FieldService.get()
-              .then((result) => {
-                this.fields = result;
+             .then((result) => {
+               this.fields = result;
 
-                this.setupFields();
+               this.setupFields();
 
-                this.getUserSettings();
-              }).catch((error) => { this.error = error; });
-         }).catch((error) => { this.error = error; });
+               this.getUserSettings(); // IMPORTANT: kicks off the initial search query!
+             }).catch((error) => {
+               this.loading  = false;
+               this.error    = error;
+             });
+         }).catch((error) => {
+           this.loading  = false;
+           this.error    = error;
+         });
     }
 
     /* Gets the current user's custom column configurations */
@@ -849,7 +857,7 @@
 
   angular.module('moloch')
     .component('session', {
-      template  : require('html!../templates/session.list.html'),
+      template  : require('../templates/session.list.html'),
       controller: SessionListController
     });
 

@@ -2,7 +2,7 @@
 
   'use strict';
 
-  let customCols = require('json!../session/components/custom.columns.json');
+  let customCols = require('../session/components/custom.columns.json');
 
   let bodyElem = $(document.body);
 
@@ -74,6 +74,7 @@
 
       this.UserService.getCurrent()
         .then((response) => {
+          this.displayName = response.userId;
           // only admins can edit other users' settings
           if (response.createEnabled && this.$routeParams.userId) {
             if (response.userId === this.$routeParams.userId) {
@@ -81,6 +82,7 @@
               this.$location.search('userId', null);
             } else { // admin editing another user
               this.userId = this.$routeParams.userId;
+              this.displayName = this.$routeParams.userId;
             }
           } else { // normal user has no permission, so remove the routeParam
             // (even if it's their own userId because it's unnecessary)
@@ -730,7 +732,7 @@
    */
   angular.module('moloch')
      .component('molochSettings', {
-       template  : require('html!./settings.html'),
+       template  : require('./settings.html'),
        controller: SettingsController
      });
 
