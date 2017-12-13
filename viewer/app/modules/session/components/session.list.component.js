@@ -68,6 +68,8 @@
       this.query          = _query; // load saved query
       this.stickySessions = [];     // array of open sessions
 
+      this.getColumnWidths();
+
       this.getTableState(); // IMPORTANT: kicks off the initial search query!
 
       this.getCustomColumnConfigurations();
@@ -145,6 +147,7 @@
           this.mapHeadersToFields();
         }, 300);
       };
+      this.$window.addEventListener('resize', windowResizeEvent);
     } /* /$onInit */
 
     /* fired when controller's containing scope is destroyed */
@@ -175,7 +178,9 @@
             if (header) {
               header.width = column.w;
               this.colWidths[header.dbField] = column.w;
-              localStorage['session-column-widths'] = JSON.stringify(this.colWidths);
+
+              this.saveColumnWidths();
+
               this.mapHeadersToFields();
             }
           });
@@ -300,6 +305,15 @@
          });
     }
 
+    /* Gets the column widths of the table if they exist */
+    getColumnWidths() {
+      this.SessionService.getState('sessionsColWidths')
+        .then((response) => {
+          this.colWidths = response.data || {};
+        })
+        .catch(() => { this.colWidths = {}; });
+    }
+
     /* Gets the current user's custom column configurations */
     getCustomColumnConfigurations() {
       this.UserService.getColumnConfigs()
@@ -321,6 +335,14 @@
            if (stopLoading) { this.loading = false; }
          })
          .catch((error) =>  { this.error = error; });
+    }
+
+    /**
+     * Saves the column widths to the db
+     */
+    saveColumnWidths() {
+      this.SessionService.saveState(this.colWidths, 'sessionsColWidths')
+         .catch((error) => { this.error = error; });
     }
 
     /**
@@ -346,12 +368,9 @@
      */
     mapHeadersToFields() {
       this.headers = [];
-      this.colWidths = {};
       this.sumOfColWidths = 80;
 
-      if (localStorage['session-column-widths']) {
-        this.colWidths = JSON.parse(localStorage['session-column-widths']);
-      }
+      if (!this.colWidths) { this.colWidths = {}; }
 
       for (let i = 0, len = this.tableState.visibleHeaders.length; i < len; ++i) {
         let headerId  = this.tableState.visibleHeaders[i];
@@ -370,6 +389,8 @@
         }
       }
 
+      this.sumOfColWidths = Math.round(this.sumOfColWidths);
+
       this.calculateInfoColumnWidth(defaultInfoColWidth);
       this.$scope.$broadcast('$$rebind::refreshHeaders');
     }
@@ -380,11 +401,10 @@
      * @param infoColWidth
      */
     calculateInfoColumnWidth(infoColWidth) {
+      this.showFitButton = false;
       if (!this.colWidths) { return; }
+      let windowWidth = window.innerWidth - 45; // account for right and left margins
       if (this.tableState.visibleHeaders.indexOf('info') >= 0) {
-        // register listener to update info column width on window resize
-        this.$window.addEventListener('resize', windowResizeEvent);
-        let windowWidth  = window.innerWidth - 45; // account for right and left margins
         let fillWithInfoCol = windowWidth - this.sumOfColWidths;
         let newTableWidth = this.sumOfColWidths;
         for (let i = 0, len = this.headers.length; i < len; ++i) {
@@ -397,8 +417,11 @@
         this.tableWidth = newTableWidth;
       } else {
         this.tableWidth = this.sumOfColWidths;
-        // there is no info column, so no need to watch for window resize
-        this.$window.removeEventListener('resize', windowResizeEvent);
+        // display a button to fit the table to the width of the window
+        // if the table is more than 10 pixels larger or smaller than the window
+        if (Math.abs(this.tableWidth - windowWidth) > 10) {
+          this.showFitButton = true;
+        }
       }
     }
 
@@ -825,6 +848,31 @@
      */
     openSpiGraph(fieldID) {
       this.SessionService.openSpiGraph(fieldID);
+    }
+
+    /* Fits the table to the width of the current window size */
+    fitTable() {
+      // disable resizable columns so it can be initialized after columns are resized
+      $('#sessionsTable').colResizable({ disable:true });
+      colResizeInitialized = false;
+
+      let windowWidth   = window.innerWidth - 45; // account for right and left margins
+      let leftoverWidth = windowWidth - this.sumOfColWidths;
+      let percentChange = 1 + (leftoverWidth/this.sumOfColWidths);
+
+      for (let i = 0, len = this.headers.length; i < len; ++i) {
+        let header    = this.headers[i];
+        let newWidth  = Math.floor(header.width * percentChange);
+        header.width  = newWidth;
+        this.colWidths[header.dbField] = newWidth;
+      }
+
+      this.tableWidth = windowWidth;
+      this.showFitButton = false;
+
+      this.saveColumnWidths();
+
+      this.$timeout(() => { this.initializeColResizable(); });
     }
 
 

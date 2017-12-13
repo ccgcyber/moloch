@@ -88,8 +88,7 @@ app.use(function(req, res, next) {
 
 function node2Url(node) {
   var url = node.split(',')[0];
-  if (url.match(/^http/))
-    return url
+  if (url.match(/^http/)) {return url;}
   return "http://" + url;
 }
 
@@ -199,6 +198,7 @@ app.get("/_nodes/stats/:kinds", simpleGatherCopy);
 app.get("/_cluster/health", simpleGatherAdd);
 
 app.get("/:index/_aliases", simpleGatherCopy);
+app.get("/:index/_alias", simpleGatherCopy);
 
 app.get("/:index/_status", (req, res) => {
   simpleGather(req, res, null, (err, results) => {
@@ -960,7 +960,7 @@ nodes.forEach((node) => {
 
   clients[node] = new ESC.Client({
     host: node.split(",")[0],
-    apiVersion: "1.2",
+    apiVersion: "2.4",
     requestTimeout: 300000
   });
 

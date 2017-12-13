@@ -45,6 +45,8 @@
 
 #define MOLOCH_PACKET_MAX_LEN 0x10000
 
+#define MOLOCH_SESSION_v6(s) ((s)->sessionId[0] == 37)
+
 /******************************************************************************/
 /*
  * Base Hash Table Types
@@ -345,6 +347,7 @@ typedef struct moloch_config {
     uint32_t  maxFrags;
     uint32_t  snapLen;
     uint32_t  maxMemPercentage;
+    uint32_t  maxReqBody;
 
     int       packetThreads;
 
@@ -355,6 +358,7 @@ typedef struct moloch_config {
     char      parseSMB;
     char      parseQSValue;
     char      parseCookieValue;
+    char      reqBodyOnlyUtf8;
     char      compressES;
     char      antiSynDrop;
     char      readTruncatedPackets;
@@ -777,6 +781,7 @@ int moloch_http_queue_length(void *server);
 uint64_t moloch_http_dropped_count(void *server);
 
 void *moloch_http_create_server(const char *hostnames, int maxConns, int maxOutstandingRequests, int compress);
+void moloch_http_set_headers(void *server, char **headers);
 void moloch_http_set_header_cb(void *server, MolochHttpHeader_cb cb);
 void moloch_http_free_server(void *server);
 

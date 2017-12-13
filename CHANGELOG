@@ -7,7 +7,28 @@ NOTICE: Restart wiseService before capture when upgrading
 
 NOTICE: 0.20 and above require nodejs 6.x, included in rpm/deb
 
-0.20.0 2017/09/xx
+0.20.2 2017/12/XX
+  - NOTICE: Supported ES Versions: 2.4.x, > 5.3.1, 6.x is NOT supported
+  - viewer - upgrade elasticsearch-js
+  - capture - new --host commandline option to specify how viewers should talk to host
+  - capture - added classify: dhcp, dhcpv6, splunk, isakmp, aruba-papi
+  - capture - improved classify: bitcoin, ntp, ssdp
+  - capture - index first N (default 256) bytes of post bodies, controlled by maxReqBody setting
+  - capture - more stats on packet processing/failures
+  - viewer - cleanup sessionErro
+  - viewer - remove dead code
+  - tests - more viewer tests
+
+0.20.1 2017/11/06
+  - NOTICE: Supported ES Versions: 2.4.x, 5.1.2, 5.2.x, > 5.3.1, 5.4.x, 5.5.x, 5.6.x
+  - viewer - graph hover now respects timezone setting (issue #757)
+  - capture - decode icmp type/code (issue #751)
+  - viewer - upgrade Cyberchef to 6.4.5
+  - viewer - es indices tab (#761)
+  - viewer - es tasks tab (#763)
+  - capture - ssh parser crash fixed (introduced in 0.20.0)
+
+0.20.0 2017/10/31
   - NOTICE: Supported ES Versions: 2.4.x, 5.1.2, 5.2.x, > 5.3.1, 5.4.x, 5.5.x, 5.6.x
   - NOTICE: db.pl upgrade is required
   - capture - added --packetcnt from @jmd1212
@@ -25,6 +46,13 @@ NOTICE: 0.20 and above require nodejs 6.x, included in rpm/deb
   - capture - improved quic, mysql detection
   - capture - plugins can now replace how SPI data is sent to ES
   - viewer - fixed right client menu not working (issue #740)
+  - viewer - add/remove tags update tag count (PR #756)
+  - viewer - support sessions resize better
+  - release - use screwdriver to build and test
+  - release - upgrade node version
+  - viewer - fix EXISTS! being reformatted (issue #747)
+  - viewer - Don't allow * by itself in expressions anymore, must use EXISTS!
+  - viewer - removed babel, newer browsers required
 
 0.19.2 2017/08/25
   - NOTICE: Supported ES Versions: 2.4.x, 5.1.2, 5.2.x, > 5.3.1, 5.4.x, 5.5.x, 5.6.x
