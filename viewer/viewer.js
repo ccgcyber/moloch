@@ -770,7 +770,7 @@ if (Config.get('demoMode', false)) {
     return res.send('Disabled in demo mode.');
   });
 
-  app.get(['/user/settings', '/user/cron', '/history/list'], function(req, res) {
+  app.get(['/user/cron', '/history/list'], function(req, res) {
     return res.molochError(403, "Disabled in demo mode.");
   });
 
@@ -1014,15 +1014,18 @@ function postSettingUser (req, res, next) {
 app.get('/user/settings', getSettingUser, function(req, res) {
   if (!req.settingUser) {
     res.status(404);
-    return res.send(JSON.stringify('User not found'));
+    return res.send(JSON.stringify({success:false, text:'User not found'}));
   }
 
   var settings = req.settingUser.settings || settingDefaults;
 
+  var cookieOptions = { path: app.locals.basePath };
+  if (Config.isHTTPS()) { cookieOptions.secure = true; }
+
   res.cookie(
      'MOLOCH-COOKIE',
      Config.obj2auth({date: Date.now(), pid: process.pid, userId: req.user.userId}),
-     { path: app.locals.basePath }
+     cookieOptions
   );
 
   return res.send(settings);
@@ -1246,7 +1249,7 @@ app.post('/user/cron/delete', [checkCookieToken, logAction(), postSettingUser], 
 
   if (!req.body.key) { return res.molochError(403, 'Missing cron query key'); }
 
-  Db.deleteDocument('queries', 'query', req.body.key, {refresh: 1}, function(err, sq) {
+  Db.deleteDocument('queries', 'query', req.body.key, {refresh: true}, function(err, sq) {
     if (err) {
       console.log('/user/cron/delete error', err, sq);
       return res.molochError(500, 'Delete cron query failed');
@@ -1284,7 +1287,7 @@ app.post('/user/cron/update', [checkCookieToken, logAction(), postSettingUser], 
       return res.molochError(403, 'Unknown query');
     }
 
-    Db.update('queries', 'query', req.body.key, document, {refresh: 1}, function(err, data) {
+    Db.update('queries', 'query', req.body.key, document, {refresh: true}, function(err, data) {
       if (err) {
         console.log('/user/cron/update error', err, document, data);
         return res.molochError(500, 'Cron query update failed');
@@ -2065,6 +2068,9 @@ function sessionsListFromQuery(req, res, fields, cb) {
       return res.send("Could not build query.  Err: " + err);
     }
     query._source = fields;
+    if (Config.debug) {
+      console.log("sessionsListFromQuery query", JSON.stringify(query, null, 1));
+    }
     Db.searchPrimary(indices, 'session', query, function(err, result) {
       if (err || result.error) {
           console.log("ERROR - Could not fetch list of sessions.  Err: ", err,  " Result: ", result, "query:", query);
@@ -2435,6 +2441,114 @@ app.post('/estask/cancel', logAction(), function(req, res) {
   });
 });
 
+app.get('/esshard/list', function(req, res) {
+  Promise.all([Db.shards(), 
+               Db.getClusterSettings({flatSettings: true})
+              ]).then(([shards, settings], reject) => {
+
+    if (reject) {
+      console.log(reject);
+      return res.send({nodes: [], indices: []});
+    }
+
+    let ipExcludes = [];
+    if (settings.persistent['cluster.routing.allocation.exclude._ip']) {
+      ipExcludes = settings.persistent['cluster.routing.allocation.exclude._ip'].split(',');
+    }
+
+    let nodeExcludes = [];
+    if (settings.persistent['cluster.routing.allocation.exclude._name']) {
+      nodeExcludes = settings.persistent['cluster.routing.allocation.exclude._name'].split(',');
+    }
+
+    let result = {};
+    let nodes = {};
+
+    for (var shard of shards) {
+      if (shard.node === null || shard.node === "null") { shard.node = "Unassigned"; }
+
+      if (result[shard.index] === undefined) {
+        result[shard.index] = {name: shard.index, nodes: {}};
+      }
+      if (result[shard.index].nodes[shard.node] === undefined) {
+        result[shard.index].nodes[shard.node] = [];
+      }
+      result[shard.index].nodes[shard.node].push(shard);
+      nodes[shard.node] = {ip: shard.ip, ipExcluded: ipExcludes.includes(shard.ip), nodeExcluded: nodeExcludes.includes(shard.node)};
+      delete shard.node;
+      delete shard.index;
+    }
+
+    let indices = Object.keys(result).map((k) => result[k]).sort(function(a,b){ return a.name.localeCompare(b.name); });
+    res.send({nodes: nodes, indices: indices});
+  });
+});
+
+app.post('/esshard/exclude/:type/:value', logAction(), checkCookieToken, function(req, res) {
+  if (!req.user.createEnabled) { return res.molochError(403, "Need admin privileges"); }
+
+  Db.getClusterSettings({flatSettings: true}, function(err, settings) {
+    let exclude = [];
+    let settingName;
+
+    if (req.params.type === 'ip') {
+      settingName = 'cluster.routing.allocation.exclude._ip';
+    } else if (req.params.type === "node") {
+      settingName = 'cluster.routing.allocation.exclude._name';
+    } else {
+      return res.molochError(403, "Unknown exclude type");
+    }
+
+    if (settings.persistent[settingName]) {
+      exclude = settings.persistent[settingName].split(',');
+    }
+
+    if (!exclude.includes(req.params.value)) {
+      exclude.push(req.params.value);
+    }
+    var query = {body: {persistent: {}}};
+    query.body.persistent[settingName] = exclude.join(",");
+
+    Db.putClusterSettings(query, function(err, settings) {
+      if (err) {console.log("putSettings", err);}
+      return res.send(JSON.stringify({ success: true, text: 'Added'}));
+    });
+  });
+});
+
+app.post('/esshard/include/:type/:value', logAction(), checkCookieToken, function(req, res) {
+  if (!req.user.createEnabled) { return res.molochError(403, "Need admin privileges"); }
+
+  Db.getClusterSettings({flatSettings: true}, function(err, settings) {
+    let exclude = [];
+    let settingName;
+
+    if (req.params.type === 'ip') {
+      settingName = 'cluster.routing.allocation.exclude._ip';
+    } else if (req.params.type === "node") {
+      settingName = 'cluster.routing.allocation.exclude._name';
+    } else {
+      return res.molochError(403, "Unknown exclude type");
+    }
+
+    if (settings.persistent[settingName]) {
+      exclude = settings.persistent[settingName].split(',');
+    }
+
+    let pos = exclude.indexOf(req.params.value);
+    if (pos > -1) {
+      exclude.splice(pos, 1);
+    }
+    var query = {body: {persistent: {}}};
+    query.body.persistent[settingName] = exclude.join(",");
+
+    Db.putClusterSettings(query, function(err, settings) {
+      if (err) {console.log("putSettings", err);}
+      return res.send(JSON.stringify({ success: true, text: 'Added'}));
+    });
+  });
+});
+
 app.get('/esstats.json', function(req, res) {
   var stats = [];
   var r;
@@ -2553,6 +2667,21 @@ app.get('/stats.json', function(req, res) {
           wildcard: {nodeName: '*' + name + '*'}
         });
       }
+    }
+  }
+
+  if (req.query.hide !== undefined && req.query.hide !== "none") {
+    if (query.query === undefined) {
+      query.query = { bool: { must: [] } };
+    } else {
+      query.query.bool = {must: [{bool: query.query.bool}]};
+    }
+
+    if (req.query.hide === "old" || req.query.hide === "both") {
+      query.query.bool.must.push({range: {currentTime: {gte: "now-5m"}}});
+    }
+    if (req.query.hide === "nosession" || req.query.hide === "both") {
+      query.query.bool.must.push({range: {monitoring: {gte: "1"}}});
     }
   }
 
@@ -2955,7 +3084,9 @@ app.get('/sessions.json', logAction('sessions'), function(req, res) {
       graph.interval = query.aggregations.dbHisto.histogram.interval;
     }
 
-    console.log("sessions.json query", JSON.stringify(query));
+    if (Config.debug) {
+      console.log("sessions.json query", JSON.stringify(query, null, 1));
+    }
 
     async.parallel({
       sessions: function (sessionsCb) {
@@ -3556,7 +3687,7 @@ function csvListWriter(req, res, list, fields, pcapWriter, extension) {
   }
 
   for (var j = 0, jlen = list.length; j < jlen; j++) {
-    var sessionData = list[j]._source || list[j].fields;
+    var sessionData = flattenFields(list[j]._source || list[j].fields);
 
     if (!fields) { continue; }
 
@@ -4847,7 +4978,7 @@ app.post('/user/update', logAction(), checkCookieToken, postSettingUser, functio
   Db.getUser(req.body.userId, function(err, user) {
     if (err || !user.found) {
       console.log('update user failed', err, user);
-      return res.molochErr(403, 'User not found');
+      return res.molochError(403, 'User not found');
     }
     user = user._source;
 
@@ -4864,7 +4995,7 @@ app.post('/user/update', logAction(), checkCookieToken, postSettingUser, functio
     if (req.body.userName !== undefined) {
       if (req.body.userName.match(/^\s*$/)) {
         console.log("ERROR - empty username", req.body);
-        return res.molochErr(403, 'Username can not be empty');
+        return res.molochError(403, 'Username can not be empty');
       } else {
         user.userName = req.body.userName;
       }
@@ -4881,7 +5012,7 @@ app.post('/user/update', logAction(), checkCookieToken, postSettingUser, functio
     }
 
     Db.setUser(req.body.userId, user, function(err, info) {
-      console.log(user, err, info);
+      console.log("setUser", user, err, info);
       return res.send(JSON.stringify({success: true, text:'User "' + req.body.userId + '" updated successfully'}));
     });
   });
@@ -5960,14 +6091,16 @@ app.use(function (req, res) {
     return res.status(403).send('Permission denied');
   }
 
+  var cookieOptions = { path: app.locals.basePath };
+  if (Config.isHTTPS()) { cookieOptions.secure = true; }
+
   // send cookie for basic, non admin functions
   res.cookie(
      'MOLOCH-COOKIE',
      Config.obj2auth({date: Date.now(), pid: process.pid, userId: req.user.userId}),
-     { path: app.locals.basePath }
+     cookieOptions
   );
 
-  console.log(req.user);
   var theme = req.user.settings.theme || 'default-theme';
   if (theme.startsWith('custom1')) { theme  = 'custom-theme'; }
 
@@ -6022,7 +6155,7 @@ function processCronQuery(cq, options, query, endTime, cb) {
             return setImmediate(whilstCb, "DONE");
           } else {
             var document = { doc: { count: (query.count || 0) + count} };
-            Db.update("queries", "query", options.qid, document, {refresh: 1}, function () {});
+            Db.update("queries", "query", options.qid, document, {refresh: true}, function () {});
           }
 
           query = {
@@ -6183,7 +6316,7 @@ function processCronQueries() {
                   count: (queries[qid].count || 0) + count
                 }
               };
-              Db.update("queries", "query", qid, document, {refresh: 1}, function () {
+              Db.update("queries", "query", qid, document, {refresh: true}, function () {
                 // If there is more time to catch up on, repeat the loop, although other queries
                 // will get processed first to be fair
                 if (lpValue !== endTime) {

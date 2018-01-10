@@ -204,8 +204,8 @@ void moloch_packet_process_icmp(MolochSession_t * const UNUSED(session), MolochP
     const uint8_t *data = packet->pkt + packet->payloadOffset;
 
     if (packet->payloadLen >= 2) {
-        moloch_field_int_add(icmpCodeField, session, data[0]);
-        moloch_field_int_add(icmpTypeField, session, data[1]);
+        moloch_field_int_add(icmpTypeField, session, data[0]);
+        moloch_field_int_add(icmpCodeField, session, data[1]);
     }
 }
 /******************************************************************************/
@@ -692,6 +692,9 @@ LOCAL void *moloch_packet_thread(void *threadp)
             case MOLOCH_PACKET_VPNTYPE_PPPOE:
                 moloch_session_add_protocol(session, "pppoe");
                 break;
+            case MOLOCH_PACKET_VPNTYPE_MPLS:
+                moloch_session_add_protocol(session, "mpls");
+                break;
             }
 
         }
@@ -739,11 +742,8 @@ int moloch_packet_gre4(MolochPacketBatch_t * batch, MolochPacket_t * const packe
         return MOLOCH_PACKET_UNKNOWN;
     }
 
-    uint16_t offset = 0;
-
     if (flags_version & (0x8000 | 0x4000)) {
-        BSB_IMPORT_skip(bsb, 2);
-        BSB_IMPORT_u16(bsb, offset);
+        BSB_IMPORT_skip(bsb, 4); // skip len and offset
     }
 
     // key
@@ -1239,6 +1239,39 @@ int moloch_packet_pppoe(MolochPacketBatch_t * batch, MolochPacket_t * const pack
     }
 }
 /******************************************************************************/
+int moloch_packet_mpls(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len)
+{
+    while (1) {
+        if (len < 4 + (int)sizeof(struct ip)) {
+#ifdef DEBUG_PACKET
+            LOG("BAD PACKET: Len %d", len);
+#endif
+            return MOLOCH_PACKET_CORRUPT;
+        }
+
+        int S = data[3] & 0x1;
+
+        data += 4;
+        len -= 4;
+
+        if (S) {
+            packet->vpnType = MOLOCH_PACKET_VPNTYPE_MPLS;
+            switch (data[0] >> 4) {
+            case 4:
+                return moloch_packet_ip4(batch, packet, data, len);
+            case 6:
+                return moloch_packet_ip6(batch, packet, data, len);
+            default:
+#ifdef DEBUG_PACKET
+                LOG("BAD PACKET: Unknown mpls type %d", data[0] >> 4);
+#endif
+                return MOLOCH_PACKET_UNKNOWN;
+            }
+        }
+    }
+    return MOLOCH_PACKET_CORRUPT;
+}
+/******************************************************************************/
 int moloch_packet_ether(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len)
 {
     if (len < 14) {
@@ -1258,6 +1291,8 @@ int moloch_packet_ether(MolochPacketBatch_t * batch, MolochPacket_t * const pack
             return moloch_packet_ip6(batch, packet, data+n, len - n);
         case 0x8864:
             return moloch_packet_pppoe(batch, packet, data+n, len - n);
+        case 0x8847:
+            return moloch_packet_mpls(batch, packet, data+n, len - n);
         case 0x8100:
             n += 2;
             break;
@@ -1271,6 +1306,34 @@ int moloch_packet_ether(MolochPacketBatch_t * batch, MolochPacket_t * const pack
 #ifdef DEBUG_PACKET
     LOG("BAD PACKET: bad len %d < %d", n+2, len);
 #endif
+    return MOLOCH_PACKET_CORRUPT;
+}
+/******************************************************************************/
+int moloch_packet_sll(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len)
+{
+    if (len < 16) {
+#ifdef DEBUG_PACKET
+        LOG("BAD PACKET: Too short %d", len);
+#endif
+        return MOLOCH_PACKET_CORRUPT;
+    }
+
+    int ethertype = data[14] << 8 | data[15];
+    switch (ethertype) {
+    case 0x0800:
+        return moloch_packet_ip4(batch, packet, data+16, len - 16);
+    case 0x86dd:
+        return moloch_packet_ip6(batch, packet, data+16, len - 16);
+    case 0x8864:
+        return moloch_packet_pppoe(batch, packet, data+16, len - 16);
+    case 0x8847:
+        return moloch_packet_mpls(batch, packet, data+16, len - 16);
+    default:
+#ifdef DEBUG_PACKET
+        LOG("BAD PACKET: Unknown ethertype %x", ethertype);
+#endif
+        return MOLOCH_PACKET_UNKNOWN;
+    } // switch
     return MOLOCH_PACKET_CORRUPT;
 }
 /******************************************************************************/
@@ -1361,8 +1424,13 @@ void moloch_packet_batch(MolochPacketBatch_t * batch, MolochPacket_t * const pac
         break;
     case 12: // LOOP
     case 101: // RAW
-    case 113: // SLL
         rc = moloch_packet_ip4(batch, packet, packet->pkt, packet->pktlen);
+        break;
+    case 113: // SLL
+        if (packet->pkt[0] == 0 && packet->pkt[1] <= 4)
+            rc = moloch_packet_sll(batch, packet, packet->pkt, packet->pktlen);
+        else
+            rc = moloch_packet_ip4(batch, packet, packet->pkt, packet->pktlen);
         break;
     case 239: // NFLOG
         rc = moloch_packet_nflog(batch, packet, packet->pkt, packet->pktlen);
@@ -1505,13 +1573,13 @@ void moloch_packet_init()
         NULL);
 
     icmpTypeField = moloch_field_define("general", "integer",
-        "icmp", "ICMP Type", "icmpType",
+        "icmp.type", "ICMP Type", "icmpType",
         "ICMP type field values",
         MOLOCH_FIELD_TYPE_INT_GHASH, 0,
         NULL);
 
     icmpCodeField = moloch_field_define("general", "integer",
-        "icmp", "ICMP Code", "icmpCode",
+        "icmp.code", "ICMP Code", "icmpCode",
         "ICMP code field values",
         MOLOCH_FIELD_TYPE_INT_GHASH, 0,
         NULL);

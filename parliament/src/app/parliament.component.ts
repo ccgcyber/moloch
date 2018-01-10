@@ -37,11 +37,14 @@ export class ParliamentComponent implements OnInit {
   /* setup ----------------------------------------------------------------- */
   private sub;
   private timeout;
+  private oldParliamentOrder;
 
   parliament = { groups: [] };
 
   initialized = false;
+  updatingPassword = false;
   password = '';
+  passwordConfirm = '';
   error = '';
   loggedIn = false;
   showLoginInput = false;
@@ -53,6 +56,8 @@ export class ParliamentComponent implements OnInit {
   newGroupDescription = '';
   numFilteredClusters: number;
   focusOnPasswordInput = false;
+  dragClusters = true;
+  dragGroups = true;
 
   constructor(
     private parliamentService: ParliamentService,
@@ -90,6 +95,8 @@ export class ParliamentComponent implements OnInit {
           this.error = '';
           this.updateParliament(data);
           this.filterClusters();
+          // save old parliament for when reordering items in the parliament fails
+          this.oldParliamentOrder = JSON.parse(JSON.stringify(this.parliament));
         },
         (err) => {
           this.error = err.error.text ||
@@ -100,6 +107,7 @@ export class ParliamentComponent implements OnInit {
   }
 
   startAutoRefresh() {
+    if (!this.refreshInterval) { return; }
     const timer = TimerObservable.create(parseInt(this.refreshInterval, 10), parseInt(this.refreshInterval, 10));
     this.sub = timer.subscribe(() => {
       if (this.refreshInterval) { this.loadData(); }
@@ -107,7 +115,7 @@ export class ParliamentComponent implements OnInit {
   }
 
   stopAutoRefresh() {
-    this.sub.unsubscribe();
+    if (this.sub) { this.sub.unsubscribe(); }
   }
 
   // Updates fetched parliament with current view flags and values
@@ -154,6 +162,37 @@ export class ParliamentComponent implements OnInit {
     this.parliament = data;
   }
 
+  // Remove UI only properties from groups and clusters in a parliament
+  sanitizeParliament(data) {
+    for (const group of data.groups) {
+      group.error                 = undefined;
+      group.newTitle              = undefined;
+      group.newDescription        = undefined;
+      group.filteredClusters      = undefined;
+      group.showEditGroupForm     = undefined;
+      group.showNewClusterForm    = undefined;
+      group.newClusterTitle       = undefined;
+      group.newClusterDescription = undefined;
+      group.newClusterUrl         = undefined;
+      group.newClusterLocalUrl    = undefined;
+      group.newClusterMultiviewer = undefined;
+      group.newClusterDisabled    = undefined;
+      group.filteredClusters      = undefined;
+
+      for (const cluster of group.clusters) {
+        cluster.error               = undefined;
+        cluster.newTitle            = undefined;
+        cluster.newDescription      = undefined;
+        cluster.newUrl              = undefined;
+        cluster.newLocalUrl         = undefined;
+        cluster.newMultiviewer      = undefined;
+        cluster.newDisabled         = undefined;
+        cluster.showEditClusterForm = undefined;
+      }
+    }
+  }
+
+  // Removes clusters that don't match the search term provided
   filterClusters() {
     this.numFilteredClusters = 0;
 
@@ -195,7 +234,6 @@ export class ParliamentComponent implements OnInit {
             this.loggedIn = this.authService.saveToken(data.token);
           },
           (err) => {
-            console.error('login error:', err);
             this.password = '';
             this.loggedIn = false;
             this.error    = err.error.text || 'Unable to login';
@@ -208,13 +246,63 @@ export class ParliamentComponent implements OnInit {
   cancelLogin() {
     this.showLoginInput       = false;
     this.focusOnPasswordInput = false;
-    this.password = '';
-    this.error    = '';
+    this.updatingPassword     = false;
+    this.passwordConfirm      = '';
+    this.password             = '';
+    this.error                = '';
   }
 
   logout() {
     this.loggedIn = false;
     localStorage.setItem('token', ''); // clear token
+  }
+
+  updatePassword() {
+    this.updatingPassword     = !this.updatingPassword;
+    this.showLoginInput       = !this.showLoginInput;
+    this.focusOnPasswordInput = this.showLoginInput;
+
+    if (!this.showLoginInput) {
+      if (!this.password) {
+        this.error = 'Must provide a password.';
+        return;
+      }
+
+      if (!this.passwordConfirm) {
+        this.error = 'Must confirm your password.';
+        return;
+      }
+
+      if (this.password !== this.passwordConfirm) {
+        this.error = 'Passwords must match.';
+        this.password = '';
+        this.passwordConfirm = '';
+        return;
+      }
+
+      this.authService.updatePassword(this.password)
+        .subscribe(
+          (data) => {
+            this.error    = '';
+            this.password = '';
+            this.auth.hasAuth = true;
+            this.loggedIn     = this.authService.saveToken(data.token);
+          },
+          (err) => {
+            console.error('update password error:', err);
+            this.password = '';
+            this.loggedIn = false;
+            this.error    = err.error.text || 'Unable to update your password.';
+            this.loggedIn = this.authService.saveToken('');
+          }
+        );
+    }
+  }
+
+  // Fired when the user clicks enter on the password input
+  passwordInputSubmit() {
+    if (this.updatingPassword) { this.updatePassword(); }
+    else { this.login(); }
   }
 
   // Fired when interval refresh select input is changed
@@ -467,6 +555,55 @@ export class ParliamentComponent implements OnInit {
           group.error = err.error.text || 'Unable to remove cluster from this group';
         }
       );
+  }
+
+  /**
+   * Fired when a cluster is dragged and dropped
+   * Saves the new order of the parliament clusters
+   * @param {object} event - the dnd event fired on drop
+   */
+  onDrop($event) {
+    // filteredClusters (displayed in the view) are updated by drag and drop
+    // but we still need to update all the cluster arrays
+    for (const group of this.parliament.groups) {
+      group.clusters = group.filteredClusters;
+    }
+
+    const parliamentClone = JSON.parse(JSON.stringify(this.parliament));
+    this.sanitizeParliament(parliamentClone);
+
+    this.parliamentService.updateClusterOrder(parliamentClone)
+      .subscribe(
+        (data) => {
+          // save the new parliament for when reordering items in the parliament fails
+          this.oldParliamentOrder = parliamentClone;
+        },
+        (err) => {
+          // reset the parliament to the old order because of a failure to save it
+          this.parliament = JSON.parse(JSON.stringify(this.oldParliamentOrder));
+          this.error = err.error.text || 'Unable to move this item';
+        }
+      );
+
+    this.dragGroups   = true;
+    this.dragClusters = true;
+    this.startAutoRefresh();
+  }
+
+  // Fired when a user starts to drag a cluster
+  // Stops autorefresh (so the parliament is not updated)
+  // Disables group dragging (https://github.com/akserg/ng2-dnd/issues/20)
+  onClusterDragStart() {
+    this.dragGroups = false;
+    this.stopAutoRefresh();
+  }
+
+  // Fired when a user starts to drag a group
+  // Stops autorefresh (so the parliament is not updated)
+  // Disables cluster dragging (https://github.com/akserg/ng2-dnd/issues/20)
+  onGroupDragStart() {
+    this.dragClusters = false;
+    this.stopAutoRefresh();
   }
 
 }

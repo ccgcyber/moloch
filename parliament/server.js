@@ -100,6 +100,15 @@ const version = 1;
 let parliament;
 try {
   parliament = require(`${app.get('file')}`);
+  // set the password if passed in when starting the server
+  // IMPORTANT! this will overwrite any password in the parliament json file
+  if (app.get('password')) {
+    parliament.password = app.get('password');
+  } else if (parliament.password) {
+    // if the password is not supplied when starting the server,
+    // use any existing password in the parliament json file
+    app.set('password', parliament.password);
+  }
 } catch (err) {
   parliament = { version:version, groups:[] };
 }
@@ -114,7 +123,7 @@ let timeout;
 app.disable('x-powered-by');
 
 // parliament app page
-app.use('/', express.static(`${__dirname}/dist/index.html`, { maxAge:600*1000 }));
+app.use('/parliament', express.static(`${__dirname}/dist/index.html`, { maxAge:600*1000 }));
 
 // log requests
 app.use(logger('dev'));
@@ -122,13 +131,13 @@ app.use(logger('dev'));
 app.use(favicon(`${__dirname}/public/favicon.ico`));
 
 // serve public files
-app.use('/public', express.static(`${__dirname}/public`, { maxAge:600*1000 }));
+app.use('/parliament/public', express.static(`${__dirname}/public`, { maxAge:600*1000 }));
 
 // serve app bundles
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use('/parliament', express.static(path.join(__dirname, 'dist')));
 
 // define router to mount api related functions
-app.use('/api', router);
+app.use('/parliament/api', router);
 router.use(bp.json());
 router.use(bp.urlencoded({ extended: true }));
 
@@ -282,6 +291,22 @@ function getStats(cluster) {
         }
       }
 
+      // Look for issues
+      cluster.issues = [];
+      for (let stat of stats.data) {
+        if ((Date.now()/1000 - stat.currentTime) > 30) {
+          cluster.issues.push({type: "outOfDate", node: stat.nodeName, value: Math.round(Date.now()/1000 - stat.currentTime)});
+        }
+
+        if (stat.deltaPacketsPerSec === 0) {
+          cluster.issues.push({type: "noPackets", node: stat.nodeName, value: 0});
+        }
+
+        if (stat.deltaESDroppedPerSec > 0) {
+          cluster.issues.push({type: "esDropped", node: stat.nodeName, value: stat.deltaESDroppedPerSec});
+        }
+      }
+
       return resolve();
     })
     .catch((error) => {
@@ -290,7 +315,6 @@ function getStats(cluster) {
       cluster.statsError = message;
       return resolve();
     });
-
   });
 }
 
@@ -309,10 +333,17 @@ function initalizeParliament() {
     }
 
     let json = JSON.stringify(parliament);
-    fs.writeFile(app.get('file'), json, 'utf8', () => {
-      parliamentWithData = JSON.parse(JSON.stringify(parliament));
-      return resolve();
-    }); // TODO - error?
+    fs.writeFile(app.get('file'), json, 'utf8',
+      (err) => {
+        if (err) {
+          console.error('Parliament initialization error:', err.message || err);
+          return reject();
+        }
+
+        parliamentWithData = JSON.parse(JSON.stringify(parliament));
+        return resolve();
+      }
+    );
   });
 }
 
@@ -320,7 +351,6 @@ function initalizeParliament() {
 // in the parliament
 function updateParliament() {
   return new Promise((resolve, reject) => {
-
     let promises = [];
     for (let group of parliamentWithData.groups) {
       if (group.clusters) {
@@ -352,25 +382,34 @@ function updateParliament() {
 // Writes the parliament to the parliament json file, updates the parliament
 // with health and stats, then sends success or error
 function writeParliament(req, res, next, successObj, errorText, sendParliament) {
-  fs.writeFile(app.get('file'), JSON.stringify(parliament), 'utf8', () => {
-
-    parliamentWithData = JSON.parse(JSON.stringify(parliament));
-
-    updateParliament()
-      .then(() => {
-        // send the updated parliament with the response
-        if (sendParliament && successObj.parliament) {
-          successObj.parliament = parliamentWithData;
-        }
-        return res.json(successObj);
-      })
-      .catch((err) => {
-        const error = new Error(errorText || 'Error updating parliament.');
+  fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
+    (err) => {
+      if (err) {
+        const errorMsg = `Unable to write parliament data: ${err.message || err}`;
+        console.error(errorMsg);
+        const error = new Error(errorMsg);
         error.httpStatusCode = 500;
         return next(error);
-      });
+      }
 
-  }); // TODO - handle error with json file writing
+      parliamentWithData = JSON.parse(JSON.stringify(parliament));
+
+      updateParliament()
+        .then(() => {
+          // send the updated parliament with the response
+          if (sendParliament && successObj.parliament) {
+            successObj.parliament = parliamentWithData;
+          }
+          return res.json(successObj);
+        })
+        .catch((err) => {
+          const error = new Error(errorText || 'Error updating parliament.');
+          error.httpStatusCode = 500;
+          return next(error);
+        });
+
+    }
+  );
 }
 
 
@@ -399,7 +438,7 @@ router.post('/auth', (req, res, next) => {
 
   res.json({ // return the information including token as JSON
     success : true,
-    message : 'Here\'s your token!',
+    text    : 'Here\'s your token!',
     token   : token
   });
 });
@@ -410,9 +449,65 @@ router.get('/auth', (req, res, next) => {
   return res.json({ hasAuth:hasAuth });
 });
 
+// Get whether the user is logged in
+// If it passes the verifyToken middleware, the user is logged in
+router.get('/auth/loggedin', verifyToken, (req, res, next) => {
+  return res.json({ loggedin:true });
+});
+
+// Update (or create) a password for the parliament
+router.put('/auth/update', (req, res, next) => {
+  if (!req.body.password) {
+    const error = new Error('You must provide a password');
+    error.httpStatusCode = 422;
+    return next(error);
+  }
+
+  bcrypt.hash(req.body.password, 10, (err, hash) => {
+    if (err) {
+      console.error(`Error hashing password: ${err}`);
+      const error = new Error('Hashing password failed.');
+      error.httpStatusCode = 401;
+      return next(error);
+    }
+
+    app.set('password', hash);
+
+    parliament.password = hash;
+
+    const payload = { admin:true };
+
+    let token = jwt.sign(payload, hash, {
+      expiresIn: 60*60*24 // expires in 24 hours
+    });
+
+    // return the information including token as JSON
+    let successObj  = { success: true, text: 'Here\'s your new token!', token: token };
+    let errorText   = 'Unable to update your password.';
+    writeParliament(req, res, next, successObj, errorText);
+  });
+});
+
 // Get parliament with stats
 router.get('/parliament', (req, res, next) => {
+  if (parliamentWithData.password) { parliamentWithData.password = undefined; }
   return res.json(parliamentWithData);
+});
+
+// Updates the parliament order of clusters and groups
+router.put('/parliament', verifyToken, (req, res, next) => {
+  if (!req.body.reorderedParliament) {
+    const error = new Error('You must provide the new parliament order');
+    error.httpStatusCode = 422;
+    return next(error);
+  }
+
+  parliament = req.body.reorderedParliament;
+  updateParliament();
+
+  let successObj  = { success: true, text: 'Successfully reordered items in your parliament.' };
+  let errorText   = 'Unable to update the order of items in your parliament.';
+  writeParliament(req, res, next, successObj, errorText);
 });
 
 // Create a new group in the parliament
@@ -619,7 +714,7 @@ if (app.get('keyFile') && app.get('certFile')) {
 
 server
   .on('error', function (e) {
-    console.log(`ERROR - couldn't listen on port ${app.get('port')}, is Parliament already running?`);
+    console.error(`ERROR - couldn't listen on port ${app.get('port')}, is Parliament already running?`);
     process.exit(1);
     throw new Error('Exiting');
   })
@@ -628,7 +723,13 @@ server
   })
   .listen(app.get('port'), () => {
     initalizeParliament()
-      .then(() => { updateParliament(); });
+      .then(() => {
+        updateParliament();
+      })
+      .catch(() => {
+        process.exit(1);
+        throw new Error('Exiting');
+      });
 
     timeout = setInterval(() => {
       updateParliament();

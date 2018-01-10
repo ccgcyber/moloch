@@ -1,37 +1,53 @@
 <div class="container-fluid">
-  <div class="mr-3 ml-3">
+  <div class="mr-3 ml-3" dnd-sortable-container [dropZones]="['groups']"
+    [sortableData]="parliament.groups">
 
+    <!-- all the style="cursor: x !important;" are because of: https://github.com/akserg/ng2-dnd/issues/135 -->
     <!-- page header -->
-    <div class="row mt-4">
+    <div class="row mt-4" style="cursor: auto !important;">
       <div class="col-md-12">
         <h2>
-          <!-- logged out -->
-          <span *ngIf="!loggedIn && auth.hasAuth">
-            <!-- login button -->
-            <a class="btn btn-outline-success pull-right cursor-pointer ml-1"
-              (click)="login()">
-              <span class="fa fa-unlock"></span>&nbsp;
-              Login
-            </a> <!-- /login button -->
-            <!-- cancel login button -->
-            <a class="btn btn-outline-warning pull-right cursor-pointer"
-              (click)="cancelLogin()"
-              [ngClass]="{'hide-cancel-btn':!showLoginInput,'show-cancel-btn ml-1':showLoginInput}">
-              <span class="fa fa-ban"></span>
-            </a> <!-- /cancel login button -->
-            <!-- password input -->
-            <input class="form-control pull-right" type="password"
-              (keyup.enter)="login()"
-              [appAutofocus]="focusOnPasswordInput" [(ngModel)]="password"
-              [ngClass]="{'hide-login':!showLoginInput,'show-login':showLoginInput}"
-              placeholder="password please"> <!-- /password input -->
-          </span> <!-- /logged out -->
+          <!-- login button -->
+          <a class="btn btn-outline-success pull-right cursor-pointer ml-1"
+            (click)="login()" *ngIf="!loggedIn && auth.hasAuth"
+            tabindex="6">
+            <span class="fa fa-unlock"></span>&nbsp;
+            Login
+          </a> <!-- /login button -->
           <!-- logged in -->
-          <a class="btn btn-outline-warning pull-right cursor-pointer"
-            (click)="logout()" *ngIf="loggedIn">
+          <a class="btn btn-outline-danger pull-right cursor-pointer"
+            (click)="logout()" *ngIf="loggedIn"
+            tabindex="7">
             <span class="fa fa-lock"></span>&nbsp;
             Logout
           </a> <!-- /logged in -->
+          <!-- update/create password button -->
+          <a class="btn btn-outline-info pull-right cursor-pointer mr-1 ml-1"
+            tabindex="5" (click)="updatePassword()"
+            *ngIf="(auth.hasAuth && loggedIn) || !auth.hasAuth">
+            <span class="fa fa-key"></span>
+            <span *ngIf="auth.hasAuth && loggedIn">Update</span>
+            <span *ngIf="!auth.hasAuth">Create</span>
+            Password
+          </a> <!-- /update/create password button -->
+          <!-- cancel login button -->
+          <a class="btn btn-outline-warning pull-right cursor-pointer"
+            (click)="cancelLogin()" tabindex="4"
+            [ngClass]="{'hide-cancel-btn':!showLoginInput,'show-cancel-btn ml-1':showLoginInput}">
+            <span class="fa fa-ban"></span>
+          </a> <!-- /cancel login button -->
+          <!-- password input -->
+          <input class="form-control pull-right ml-1" type="password"
+            (keyup.enter)="passwordInputSubmit()" tabindex="3"  [hidden]="!updatingPassword"
+            [appAutofocus]="focusOnPasswordInput" [(ngModel)]="passwordConfirm"
+            [ngClass]="{'hide-login':!showLoginInput && !updatingPassword,'show-login':showLoginInput && updatingPassword}"
+            placeholder="confirm password">
+          <input class="form-control pull-right" type="password"
+            (keyup.enter)="passwordInputSubmit()" tabindex="2"
+            [appAutofocus]="focusOnPasswordInput" [(ngModel)]="password"
+            [ngClass]="{'hide-login':!showLoginInput,'show-login':showLoginInput}"
+            placeholder="password please">
+            <!-- /password input -->
           <!-- refresh interval select -->
           <span class="form-group pull-right mr-4">
             <div class="input-group">
@@ -40,7 +56,7 @@
                 <span class="fa fa-refresh"></span>
               </span>
               <select class="form-control refresh-interval-control"
-                [(ngModel)]="refreshInterval"
+                [(ngModel)]="refreshInterval" tabindex="1"
                 (ngModelChange)="changeRefreshInterval()">
                 <option value="">Never</option>
                 <option value="15000">15 seconds</option>
@@ -58,7 +74,7 @@
     </div> <!-- /page header -->
 
     <!-- page error -->
-    <div class="alert alert-danger" *ngIf="error">
+    <div class="alert alert-danger" *ngIf="error" style="cursor: auto !important;">
       <span class="fa fa-exclamation-triangle"></span>&nbsp;
       {{ error }}
       <button type="button" class="close cursor-pointer"
@@ -68,7 +84,7 @@
     </div> <!-- /page error -->
 
     <!-- search & create group -->
-    <div class="row">
+    <div class="row" style="cursor: auto !important;">
       <!-- search -->
       <div class="col-md-8">
         <div class="input-group">
@@ -76,7 +92,7 @@
             <span class="fa fa-search"></span>
           </span>
           <input type="text" class="form-control" placeholder="Search clusters"
-            [(ngModel)]="searchTerm" (keyup)="debounceSearch()" />
+            [(ngModel)]="searchTerm" (keyup)="debounceSearch()" tabindex="8" />
         </div>
       </div> <!-- /search -->
       <!-- create group -->
@@ -105,7 +121,7 @@
     <hr>
 
     <!-- new group form -->
-    <div *ngIf="showNewGroupForm && auth.hasAuth" class="row">
+    <div *ngIf="showNewGroupForm && auth.hasAuth" class="row" style="cursor: auto !important;">
       <div class="col-md-12">
         <form>
           <div class="form-group row">
@@ -135,7 +151,7 @@
 
     <!-- no results for searchTerm filter -->
     <div *ngIf="searchTerm && !numFilteredClusters && parliament.groups.length"
-      class="info-area vertical-center">
+      class="info-area vertical-center" style="cursor: auto !important;">
       <div class="text-muted">
         <span class="fa fa-3x fa-folder-open text-muted-more"></span>
         No clusters match your search
@@ -144,7 +160,7 @@
 
     <!-- no groups -->
     <div *ngIf="!parliament.groups.length && !showNewGroupForm"
-      class="info-area vertical-center">
+      class="info-area vertical-center" style="cursor: auto !important;">
       <div class="text-muted">
         <span class="fa fa-3x fa-folder-open text-muted-more"></span>
         No groups in your cluster.
@@ -154,10 +170,13 @@
     </div> <!-- /no groups -->
 
     <!-- groups -->
-    <div *ngFor="let group of parliament.groups; trackBy:getTrackingId" class="mb-4">
+    <div *ngFor="let group of parliament.groups; trackBy:getTrackingId; let i = index;"
+      class="mb-4" dnd-sortable [sortableIndex]="i" [dragEnabled]="!searchTerm && loggedIn && dragGroups"
+      [dragData]="group" (onDropSuccess)="onDrop($event)" (onDragStart)="onGroupDragStart()">
 
       <!-- group title/description -->
-      <div class="row" *ngIf="group.filteredClusters.length > 0 || (!group.clusters.length && !searchTerm)">
+      <div class="row" [ngClass]="{'cursor-move':!searchTerm && loggedIn && dragGroups}" style="cursor:auto;"
+        *ngIf="group.filteredClusters.length > 0 || (!group.clusters.length && !searchTerm) || !dragGroups">
         <div class="col-md-12">
           <h5 class="mb-1">
             <!-- group action buttons -->
@@ -192,14 +211,13 @@
                 <span class="fa fa-pencil"></span>&nbsp;
                 Edit Group
               </a>
-              <a *ngIf="!group.showNewClusterForm && group.showEditGroupForm"
-                (click)="deleteGroup(group)"
-                class="btn btn-sm btn-outline-danger pull-right cursor-pointer mr-1 mb-1">
-                <span class="fa fa-trash-o"></span>&nbsp;
-                Delete Group
-              </a>
             </span> <!-- /group action buttons -->
-            {{ group.title }}
+            {{ group.title }}&nbsp;
+            <a *ngIf="!group.showNewClusterForm && group.showEditGroupForm && loggedIn"
+              (click)="deleteGroup(group)" placement="top" ngbTooltip="Delete Group"
+              class="btn btn-sm btn-outline-danger cursor-pointer ml-2">
+              <span class="fa fa-trash-o"></span>
+            </a>
           </h5>
           <p class="lead mb-2" style="font-size:1rem;">
             {{ group.description }}
@@ -216,7 +234,7 @@
       </div> <!-- /group title/description -->
 
       <!-- edit group form -->
-      <div *ngIf="group.showEditGroupForm && auth.hasAuth" class="row">
+      <div *ngIf="group.showEditGroupForm && auth.hasAuth" class="row" style="cursor: auto !important;">
         <div class="col-md-12">
           <form>
             <div class="form-group row">
@@ -245,7 +263,7 @@
       </div> <!-- /edit group form -->
 
       <!-- create cluster form -->
-      <div *ngIf="group.showNewClusterForm && auth.hasAuth">
+      <div *ngIf="group.showNewClusterForm && auth.hasAuth" style="cursor: auto !important;">
         <div class="col-md-12">
           <hr>
           <form>
@@ -314,10 +332,14 @@
 
       <!-- clusters -->
       <ul class="cluster-group d-flex flex-wrap row mb-4"
-        [@clusters]="group.filteredClusters.length">
-        <li *ngFor="let cluster of group.filteredClusters; trackBy:getTrackingId"
+        [@clusters]="group.filteredClusters.length" dnd-sortable-container
+        [sortableData]="group.filteredClusters" [dropZones]="['clusters']">
+        <li *ngFor="let cluster of group.filteredClusters; trackBy:getTrackingId; let i = index;"
+          dnd-sortable [dragEnabled]="!searchTerm && loggedIn && dragClusters" [sortableIndex]="i"
+          [dragData]="cluster" (onDropSuccess)="onDrop($event)"
+          (onDragStart)="onClusterDragStart()" (onDragStop)="onClusterDragStop()"
           class="cluster col-12 col-sm-6 col-md-6 col-lg-4 col-xl-3 col-xxl-2 mb-1">
-          <div class="card bg-light">
+          <div class="card bg-light" [ngClass]="{'cursor-move':!searchTerm && loggedIn && dragClusters}" style="cursor:auto;">
             <div class="card-body">
               <div> <!-- card title -->
                 <h6 style="display:inline-block">
@@ -330,7 +352,7 @@
                     {{ cluster.title }}
                   </a>
                   <span *ngIf="cluster.disabled">{{ cluster.title }}</span>
-                  <a href="{{ cluster.url }}/stats" class="no-decoration ml-2"
+                  <a href="{{ cluster.url }}/stats?statsTab=0" class="no-decoration ml-2"
                     placement="top" ngbTooltip="Go to the Stats page of this cluster">
                     <span class="fa fa-bar-chart"></span>
                   </a>
@@ -472,7 +494,7 @@
                 <span class="fa fa-ban"></span>
               </a>
               <a *ngIf="cluster.showEditClusterForm"
-                class="btn btn-sm btn-outline-danger pull-right cursor-pointer mr-1"
+                class="btn btn-sm btn-outline-danger cursor-pointer mr-1"
                 (click)="deleteCluster(group, cluster)"
                 placement="top" ngbTooltip="Delete cluster">
                 <span class="fa fa-trash-o"></span>
@@ -483,11 +505,14 @@
       </ul> <!-- /clusters -->
 
       <!-- no clusters -->
-      <div *ngIf="!group.clusters.length && !searchTerm && !group.showNewClusterForm">
-        No clusters in this group.
-        <a (click)="group.showNewClusterForm = true"
-          *ngIf="loggedIn"
-          class="no-decoration cursor-pointer no-href">Create one</a>
+      <div dnd-sortable-container [sortableData]="group.filteredClusters" [dropZones]="['clusters']"
+        style="margin-top:-1rem;">
+        <span *ngIf="!group.clusters.length && !searchTerm && !group.showNewClusterForm">
+          No clusters in this group.
+          <a (click)="group.showNewClusterForm = true"
+            *ngIf="loggedIn"
+            class="no-decoration cursor-pointer no-href">Create one</a>
+        </span>
       </div> <!-- no clusters -->
 
     </div> <!-- groups -->
