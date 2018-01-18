@@ -1,3 +1,5 @@
+import { Issue } from '../issues/issue';
+
 export class Parliament {
   version: string;
   groups: [Object];
@@ -26,4 +28,8 @@ export class ClusterCreated {
 export class Response {
   success: boolean;
   text: string;
+}
+
+export class Issues {
+  issues: [ Issue ];
 }
