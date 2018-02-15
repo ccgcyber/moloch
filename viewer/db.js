@@ -175,13 +175,17 @@ exports.searchScroll = function (index, type, query, options, cb) {
     delete query.size;
     exports.search(index, type, query, params,
       function getMoreUntilDone(error, response) {
+        if (error) {
+            return cb(error, totalResults);
+        }
+
         if (totalResults === undefined) {
           totalResults = response;
         } else {
           Array.prototype.push.apply(totalResults.hits.hits, response.hits.hits);
         }
 
-        if (!error && totalResults.hits.total > 0 && totalResults.hits.hits.length < Math.min(response.hits.total, querySize)) {
+        if (totalResults.hits.total > 0 && totalResults.hits.hits.length < Math.min(response.hits.total, querySize)) {
           exports.scroll({
             scroll: '2m',
             body: {
@@ -753,6 +757,8 @@ exports.getIndices = function(startTime, stopTime, rotateIndex, cb) {
     var offset = 86400;
     if (rotateIndex === "hourly") {
       offset = 3600;
+    } else if (rotateIndex === "hourly6") {
+      offset = 3600*6;
     }
 
     startTime = Math.floor(startTime/offset)*offset;
@@ -771,6 +777,13 @@ exports.getIndices = function(startTime, stopTime, rotateIndex, cb) {
         iname = internals.prefix + "sessions-" +
           twoDigitString(d.getUTCFullYear()%100) + 'w' +
           twoDigitString(Math.floor((d - jan) / 604800000));
+        break;
+      case "hourly6":
+        iname = internals.prefix + "sessions-" +
+          twoDigitString(d.getUTCFullYear()%100) +
+          twoDigitString(d.getUTCMonth()+1) +
+          twoDigitString(d.getUTCDate()) + 'h' +
+          twoDigitString((d.getUTCHours()/6)*6);
         break;
       case "hourly":
         iname = internals.prefix + "sessions-" +

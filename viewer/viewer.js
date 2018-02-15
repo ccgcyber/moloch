@@ -2442,7 +2442,7 @@ app.post('/estask/cancel', logAction(), function(req, res) {
 });
 
 app.get('/esshard/list', function(req, res) {
-  Promise.all([Db.shards(), 
+  Promise.all([Db.shards(),
                Db.getClusterSettings({flatSettings: true})
               ]).then(([shards, settings], reject) => {
 
@@ -2480,7 +2480,7 @@ app.get('/esshard/list', function(req, res) {
     }
 
     let indices = Object.keys(result).map((k) => result[k]).sort(function(a,b){ return a.name.localeCompare(b.name); });
-    res.send({nodes: nodes, indices: indices});
+    res.send({nodes: nodes, indices: indices, nodeExcludes: nodeExcludes, ipExcludes: ipExcludes});
   });
 });
 
@@ -2511,7 +2511,7 @@ app.post('/esshard/exclude/:type/:value', logAction(), checkCookieToken, functio
 
     Db.putClusterSettings(query, function(err, settings) {
       if (err) {console.log("putSettings", err);}
-      return res.send(JSON.stringify({ success: true, text: 'Added'}));
+      return res.send(JSON.stringify({ success: true, text: 'Excluded'}));
     });
   });
 });
@@ -2528,7 +2528,7 @@ app.post('/esshard/include/:type/:value', logAction(), checkCookieToken, functio
     } else if (req.params.type === "node") {
       settingName = 'cluster.routing.allocation.exclude._name';
     } else {
-      return res.molochError(403, "Unknown exclude type");
+      return res.molochError(403, "Unknown include type");
     }
 
     if (settings.persistent[settingName]) {
@@ -2544,7 +2544,7 @@ app.post('/esshard/include/:type/:value', logAction(), checkCookieToken, functio
 
     Db.putClusterSettings(query, function(err, settings) {
       if (err) {console.log("putSettings", err);}
-      return res.send(JSON.stringify({ success: true, text: 'Added'}));
+      return res.send(JSON.stringify({ success: true, text: 'Included'}));
     });
   });
 });
@@ -3738,7 +3738,7 @@ app.get(/\/sessions.csv.*/, logAction(), function(req, res) {
   var reqFields = fields;
 
   if (req.query.fields) {
-    fields = reqFields = req.query.fields.split(',');
+    fields = reqFields = queryValueToArray(req.query.fields);
   }
 
   if (req.query.ids) {
@@ -4884,7 +4884,7 @@ app.post('/user/list', logAction('users'), function(req, res) {
           for (let i = 0, ilen = result.hits.hits.length; i < ilen; i++) {
             var fields = result.hits.hits[i]._source || result.hits.hits[i].fields;
             fields.id = result.hits.hits[i]._id;
-            fields.expression = safeStr(fields.expression || "");
+            fields.expression = fields.expression || "";
             fields.headerAuthEnabled = fields.headerAuthEnabled || false;
             fields.emailSearch = fields.emailSearch || false;
             fields.removeEnabled = fields.removeEnabled || false;

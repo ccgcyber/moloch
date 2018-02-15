@@ -254,7 +254,7 @@
         initialized = false; // reinitialize the graph
         this.loadData();
 
-        if (this.dataInterval !== '0') { // set up the node req interval
+        if (this.dataInterval !== '0' && !reqPromise) { // set up the node req interval
           reqPromise = this.$interval(() => {
             this.loadData();
           }, parseInt(this.dataInterval));
@@ -375,9 +375,9 @@
 
           let timeFormat;
           if (self.settings.timezone === 'gmt') {
-            timeFormat = d3.time.format(timeStr);
-          } else {
             timeFormat = d3.time.format.utc(timeStr + 'Z');
+          } else {
+            timeFormat = d3.time.format(timeStr);
           }
 
           div.append('div')
