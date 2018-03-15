@@ -27,7 +27,7 @@ void rdp_classify(MolochSession_t *session, const unsigned char *data, int len, 
         if (len > 30 && memcmp(data+11, "Cookie: mstshash=", 17) == 0) {
             char *end = g_strstr_len((char *)data+28, len-28, "\r\n");
             if (end)
-                moloch_field_string_add(userField, session, (char*)data+28, end - (char *)data - 28, TRUE);
+                moloch_field_string_add_lower(userField, session, (char*)data+28, end - (char *)data - 28);
         }
     }
 }
@@ -86,7 +86,7 @@ void user_classify(MolochSession_t *session, const unsigned char *data, int len,
             break;
     }
 
-    moloch_field_string_add(userField, session, (char*)data+5, i-5, TRUE);
+    moloch_field_string_add_lower(userField, session, (char*)data+5, i-5);
 }
 /******************************************************************************/
 void misc_add_protocol_classify(MolochSession_t *session, const unsigned char *UNUSED(data), int UNUSED(len), int UNUSED(which), void *uw)
@@ -264,7 +264,7 @@ void moloch_parser_init()
     moloch_parsers_classifier_register_tcp("bitcoin", "bitcoin", 0, (unsigned char*)"\xf9\xbe\xb4\xfe", 4, misc_add_protocol_classify);
     moloch_parsers_classifier_register_tcp("rdp", NULL, 0, (unsigned char*)"\x03\x00", 2, rdp_classify);
     moloch_parsers_classifier_register_tcp("imap", NULL, 0, (unsigned char*)"* OK ", 5, imap_classify);
-    moloch_parsers_classifier_register_tcp("pop3", "pop3", 0, (unsigned char*)"+OK POP3 ", 9, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_tcp("pop3", "pop3", 0, (unsigned char*)"+OK ", 4, misc_add_protocol_classify);
     moloch_parsers_classifier_register_tcp("gh0st", NULL, 14, 0, 0, gh0st_classify);
     moloch_parsers_classifier_register_tcp("other220", NULL, 0, (unsigned char*)"220 ", 4, other220_classify);
     moloch_parsers_classifier_register_tcp("vnc", NULL, 0, (unsigned char*)"RFB 0", 5, vnc_classify);
@@ -385,6 +385,13 @@ void moloch_parser_init()
     moloch_parsers_classifier_register_port("aruba-papi",  NULL, 8211, MOLOCH_PARSERS_PORT_UDP, aruba_papi_udp_classify);
 
     moloch_parsers_classifier_register_tcp("x11", "x11", 0, (unsigned char*)"\x6c\x00\x0b\x00", 4, misc_add_protocol_classify);
+
+    moloch_parsers_classifier_register_tcp("memcached", "memcached", 0, (unsigned char*)"flush_all", 9, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_tcp("memcached", "memcached", 0, (unsigned char*)"STORED\r\n", 8, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_tcp("memcached", "memcached", 0, (unsigned char*)"END\r\n", 5, misc_add_protocol_classify);
+
+    moloch_parsers_classifier_register_udp("memcached", "memcached", 6, (unsigned char*)"\x00\x00stats", 7, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_udp("memcached", "memcached", 6, (unsigned char*)"\x00\x00gets ", 7, misc_add_protocol_classify);
 
     userField = moloch_field_by_db("user");
 }

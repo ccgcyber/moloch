@@ -15,6 +15,7 @@ const bp      = require('body-parser');
 const logger  = require('morgan');
 const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcrypt');
+const glob    = require('glob');
 
 
 /* app setup --------------------------------------------------------------- */
@@ -22,6 +23,14 @@ const app     = express();
 const router  = express.Router();
 
 const version = 1;
+
+const issueTypes = {
+  esRed: { on: true, name: 'ES Red', text: 'ES is red', severity: 'red', description: 'ES status is red' },
+  esDown: { on: true, name: 'ES Down', text:' ES is down', severity: 'red', description: 'ES is unreachable' },
+  esDropped: { on: true, name: 'ES Dropped', text: 'ES is dropping packets', severity: 'yellow', description: 'the capture node is overloading ES' },
+  outOfDate: { on: true, name: 'Out of Date', text: 'has not checked in since', severity: 'red', description: 'the capture node has not checked in' },
+  noPackets: { on: true, name: 'No Packets', text: 'is not receiving packets', severity: 'red', description: 'the capture node is not receiving packets' }
+};
 
 (function() { // parse arguments
   let appArgs = process.argv.slice(2);
@@ -110,7 +119,11 @@ try {
     app.set('password', parliament.password);
   }
 } catch (err) {
-  parliament = { version:version, groups:[] };
+  parliament = {
+    version: version,
+    groups: [],
+    settings: { notifiers: {} }
+  };
 }
 
 // define ids for groups and clusters
@@ -123,6 +136,7 @@ app.disable('x-powered-by');
 // parliament app pages
 app.use('/parliament', express.static(`${__dirname}/dist/index.html`, { maxAge:600*1000 }));
 app.use('/parliament/issues', express.static(`${__dirname}/dist/index.html`, { maxAge:600*1000 }));
+app.use('/parliament/settings', express.static(`${__dirname}/dist/index.html`, { maxAge:600*1000 }));
 
 // log requests
 app.use(logger('dev'));
@@ -139,6 +153,29 @@ app.use('/parliament', express.static(path.join(__dirname, 'dist')));
 app.use('/parliament/api', router);
 router.use(bp.json());
 router.use(bp.urlencoded({ extended: true }));
+
+
+let internals = {
+  notifiers: {}
+};
+
+// Load notifier plugins for Parliament alerting
+function loadNotifiers() {
+  var api = {
+    register: function (str, info) {
+      internals.notifiers[str] = info;
+    }
+  };
+
+  // look for all notifier providers and initialize them
+  let files = glob.sync(path.join(__dirname, '/notifiers/provider.*.js'));
+  files.forEach((file) => {
+    let plugin = require(file);
+    plugin.init(api);
+  });
+}
+
+loadNotifiers();
 
 
 /* Middleware -------------------------------------------------------------- */
@@ -204,10 +241,62 @@ function verifyToken(req, res, next) {
 
 
 /* Helper functions -------------------------------------------------------- */
-// TODO alert stuffs!
+function formatIssueMessage(cluster, issue) {
+  let message = '';
+
+  if (issue.node) { message += `${issue.node} `; }
+
+  message += `${issue.text}`;
+
+  if (issue.value) {
+    let value = ': ';
+
+    if (issue.type === 'esDropped') {
+      value += issue.value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    } else if (issue.type === 'outOfDate') {
+      value += new Date(issue.value);
+    } else {
+      value += issue.value;
+    }
+
+    message += `${value}`;
+  }
+
+  return message;
+}
+
 function issueAlert(cluster, issue) {
   issue.alerted = Date.now();
-  console.log(`Alert issued for: ${cluster.title} - ${issue.type}`);
+
+  const message = `${cluster.title} - ${issue.message}`;
+
+  for (let n in internals.notifiers) {
+    // quit before sending the alert if the notifier is off
+    if (!parliament.settings.notifiers[n].on) {
+      continue;
+    }
+
+    const notifier = internals.notifiers[n];
+
+    // quit before sending the alert if the alert is off
+    if (!parliament.settings.notifiers[n].alerts[issue.type]) {
+      continue;
+    }
+
+    let config = {};
+
+    for (let f of notifier.fields) {
+      let field = parliament.settings.notifiers[n].fields[f.name];
+      if (!field || (field.required && !field.value)) {
+        // field doesn't exist, or field is required and doesn't have a value
+        console.error(`Missing the ${field.name} field for ${n} alerting. Add it on the settings page.`);
+        continue;
+      }
+      config[f.name] = field.value;
+    }
+
+    notifier.sendAlert(config, message);
+  }
 }
 
 // Finds an issue in a cluster
@@ -234,6 +323,13 @@ function findIssue(groupId, clusterId, issueType, node) {
 // Updates an existing issue or pushes a new issue onto the issue array
 function setIssue(cluster, newIssue) {
   if (!cluster.issues) { cluster.issues = []; }
+
+  // build issue
+  let issueType     = issueTypes[newIssue.type];
+  newIssue.text     = issueType.text;
+  newIssue.title    = issueType.name;
+  newIssue.severity = issueType.severity;
+  newIssue.message  = formatIssueMessage(cluster, newIssue);
 
   for (let issue of cluster.issues) {
     if (issue.type === newIssue.type && issue.node === newIssue.node) {
@@ -289,11 +385,7 @@ function getHealth(cluster) {
         cluster.dataNodes   = health.number_of_data_nodes;
 
         if (cluster.status === 'red') { // alert on red es status
-          setIssue(cluster, {
-            type    : 'esRed',
-            title   : 'ES is red',
-            severity: 'red'
-          });
+          setIssue(cluster, { type: 'esRed' });
         }
       }
 
@@ -302,12 +394,7 @@ function getHealth(cluster) {
     .catch((error) => {
       let message = error.message || error;
 
-      setIssue(cluster, {
-        type    : 'esDown',
-        title   : 'ES is unreachable',
-        value   : message,
-        severity: 'red'
-      });
+      setIssue(cluster, { type: 'esDown', value: message });
 
       cluster.healthError = message;
 
@@ -368,31 +455,24 @@ function getStats(cluster) {
       for (let stat of stats.data) {
         if ((Date.now()/1000 - stat.currentTime) > 30) {
           setIssue(cluster, {
-            type    : 'outOfDate',
-            title   : 'Out of date',
-            node    : stat.nodeName,
-            value   : Date.now() - stat.currentTime,
-            severity: 'red'
+            type  : 'outOfDate',
+            node  : stat.nodeName,
+            value : Date.now() - stat.currentTime
           });
         }
 
         if (stat.deltaPacketsPerSec === 0) {
           setIssue(cluster, {
-            type    : 'noPackets',
-            title   : 'No packets',
-            node    : stat.nodeName,
-            value   : 0,
-            severity: 'yellow'
+            type: 'noPackets',
+            node: stat.nodeName,
           });
         }
 
         if (stat.deltaESDroppedPerSec > 0) {
           setIssue(cluster, {
-            type    : 'esDropped',
-            title   : 'ES dropped',
-            node    : stat.nodeName,
-            value   : stat.deltaESDroppedPerSec,
-            severity: 'yellow'
+            type  : 'esDropped',
+            node  : stat.nodeName,
+            value : stat.deltaESDroppedPerSec
           });
         }
       }
@@ -403,12 +483,7 @@ function getStats(cluster) {
       let message = error.message || error;
       console.error('STATS ERROR:', message);
 
-      setIssue(cluster, {
-        type    : 'esDown',
-        title   : 'ES is unreachable',
-        value   : message,
-        severity: 'red'
-      });
+      setIssue(cluster, { type: 'esDown', value: message });
 
       cluster.statsError = message;
       return resolve();
@@ -417,16 +492,50 @@ function getStats(cluster) {
 }
 
 // Initializes the parliament with ids for each group and cluster
+// and sets up the parliament settings
 function initalizeParliament() {
   return new Promise((resolve, reject) => {
     if (!parliament.groups) { parliament.groups = []; }
 
+    // set id for each group/cluster
     for (let group of parliament.groups) {
       group.id = groupId++;
       if (group.clusters) {
         for (let cluster of group.clusters) {
           cluster.id = clusterId++;
         }
+      }
+    }
+
+    if (!parliament.settings) {
+      parliament.settings = {};
+    }
+    if (!parliament.settings.notifiers) {
+      parliament.settings.notifiers = {};
+    }
+
+    // build notifiers
+    for (let n in internals.notifiers) {
+      // if the notifier is not in settings, add it
+      if (!parliament.settings.notifiers[n]) {
+        const notifier = internals.notifiers[n];
+
+        let notifierData = { name: n, fields: {}, alerts: {} };
+
+        // add fields to notifier
+        for (let field of notifier.fields) {
+          let fieldData = field;
+          fieldData.value = ''; // has empty value to start
+          notifierData.fields[field.name] = fieldData;
+        }
+
+        // build alerts
+        for (let a in issueTypes) {
+          let alert = issueTypes[a];
+          notifierData.alerts[a] = true;
+        }
+
+        parliament.settings.notifiers[n] = notifierData;
       }
     }
 
@@ -565,13 +674,29 @@ router.get('/auth/loggedin', verifyToken, (req, res, next) => {
 
 // Update (or create) a password for the parliament
 router.put('/auth/update', (req, res, next) => {
-  if (!req.body.password) {
-    const error = new Error('You must provide a password');
+  if (!req.body.newPassword) {
+    const error = new Error('You must provide a new password');
     error.httpStatusCode = 422;
     return next(error);
   }
 
-  bcrypt.hash(req.body.password, 10, (err, hash) => {
+  let hasAuth = !!app.get('password');
+  if (hasAuth) { // if the user has a password already set
+    // check if the user has supplied their current password
+    if (!req.body.currentPassword) {
+      const error = new Error('You must provide your current password');
+      error.httpStatusCode = 401;
+      return next(error);
+    }
+    // check if password matches
+    if (!bcrypt.compareSync(req.body.currentPassword, app.get('password'))) {
+      const error = new Error('Authentication failed.');
+      error.httpStatusCode = 401;
+      return next(error);
+    }
+  }
+
+  bcrypt.hash(req.body.newPassword, 10, (err, hash) => {
     if (err) {
       console.error(`Error hashing password: ${err}`);
       const error = new Error('Hashing password failed.');
@@ -594,6 +719,79 @@ router.put('/auth/update', (req, res, next) => {
     let errorText   = 'Unable to update your password.';
     writeParliament(req, res, next, successObj, errorText);
   });
+});
+
+// Get the parliament settings object
+router.get('/settings', verifyToken, (req, res, next) => {
+  // restructure settings with arrays for client
+  let settings = { notifiers: [] };
+
+  for (let n in parliament.settings.notifiers) {
+    const notifier = parliament.settings.notifiers[n];
+
+    let notifierData = { name: n, fields: [], alerts: [], on: notifier.on };
+
+    for (let f in notifier.fields) {
+      const field = notifier.fields[f];
+      notifierData.fields.push(field);
+    }
+
+    for (let a in notifier.alerts) {
+      if (issueTypes.hasOwnProperty(a)) {
+        const alert = JSON.parse(JSON.stringify(issueTypes[a]));
+        alert.id = a;
+        alert.on = notifier.alerts[a];
+        notifierData.alerts.push(alert);
+      }
+    }
+
+    settings.notifiers.push(notifierData);
+  }
+
+  return res.json(settings);
+});
+
+// Update the parliament settings object
+router.put('/settings', verifyToken, (req, res, next) => {
+  // save notifiers
+  for (let notifier of req.body.settings.notifiers) {
+    let savedNotifiers = parliament.settings.notifiers;
+
+    // notifier exists in settings, so update notifier and the fields
+    if (savedNotifiers[notifier.name]) {
+      savedNotifiers[notifier.name].on = !!notifier.on;
+
+      for (let field of notifier.fields) {
+        // notifier has field
+        if (savedNotifiers[notifier.name].fields[field.name]) {
+          savedNotifiers[notifier.name].fields[field.name].value = field.value;
+        } else { // notifier does not have field
+          const error = new Error('Unable to find notifier field to update.');
+          error.httpStatusCode = 500;
+          return next(error);
+        }
+      }
+
+      for (let alert of notifier.alerts) {
+        // alert exists in settings, so update value
+        if (savedNotifiers[notifier.name].alerts.hasOwnProperty(alert.id)) {
+          savedNotifiers[notifier.name].alerts[alert.id] = alert.on;
+        } else { // alert doesn't exist on this notifier
+          const error = new Error('Unable to find alert to update.');
+          error.httpStatusCode = 500;
+          return next(error);
+        }
+      }
+    } else { // notifier doesn't exist
+      const error = new Error('Unable to find notifier. Is it loaded?');
+      error.httpStatusCode = 500;
+      return next(error);
+    }
+  }
+
+  let successObj  = { success: true, text: 'Successfully updated your settings.' };
+  let errorText   = 'Unable to update your settings.';
+  writeParliament(req, res, next, successObj, errorText);
 });
 
 // Get parliament with stats
@@ -829,7 +1027,9 @@ router.get('/issues', (req, res, next) => {
   }
 
   let sortBy = req.query.sort, type = 'string';
-  if (sortBy === 'ignoreUntil') { type = 'number'; }
+  if (sortBy === 'ignoreUntil' || sortBy === 'firstNoticed' || sortBy === 'lastNoticed') {
+    type = 'number';
+  }
 
   if (sortBy) {
     let order = req.query.order || 'desc';
@@ -965,6 +1165,43 @@ router.put('/groups/:groupId/clusters/:clusterId/dismissAllIssues', verifyToken,
 
   let successObj  = { success:true, text:`Successfully dismissed ${count} issues.`, dismissed:now };
   let errorText   = 'Unable to dismiss issues.';
+  writeParliament(req, res, next, successObj, errorText);
+});
+
+// issue a test alert to a specified notifier
+router.post('/testAlert', (req, res, next) => {
+  if (!req.body.notifier) {
+    const error = new Error('Must specify the notifier.');
+    error.httpStatusCode = 422;
+    return next(error);
+  }
+
+  for (let n in internals.notifiers) {
+    if (n !== req.body.notifier) { continue; }
+
+    const notifier = internals.notifiers[n];
+
+    let config = {};
+
+    for (let f of notifier.fields) {
+      let field = parliament.settings.notifiers[n].fields[f.name];
+      if (!field || (field.required && !field.value)) {
+        // field doesn't exist, or field is required and doesn't have a value
+        let message = `Missing the ${field.name} field for ${n} alerting. Add it on the settings page.`;
+        console.error(message);
+
+        const error = new Error(message);
+        error.httpStatusCode = 422;
+        return next(error);
+      }
+      config[f.name] = field.value;
+    }
+
+    notifier.sendAlert(config, 'Test alert');
+  }
+
+  let successObj  = { success:true, text:`Successfully issued alert using the ${req.body.notifier} notifier.` };
+  let errorText   = `Unable to issue alert using the ${req.body.notifier} notifier.`;
   writeParliament(req, res, next, successObj, errorText);
 });
 

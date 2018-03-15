@@ -11,12 +11,20 @@ NOTICE: Upgrading from versions prior to 0.18.0 or prior to ES 5 require an
 
 NOTICE: Restart wiseService before capture when upgrading
 
-0.50.1 2017/01/XX 
+0.50.1 2017/03/XX
   - NOTICE: Supported ES Versions: >= 5.5.0, 6.x is NOT supported
   - release - upgrade curl, yara, glib
   - viewer - sessions.csv handle multiple fields parameters
   - parliament - better dismissing
   - all - new hourly6 rotateIndex, for every 6 hours
+  - parliament - first version of alerts
+  - parliament - rename server.js to parliament.js
+  - wise - trim spaces after spliting config values
+  - capture - better pop3 detection
+  - capture - correctly lowercase user
+  - release - added --install to easybutton (issue #812)
+  - capture - basic memcache classify
+
 
 0.50.0 2017/01/24
   - NOTICE: Supported ES Versions: >= 5.5.0, 6.x is NOT supported
