@@ -9,22 +9,30 @@
       :message="error">
     </moloch-error>
 
-    <div v-if="!error && !loading">
+    <div v-if="!error && !loading"
+      class="shards-container mt-1">
 
-      <div class="input-group input-group-sm mt-1">
+      <div class="input-group input-group-sm">
         <div class="input-group-prepend">
           <span class="input-group-text">
             <span class="fa fa-search"></span>
           </span>
         </div>
         <input type="text"
-          class="form-control"
+          class="form-control shards-search"
           v-model="query.filter"
           @keyup="searchForES()"
           placeholder="Begin typing to search for ES nodes and indices">
       </div>
 
-      <table class="table table-sm table-hover small mt-3">
+      <div v-if="!stats.indices.length"
+        class="text-danger text-center mt-4 mb-4">
+        <span class="fa fa-warning"></span>&nbsp;
+        No results match your search
+      </div>
+
+      <table v-if="stats.indices.length"
+        class="table table-sm small scrolly-table">
         <thead>
           <tr>
             <th v-for="column in columns"
@@ -35,7 +43,7 @@
                 <b-dropdown right
                   size="sm"
                   v-if="column.hasDropdown"
-                  class="column-actions-btn pull-right"
+                  class="column-actions-btn pull-right mb-1"
                   v-has-permission="'createEnabled'">
                   <b-dropdown-item v-if="!column.nodeExcluded"
                     @click="exclude('name', column)">
@@ -84,39 +92,59 @@
                   :class="{'badge-primary':item.prirep === 'p'}"
                   :id="node + '-' + stat.name + '-' + item.shard + '-btn'">
                   {{ item.shard }}
+                  <span>
+                    <div>
+                      <span>Node:</span>
+                      {{ node }}
+                    </div>
+                    <div v-if="item.ip">
+                      <span>IP:</span>
+                      {{ item.ip }}
+                    </div>
+                    <div>
+                      <span>Shard:</span>
+                      {{ item.shard }}
+                    </div>
+                    <div>
+                      <span>State:</span>
+                      {{ item.state }}
+                    </div>
+                    <div v-if="item.ur">
+                      <span>Reason:</span>
+                      {{ item.ur }}
+                    </div>
+                    <div v-if="item.uf">
+                      <span>For:</span>
+                      {{ item.uf }}
+                    </div>
+                    <div v-if="item.store">
+                      <span>Size:</span>
+                      {{ item.store | humanReadableBytes}}
+                    </div>
+                    <div v-if="item.docs">
+                      <span>Documents:</span>
+                      {{ item.docs | round(0) | commaString}}
+                    </div>
+                    <div v-if="item.fm">
+                      <span>Field Memory:</span>
+                      {{ item.fm | humanReadableBytes}}
+                    </div>
+                    <div v-if="item.sm">
+                      <span>Segment Memory:</span>
+                      {{ item.sm | humanReadableBytes}}
+                    </div>
+                    <div>
+                      <span>Shard Type:</span>
+                      <span v-if="item.prirep === 'p'">
+                        primary
+                      </span>
+                      <span v-else>
+                        replicate
+                      </span>
+                    </div>
+                  </span>
                 </span>
-                <b-tooltip :key="node + '-' + stat.name + '-' + item.shard + '-tooltip'"
-                  :target="node + '-' + stat.name + '-' + item.shard + '-btn'"
-                  placement="left">
-                  <div v-if="item.ip">
-                    <strong>IP:</strong>
-                    {{ item.ip }}
-                  </div>
-                  <div>
-                    <strong>State:</strong>
-                    {{ item.state }}
-                  </div>
-                  <div v-if="item.store">
-                    <strong>Size:</strong>
-                    {{ item.store }}
-                  </div>
-                  <div v-if="item.docs">
-                    <strong>Documents:</strong>
-                    {{ item.docs }}
-                  </div>
-                  <div>
-                    <strong>Primary/Replicate:</strong>
-                    {{ item.prirep }}
-                  </div>
-                </b-tooltip>
               </template>
-            </td>
-          </tr>
-          <tr v-if="!stats.indices.length">
-            <td colspan="6"
-              class="text-danger text-center">
-              <span class="fa fa-warning"></span>&nbsp;
-              No results match your search
             </td>
           </tr>
         </tbody>
@@ -136,7 +164,7 @@ let reqPromise; // promise returned from setInterval for recurring requests
 let searchInputTimeout; // timeout to debounce the search input
 
 export default {
-  name: 'Shards',
+  name: 'EsShards',
   components: { MolochError, MolochLoading },
   props: [ 'dataInterval' ],
   data: function () {
@@ -273,19 +301,26 @@ table .hover-menu > div > .btn-group.column-actions-btn > .btn-sm {
 </style>
 
 <style scoped>
+table.table.scrolly-table {
+  display: block;
+  overflow-y: auto;
+  height: calc(100vh - 210px);
+  margin-bottom: 0;
+}
+
 table > thead > tr > th {
   border-top: none;
 }
 
-.table .hover-menu {
+table.table .hover-menu {
   vertical-align: top;
   min-width: 100px;
 }
-.table .hover-menu:hover .btn-group {
+table.table .hover-menu:hover .btn-group {
   visibility: visible;
 }
 
-.table .hover-menu .btn-group {
+table.table .hover-menu .btn-group {
   visibility: hidden;
   margin-left: -20px !important;
   position: relative;
@@ -294,35 +329,43 @@ table > thead > tr > th {
   margin-top: -2px;
 }
 
-.table .hover-menu .header-text {
+table.table .hover-menu .header-text {
   display: inline-block;
   width: 100%;
   word-break: break-word;
 }
 
-.table tbody > tr > td:first-child {
+table.table tbody > tr > td:first-child {
   width:1px;
   white-space:nowrap;
   padding-right: .5rem;
 }
 
 /* hoverable columns */
-table.table.table-hover {
-  overflow:hidden;
-}
-table.table.table-hover td, th {
+table.table td, th {
   position: relative;
 }
-table.table.table-hover td:hover::after,
-table.table.table-hover th:hover::after {
+/* apply hover background to column (only cells above the hovered cell) */
+table.table td:hover::after,
+table.table th:hover::after {
   content: "";
   position: absolute;
   background-color: var(--color-gray-light) !important;
   left: 0;
   top: -5000px;
-  height: 10000px;
+  height: calc(100% + 5000px);
   width: 100%;
   z-index: -1;
+}
+/* apply hover background to row (only cells left of the hovered cell) */
+table.table td:hover::before {
+  content: "";
+  position: absolute;
+  background-color: var(--color-gray-light) !important;
+  z-index: -1;
+  right: 0;
+  height: 100%;
+  width: 10000px;
 }
 
 .badge {
@@ -332,5 +375,42 @@ table.table.table-hover th:hover::after {
 .badge.badge-primary {
   font-weight: bold;
   background-color: var(--color-primary);
+}
+.badge:hover {
+  position: relative;
+}
+.badge > span {
+  display: none;
+}
+.badge:hover > span {
+  z-index: 2;
+  font-weight: normal;
+  display: block;
+  position: absolute;
+  margin: 10px;
+  bottom: -14px;
+  right: 20px;
+  padding: 4px 6px;
+  color: white;
+  text-align: center;
+  background-color: black;
+  border-radius: 5px;
+  font-size: 90%;
+  line-height: 1.2;
+}
+.badge > span:before {
+  content: '';
+  display: block;
+  width: 0;
+  height: 0;
+  position: absolute;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-left: 8px solid black;
+  right: -8px;
+  bottom: 7px;
+}
+.badge > span span {
+  color: #bbb;
 }
 </style>

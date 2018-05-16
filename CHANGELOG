@@ -1,9 +1,9 @@
-NOTICE: If upgrading read https://github.com/aol/moloch/wiki/FAQ#How_do_I_upgrade_to_Moloch_1
+NOTICE: Upgrading from version prior to 1.0.0 read https://github.com/aol/moloch/wiki/FAQ#How_do_I_upgrade_to_Moloch_1
 
 ES Versions:
-  * Moloch >= 1.0.0  supports ES >= 5.5.0, kind of 6.x (no prod tested, only for new installs), not 7.x
+  * Moloch >= 1.0.0  supports ES >= 5.5.0, 6.x (not prod tested, only for new installs), not 7.x
   * Moloch >= 0.50.0 supports ES >= 5.5.0, not 6.x
-  * Moloch >= 0.18.1 supports ES 2.4.x, >= 5.3,1 not 6.x
+  * Moloch >= 0.18.1 supports ES 2.4.x, >= 5.3.1 not 6.x
 
 Node Versions:
   * Moloch >= 1.0.0 requires NodeJS 8.x
@@ -14,6 +14,31 @@ NOTICE: Upgrading from versions prior to 0.18.0 or prior to ES 5 require an
         outage for db.pl upgrade see: https://github.com/aol/moloch/wiki/FAQ#How_do_I_upgrade_to_ES_5x
 
 NOTICE: Restart wiseService before capture when upgrading
+
+1.2.0 2018/05/xx
+  - viewer - sessions, help, users, history pages implemented in Vue instead of AngularJS
+  - viewer - split stats capture graphs/stats into 2 tabs
+  - viewer - stats now has sort option
+  - capture - new maxTcpOutOfOrderPackets setting, default 256
+  - capture - tcpflag are always counted (issue #849)
+  - capture - drophash supports v6 and saving
+
+1.1.0 2018/04/30
+  - all - basic sctp capturing, no decoding (issue #828)
+  - all - intial unencrypted 802.11 Data Frame support (issue #834)
+  - db - new segments option to expire and optimize
+  - release - curl, node, cyberchef
+  - viewer - http.uri and host* allows pasting a URL and doing the right thing (pull #831)
+  - capture - New logHTTPConnections setting (pull #749)
+  - capture - new wiseExcludeDomains setting, used before sending to wiseService (issue #340)
+              defaults to ".in-addr.arpa;.ip6.arpa"
+  - wise - full ipv6 support
+  - capture - basic sccp classify
+  - all - initial frame relay support (issue #838)
+  - all - initial 4 over 6 and 6 over 4 support
+  - viewer - support fields=id for sessions.csv (issue #839)
+  - reindex2 - added --pause option
+  - viewer - more stats page fixes
 
 1.0.0 2018/04/05
   - db - always update stats/dstats indices for now
@@ -69,6 +94,7 @@ NOTICE: Restart wiseService before capture when upgrading
   - capture - use maxminddb instead of geoip now (issue #771)
   - all - Country codes are now 2 letters instead of 3 letters
   - release - node 8.9.4
+
 
 0.50.1 2017/03/29
   - NOTICE: Supported ES Versions: >= 5.5.0, 6.x is NOT supported

@@ -46,18 +46,22 @@
             <tr class="bold average-row">
               <td class="text-left">Average</td>
               <td>{{ averageValues['docs.count'] | round(0) | commaString }}</td>
-              <td>{{ averageValues['store.size'] | humanReadable }}</td>
+              <td>{{ averageValues['store.size'] | humanReadableBytes }}</td>
               <td>{{ averageValues.pri | round(0) | commaString }}</td>
+              <td>{{ averageValues.segmentsCount | round(0) | commaString }}</td>
               <td>{{ averageValues.rep| round(0) | commaString }}</td>
+              <td>{{ averageValues.memoryTotal | humanReadableBytes }}</td>
               <td class="text-left">-</td>
               <td class="text-left">-</td>
             </tr>
             <tr class="border-bottom-bold bold total-row">
               <td class="text-left">Total</td>
               <td>{{ totalValues['docs.count'] | round(0) | commaString }}</td>
-              <td>{{ totalValues['store.size'] | humanReadable }}</td>
+              <td>{{ totalValues['store.size'] | humanReadableBytes }}</td>
               <td>{{ totalValues.pri | round(0) | commaString }}</td>
+              <td>{{ totalValues.segmentsCount | round(0) | commaString }}</td>
               <td>{{ totalValues.rep| round(0) | commaString }}</td>
+              <td>{{ totalValues.memoryTotal | humanReadableBytes }}</td>
               <td class="text-left">-</td>
               <td class="text-left">-</td>
             </tr>
@@ -73,9 +77,11 @@
               </a>
             </td>
             <td>{{ stat['docs.count'] | round(0) | commaString }}</td>
-            <td>{{ stat['store.size'] | humanReadable }}</td>
+            <td>{{ stat['store.size'] | humanReadableBytes }}</td>
             <td>{{ stat.pri | round(0) | commaString }}</td>
+            <td>{{ stat.segmentsCount | round(0) | commaString }}</td>
             <td>{{ stat.rep| round(0) | commaString }}</td>
+            <td>{{ stat.memoryTotal | humanReadableBytes }}</td>
             <td class="text-left">{{ stat.health }}</td>
             <td class="text-left">{{ stat.status }}</td>
           </tr>
@@ -91,18 +97,22 @@
           <tr class="bold border-top-bold average-row">
             <td class="text-left">Average</td>
             <td>{{ averageValues['docs.count'] | round(0) | commaString }}</td>
-            <td>{{ averageValues['store.size'] | humanReadable }}</td>
+            <td>{{ averageValues['store.size'] | humanReadableBytes }}</td>
             <td>{{ averageValues.pri | round(0) | commaString }}</td>
+            <td>{{ averageValues.segmentsCount | round(0) | commaString }}</td>
             <td>{{ averageValues.rep| round(0) | commaString }}</td>
+            <td>{{ averageValues.memoryTotal | humanReadableBytes }}</td>
             <td class="text-left">-</td>
             <td class="text-left">-</td>
           </tr>
           <tr class="border-bottom-bold bold total-row">
             <td class="text-left">Total</td>
             <td>{{ totalValues['docs.count'] | round(0) | commaString }}</td>
-            <td>{{ totalValues['store.size'] | humanReadable }}</td>
+            <td>{{ totalValues['store.size'] | humanReadableBytes }}</td>
             <td>{{ totalValues.pri | round(0) | commaString }}</td>
+            <td>{{ totalValues.segmentsCount | round(0) | commaString }}</td>
             <td>{{ totalValues.rep| round(0) | commaString }}</td>
+            <td>{{ totalValues.memoryTotal | humanReadableBytes }}</td>
             <td class="text-left">-</td>
             <td class="text-left">-</td>
           </tr>
@@ -143,7 +153,9 @@ export default {
         { name: 'Documents', sort: 'docs.count', doStats: true },
         { name: 'Disk Size', sort: 'store.size', doStats: true },
         { name: 'Shards', sort: 'pri', doStats: true },
+        { name: 'Segments', sort: 'segmentsCount', doStats: true },
         { name: 'Replicas', sort: 'rep', doStats: true },
+        { name: 'Memory', sort: 'memoryTotal', doStats: true },
         { name: 'Health', sort: 'health', doStats: false },
         { name: 'Status', sort: 'status', doStats: false }
       ]

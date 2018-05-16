@@ -10,8 +10,7 @@
     </b-navbar-toggle>
 
     <b-navbar-brand>
-      <!-- TODO this won't always be the stats page -->
-      <a href="help#stats"
+      <a :href="'help#' + activePage"
         class="cursor-pointer">
         <img src="../../assets/logo.png"
           class="moloch-logo"
@@ -26,8 +25,8 @@
         <b-nav-item
           v-for="item of menu"
           :key="item.link"
-          :href="item.link"
-          :active="item.link === 'stats'"
+          :href="item.href"
+          :active="isActive(item.link)"
           v-has-permission="item.permission">
           {{ item.title }}
         </b-nav-item>
@@ -47,7 +46,10 @@
 </template>
 
 <script>
+import qs from 'qs';
+
 import ESHealth from './ESHealth';
+
 export default {
   name: 'MolochNavbar',
   components: { ESHealth },
@@ -74,7 +76,26 @@ export default {
         menu.users = { title: 'Users', link: 'users', permission: 'createEnabled' };
       }
 
+      // preserve url query parameters
+      for (let m in menu) {
+        let item = menu[m];
+        item.href = `${item.link}?${qs.stringify(this.$route.query)}`;
+      }
+
       return menu;
+    },
+    activePage: function () {
+      for (let page in this.menu) {
+        let link = this.menu[page].link;
+        if (link === this.$route.path.split('/')[1]) {
+          return link;
+        }
+      }
+    }
+  },
+  methods: {
+    isActive: function (link) {
+      return link === this.$route.path.split('/')[1];
     }
   }
 };
@@ -82,7 +103,7 @@ export default {
 
 <style scoped>
 nav.navbar {
-  z-index: 5;
+  z-index: 6;
   max-height: 36px;
   min-height: 36px;
 }

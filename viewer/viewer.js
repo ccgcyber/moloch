@@ -154,7 +154,7 @@ app.use(function(req, res, next) {
   return next();
 });
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.urlencoded({ limit: "5mb", extended: true }));
 //app.use(multer({dest: Config.get("pcapDir")}));
 
 // send req to access log file or stdout
@@ -445,7 +445,7 @@ function createSessionDetailNew() {
     });
   }, function () {
     internals.sessionDetailNew = "include views/mixins.pug\n" +
-                                 "div.sessionDetail(sessionid=session.id)\n" +
+                                 "div.session-detail(sessionid=session.id)\n" +
                                  "  include views/sessionDetail\n";
     Object.keys(found).sort().forEach(function(k) {
       internals.sessionDetailNew += found[k];
@@ -511,15 +511,6 @@ function arrayZeroFill(n) {
     n--;
   }
   return a;
-}
-
-function sizeStringToInt(v) {
-  if (typeof(v) !== "string")              {return v;}
-  if (v.endsWith("kb") || v.endsWith("k")) {return Math.ceil(parseFloat(v, 10)*1024);}
-  if (v.endsWith("mb") || v.endsWith("m")) {return Math.ceil(parseFloat(v, 10)*1024*1024);}
-  if (v.endsWith("gb") || v.endsWith("g")) {return Math.ceil(parseFloat(v, 10)*1024*1024*1024);}
-  if (v.endsWith("tb") || v.endsWith("t")) {return Math.ceil(parseFloat(v, 10)*1024*1024*1024*1024);}
-  return parseInt(v, 10);
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -2309,11 +2300,6 @@ app.get('/esindices/list', function(req, res) {
       indices = findices;
     }
 
-    for (let i = 0, ilen = indices.length; i < ilen; i++) {
-      indices[i]['store.size'] = sizeStringToInt(indices[i]['store.size']);
-      indices[i]['pri.store.size'] = sizeStringToInt(indices[i]['pri.store.size']);
-    }
-
     // Implement sorting
     var sortField = req.query.sortField || "index";
     if (sortField === "index" || sortField === "status" || sortField === "health") {
@@ -2475,6 +2461,7 @@ app.get('/esshard/list', function(req, res) {
 
 app.post('/esshard/exclude/:type/:value', logAction(), checkCookieToken, function(req, res) {
   if (!req.user.createEnabled) { return res.molochError(403, "Need admin privileges"); }
+  if (Config.get("multiES", false)) { return res.molochError(401, "Not supported in multies"); }
 
   Db.getClusterSettings({flatSettings: true}, function(err, settings) {
     let exclude = [];
@@ -2507,6 +2494,7 @@ app.post('/esshard/exclude/:type/:value', logAction(), checkCookieToken, functio
 
 app.post('/esshard/include/:type/:value', logAction(), checkCookieToken, function(req, res) {
   if (!req.user.createEnabled) { return res.molochError(403, "Need admin privileges"); }
+  if (Config.get("multiES", false)) { return res.molochError(401, "Not supported in multies"); }
 
   Db.getClusterSettings({flatSettings: true}, function(err, settings) {
     let exclude = [];
@@ -2577,7 +2565,7 @@ app.get('/esstats.json', function(req, res) {
       var write = 0;
 
       var oldnode = internals.previousNodeStats[0][nodeKeys[n]];
-      if (node.fs.io_stats !== undefined && oldnode.fs.io_stats !== undefined && "total" in node.fs.io_stats) {
+      if (oldnode !== undefined && node.fs.io_stats !== undefined && oldnode.fs.io_stats !== undefined && "total" in node.fs.io_stats) {
         var timediffsec = (node.timestamp - oldnode.timestamp)/1000.0;
         read = Math.ceil((node.fs.io_stats.total.read_kilobytes - oldnode.fs.io_stats.total.read_kilobytes)/timediffsec*1024);
         write = Math.ceil((node.fs.io_stats.total.write_kilobytes - oldnode.fs.io_stats.total.write_kilobytes)/timediffsec*1024);
@@ -2706,7 +2694,7 @@ app.get('/stats.json', function(req, res) {
       fields.id        = stats.hits.hits[i]._id;
 
       for (const key of ["totalPackets", "totalK", "totalSessions",
-       "monitoring", "tcpSessions", "udpSessions", "icmpSessions",
+       "monitoring", "tcpSessions", "udpSessions", "icmpSessions", "sctpSessions",
        "freeSpaceM", "freeSpaceP", "memory", "memoryP", "frags", "cpu",
        "diskQueue", "esQueue", "packetQueue", "closeQueue", "needSave", "fragsQueue",
        "deltaFragsDropped", "deltaOverloadDropped", "deltaESDropped"
@@ -2964,7 +2952,13 @@ function flattenFields(fields) {
   return fields;
 }
 
-app.get('/buildQuery.json', logAction('query'), function(req, res) {
+app.use('/buildQuery.json', logAction('query'), function(req, res, next) {
+
+  if (req.method === "POST") {
+    req.query = req.body;
+  } else if (req.method !== "GET") {
+    next();
+  }
 
   buildSessionQuery(req, function(bsqErr, query, indices) {
     if (bsqErr) {
@@ -3556,6 +3550,7 @@ function csvListWriter(req, res, list, fields, pcapWriter, extension) {
 
   for (var j = 0, jlen = list.length; j < jlen; j++) {
     var sessionData = flattenFields(list[j]._source || list[j].fields);
+    sessionData._id = list[j]._id;
 
     if (!fields) { continue; }
 
@@ -3742,7 +3737,7 @@ function processSessionIdDisk(session, headerCb, packetCb, endCb, limit) {
     if (!opcap.isOpen()) {
       Db.fileIdToFile(fields.node, fileNum, function(file) {
         if (!file) {
-          console.log("WARNING - Only have SPI data, PCAP file no longer available", fields.node + '-' + fileNum);
+          console.log("WARNING - Only have SPI data, PCAP file no longer available.  Couldn't look up in file table", fields.node + '-' + fileNum);
           return nextCb("Only have SPI data, PCAP file no longer available for " + fields.node + '-' + fileNum);
         }
         if (file.kekId) {
@@ -3874,6 +3869,10 @@ function processSessionIdAndDecode(id, numPackets, doneCb) {
       });
     } else if (packets[0].ip.p === 17) {
       Pcap.reassemble_udp(packets, numPackets, function(err, results) {
+        return doneCb(err, session, results);
+      });
+    } else if (packets[0].ip.p === 132) {
+      Pcap.reassemble_sctp(packets, numPackets, function(err, results) {
         return doneCb(err, session, results);
       });
     } else {
@@ -4121,6 +4120,11 @@ function localSessionDetail(req, res) {
       });
     } else if (packets[0].ip.p === 17) {
       Pcap.reassemble_udp(packets, +req.query.packets || 200, function(err, results) {
+        session._err = err;
+        localSessionDetailReturn(req, res, session, results || []);
+      });
+    } else if (packets[0].ip.p === 132) {
+      Pcap.reassemble_sctp(packets, +req.query.packets || 200, function(err, results) {
         session._err = err;
         localSessionDetailReturn(req, res, session, results || []);
       });
@@ -4678,6 +4682,10 @@ app.post('/user/update', logAction(), checkCookieToken, postSettingUser, functio
     return res.molochError(403, 'Need admin privileges');
   }
 
+  if (req.body.userId === undefined) {
+    return res.molochError(403, 'Missing userId');
+  }
+
   /*if (req.params.userId === req.user.userId && req.query.createEnabled !== undefined && req.query.createEnabled !== "true") {
     return res.send(JSON.stringify({success: false, text: "Can not turn off your own admin privileges"}));
   }*/
@@ -5088,7 +5096,7 @@ function pcapScrub(req, res, id, entire, endCb) {
         Db.fileIdToFile(fields.node, fileNum, function(file) {
 
           if (!file) {
-            console.log("WARNING - Only have SPI data, PCAP file no longer available", fields.node + '-' + fileNum);
+            console.log("WARNING - Only have SPI data, PCAP file no longer available.  Couldn't look up in file table", fields.node + '-' + fileNum);
             return nextCb("Only have SPI data, PCAP file no longer available for " + fields.node + '-' + fileNum);
           }
 
@@ -5742,7 +5750,7 @@ app.use('/static', express.static(`${__dirname}/vueapp/dist/static`));
 // expose vue bundle (dev)
 app.use(['/app.js', '/vueapp/app.js'], express.static(`${__dirname}/vueapp/dist/app.js`));
 
-app.get('/stats', (req, res) => {
+app.get(['/stats', '/sessions', '/help', '/files', '/users', '/history', '/spiview'], (req, res) => {
   let cookieOptions = { path: app.locals.basePath };
   if (Config.isHTTPS()) { cookieOptions.secure = true; }
 

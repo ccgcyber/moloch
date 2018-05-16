@@ -63,34 +63,9 @@
   .config(['$routeProvider','$locationProvider','$httpProvider','$compileProvider','Constants',
     function($routeProvider, $locationProvider, $httpProvider, $compileProvider, Constants) {
       $routeProvider
-        .when('/sessions', {
-          title         : 'Sessions',
-          template      : '<session></session>',
-          reloadOnSearch: false
-        })
-        .when('/help', {
-          title         : 'Help',
-          template      : '<moloch-help></moloch-help>',
-          reloadOnSearch: false
-        })
         .when('/settings', {
           title         : 'Settings',
           template      : '<moloch-settings></moloch-settings>',
-          reloadOnSearch: false
-        })
-        .when('/files', {
-          title         : 'Files',
-          template      : '<moloch-files></moloch-files>',
-          reloadOnSearch: false
-        })
-        .when('/users', {
-          title         : 'Users',
-          template      : '<moloch-users></moloch-users>',
-          reloadOnSearch: false
-        })
-        .when('/spiview', {
-          title         : 'SPI View',
-          template      : '<moloch-spiview></moloch-spiview>',
           reloadOnSearch: false
         })
         .when('/connections', {
@@ -106,11 +81,6 @@
         .when('/upload', {
           title         : 'Upload',
           template      : '<moloch-upload></moloch-upload>',
-          reloadOnSearch: false
-        })
-        .when('/history', {
-          title         : 'History',
-          template      : '<moloch-history></moloch-history>',
           reloadOnSearch: false
         })
         .otherwise({

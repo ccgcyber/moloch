@@ -28,6 +28,7 @@
             <option value="tcpSessions">Active TCP Sessions</option>
             <option value="udpSessions">Active UDP Sessions</option>
             <option value="icmpSessions">Active ICMP Sessions</option>
+            <option value="sctpSessions">Active SCTP Sessions</option>
             <option value="freeSpaceM">Free Space MB</option>
             <option value="freeSpaceP">Free Space %</option>
             <option value="memory">Memory</option>
@@ -43,6 +44,8 @@
             <option value="deltaFragsDroppedPerSec">Fragments Dropped/Sec</option>
             <option value="deltaOverloadDroppedPerS>c">Overload Dropped/Sec</option>
             <option value="deltaTotalDroppedPerSec">Total Dropped/Sec</option>
+            <option value="deltaSessionBytesPerSec">ES Session Bytes/Sec</option>
+            <option value="sessionSizePerSec">ES Session Size/Sec</option>
           </select>
         </div> <!-- /graph type select -->
 
@@ -67,7 +70,7 @@
 
         <!-- graph hide select -->
         <div class="input-group input-group-sm ml-1"
-          v-if="tabIndex === 0">
+          v-if="tabIndex === 0 || tabIndex === 1">
           <div class="input-group-prepend help-cursor"
             v-b-tooltip.hover
             title="Hide rows">
@@ -85,13 +88,31 @@
           </select>
         </div> <!-- /graph hide select -->
 
+        <!-- graph sort select -->
+        <div class="input-group input-group-sm ml-1"
+          v-if="tabIndex === 0">
+          <div class="input-group-prepend help-cursor"
+            v-b-tooltip.hover
+            title="Sort">
+           <span class="input-group-text">
+             Sort
+           </span>
+         </div>
+          <select class="form-control input-sm"
+                  v-model="graphSort">
+            <option value="asc">Ascending</option>
+            <option value="desc">Descending</option>
+          </select>
+        </div> <!-- /graph hide select -->
+
         <!-- table data interval select -->
-        <div class="input-group input-group-sm ml-1">
+        <div class="input-group input-group-sm ml-1"
+          v-if="tabIndex !== 0">
           <div class="input-group-prepend help-cursor"
             v-b-tooltip.hover
             title="Data refresh interval for Node and Elasticsearch stats">
             <span class="input-group-text">
-              Refresh Node/ES Data Every
+              Refresh Data Every
             </span>
           </div>
           <select class="form-control input-sm"
@@ -129,40 +150,49 @@
         title="HINT: These graphs are 1440 pixels wide. Expand your browser window to at least 1500 pixels wide for best viewing.">
       </span>
       <b-tabs v-model="tabIndex">
-        <b-tab title="Node"
+        <b-tab title="Capture Graphs"
           @click="tabIndexChange()">
-          <node-stats v-if="user && tabIndex === 0"
+          <capture-graphs v-if="user && tabIndex === 0"
             :graph-type="graphType"
             :graph-interval="graphInterval"
             :graph-hide="graphHide"
-            :data-interval="dataInterval"
-            :user="user"></node-stats>
+            :graph-sort="graphSort"
+            :user="user">
+          </capture-graphs>
         </b-tab>
-        <b-tab title="ES Stats"
+        <b-tab title="Capture Stats"
           @click="tabIndexChange()">
-          <es-stats v-if="user && tabIndex === 1"
+          <capture-stats v-if="user && tabIndex === 1"
+            :graph-hide="graphHide"
+            :data-interval="dataInterval"
+            :user="user">
+          </capture-stats>
+        </b-tab>
+        <b-tab title="ES Nodes"
+          @click="tabIndexChange()">
+          <es-nodes v-if="user && tabIndex === 2"
             :data-interval="dataInterval">
-          </es-stats>
+          </es-nodes>
         </b-tab>
         <b-tab title="ES Indices"
           @click="tabIndexChange()">
-          <es-indices v-if="user && tabIndex === 2"
+          <es-indices v-if="user && tabIndex === 3"
             :data-interval="dataInterval"
             @errored="onError">
           </es-indices>
         </b-tab>
         <b-tab title="ES Tasks"
           @click="tabIndexChange()">
-          <es-tasks v-if="user && tabIndex === 3"
+          <es-tasks v-if="user && tabIndex === 4"
             :data-interval="dataInterval"
             :user="user">
           </es-tasks>
         </b-tab>
         <b-tab title="ES Shards"
           @click="tabIndexChange()">
-          <shards v-if="user && tabIndex === 4"
+          <es-shards v-if="user && tabIndex === 5"
             :data-interval="dataInterval">
-          </shards>
+          </es-shards>
         </b-tab>
       </b-tabs>
     </div> <!-- /stats content -->
@@ -172,12 +202,13 @@
 </template>
 
 <script>
-import Shards from './Shards';
-import EsStats from './EsStats';
+import EsShards from './EsShards';
+import EsNodes from './EsNodes';
 import EsTasks from './EsTasks';
 import EsIndices from './EsIndices';
-import NodeStats from './NodeStats';
-import UserService from '../UserService';
+import CaptureGraphs from './CaptureGraphs';
+import CaptureStats from './CaptureStats';
+import UserService from '../users/UserService';
 export default {
   name: 'Stats',
   data: function () {
@@ -187,12 +218,13 @@ export default {
       graphType: this.$route.query.type || 'deltaPacketsPerSec',
       graphInterval: this.$route.query.gtime || '5',
       graphHide: this.$route.query.hide || 'none',
+      graphSort: this.$route.query.sort || 'asc',
       dataInterval: this.$route.query.refreshInterval || '5000',
       childError: ''
     };
   },
   components: {
-    NodeStats, Shards, EsStats, EsIndices, EsTasks
+    CaptureGraphs, CaptureStats, EsShards, EsNodes, EsIndices, EsTasks
   },
   created: function () {
     this.loadUser();
@@ -239,6 +271,9 @@ export default {
       }
       if (queryParams.graphHide) {
         this.graphHide = queryParams.graphHide;
+      }
+      if (queryParams.graphSort) {
+        this.graphSort = queryParams.graphSort;
       }
       if (queryParams.refreshInterval) {
         this.dataInterval = queryParams.refreshInterval;

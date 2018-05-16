@@ -37,7 +37,7 @@
 #define UNUSED(x) x __attribute((unused))
 
 
-#define MOLOCH_API_VERSION 100
+#define MOLOCH_API_VERSION 101
 
 #define MOLOCH_SESSIONID_LEN 37
 
@@ -251,12 +251,17 @@ typedef struct {
 #define LOCAL static
 #endif
 
+#ifndef CLOCK_REALTIME_COARSE
+#define CLOCK_REALTIME_COARSE CLOCK_REALTIME
+#endif
+
 /******************************************************************************/
 
-#define SESSION_TCP  0
-#define SESSION_UDP  1
-#define SESSION_ICMP 2
-#define SESSION_MAX  3
+#define SESSION_TCP   0
+#define SESSION_UDP   1
+#define SESSION_ICMP  2
+#define SESSION_SCTP  3
+#define SESSION_MAX   4
 
 /******************************************************************************/
 /*
@@ -283,6 +288,7 @@ typedef struct moloch_config {
     gchar   **extraOps;
     MolochFieldOps_t ops;
     gchar     debug;
+    gchar     insecure;
     gboolean  quiet;
     gboolean  dryRun;
     gboolean  noSPI;
@@ -336,7 +342,7 @@ typedef struct moloch_config {
     uint32_t  maxFileTimeM;
     uint32_t  timeouts[SESSION_MAX];
     uint32_t  tcpSaveTimeout;
-    uint32_t  maxStreams;
+    uint32_t  maxStreams[SESSION_MAX];
     uint32_t  maxPackets;
     uint32_t  maxPacketsInQueue;
     uint32_t  dbBulkSize;
@@ -359,6 +365,7 @@ typedef struct moloch_config {
     char      logUnknownProtocols;
     char      logESRequests;
     char      logFileCreation;
+    char      logHTTPConnections;
     char      parseSMTP;
     char      parseSMB;
     char      parseQSValue;
@@ -400,9 +407,11 @@ typedef struct {
 
 
 /******************************************************************************/
-#define MOLOCH_PACKET_VPNTYPE_GRE    1
-#define MOLOCH_PACKET_VPNTYPE_PPPOE  2
-#define MOLOCH_PACKET_VPNTYPE_MPLS   3
+#define MOLOCH_PACKET_TUNNEL_GRE    0x1
+#define MOLOCH_PACKET_TUNNEL_PPPOE  0x2
+#define MOLOCH_PACKET_TUNNEL_MPLS   0x4
+#define MOLOCH_PACKET_TUNNEL_PPP    0x8
+
 typedef struct molochpacket_t
 {
     struct molochpacket_t   *packet_next, *packet_prev;
@@ -424,7 +433,7 @@ typedef struct molochpacket_t
     uint8_t        v6:1;           // v6 or not
     uint8_t        copied:1;       // don't need to copy
     uint8_t        wasfrag:1;      // was a fragment
-    uint8_t        vpnType:2;      // vpnType
+    uint8_t        tunnel:4;       // tunnel type
 } MolochPacket_t;
 
 typedef struct
@@ -502,22 +511,20 @@ typedef struct moloch_session {
 
     struct timeval         firstPacket;
     struct timeval         lastPacket;
+    struct in6_addr        addr1;
+    struct in6_addr        addr2;
     char                   firstBytes[2][8];
 
     uint64_t               bytes[2];
     uint64_t               databytes[2];
     uint64_t               totalDatabytes[2];
 
-
     uint32_t               lastFileNum;
     uint32_t               saveTime;
-    struct in6_addr        addr1;
-    struct in6_addr        addr2;
     uint32_t               packets[2];
 
     uint16_t               port1;
     uint16_t               port2;
-    uint16_t               offsets[2];
     uint16_t               outstandingQueries;
     uint16_t               segments;
     uint16_t               stopSaving;
@@ -719,6 +726,33 @@ void     moloch_db_set_send_bulk(MolochDbSendBulkFunc func);
 
 /******************************************************************************/
 /*
+ * drophash.c
+ */
+
+typedef struct molochdrophashitem_t  MolochDropHashItem_t;
+typedef struct molochdrophash_t      MolochDropHash_t;
+typedef struct molochdrophashgroup_t MolochDropHashGroup_t;
+struct molochdrophashgroup_t {
+    MolochDropHashItem_t *dhg_next, *dhg_prev;
+    int                   dhg_count;
+    int                   changed;
+    char                 *file;
+    char                  isIp4;
+    MolochDropHash_t     *drops[0x10000];
+    MOLOCH_LOCK_EXTERN(lock);
+};
+
+
+MolochDropHash_t *moloch_drophash_init (int num, char isIp4);
+int moloch_drophash_add (MolochDropHashGroup_t *group, int port, const void *key, uint32_t expire);
+uint32_t moloch_drophash_get (MolochDropHash_t *hash, void *key);
+void moloch_drophash_delete (MolochDropHashGroup_t *group, int port, void *key);
+void moloch_drophashgroup_save(MolochDropHashGroup_t *group);
+
+void moloch_drophashgroup_init(MolochDropHashGroup_t *group, char *file, int isIp4);
+
+/******************************************************************************/
+/*
  * parsers.c
  */
 typedef struct {
@@ -792,6 +826,7 @@ uint64_t moloch_http_dropped_count(void *server);
 
 void *moloch_http_create_server(const char *hostnames, int maxConns, int maxOutstandingRequests, int compress);
 void moloch_http_set_retries(void *server, uint16_t retries);
+void moloch_http_set_print_errors(void *server);
 void moloch_http_set_headers(void *server, char **headers);
 void moloch_http_set_header_cb(void *server, MolochHttpHeader_cb cb);
 void moloch_http_free_server(void *server);
@@ -873,6 +908,7 @@ void     moloch_packet_batch_flush(MolochPacketBatch_t *batch);
 void     moloch_packet_batch(MolochPacketBatch_t * batch, MolochPacket_t * const packet);
 
 void     moloch_packet_set_linksnap(int linktype, int snaplen);
+void     moloch_packet_drophash_add(MolochSession_t *session, int which, int min);
 
 
 /******************************************************************************/

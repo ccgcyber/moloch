@@ -1126,6 +1126,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         "\"tcpSessions\": %u, "
         "\"udpSessions\": %u, "
         "\"icmpSessions\": %u, "
+        "\"sctpSessions\": %u, "
         "\"deltaPackets\": %" PRIu64 ", "
         "\"deltaBytes\": %" PRIu64 ", "
         "\"deltaSessions\": %" PRIu64 ", "
@@ -1161,6 +1162,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         moloch_session_watch_count(SESSION_TCP),
         moloch_session_watch_count(SESSION_UDP),
         moloch_session_watch_count(SESSION_ICMP),
+        moloch_session_watch_count(SESSION_SCTP),
         (totalPackets - lastPackets[n]),
         (totalBytes - lastBytes[n]),
         (totalSessions - lastSessions[n]),
@@ -1801,6 +1803,7 @@ LOCAL void moloch_db_load_oui(char *name)
 
         // Convert to binary
         unsigned char buf[16];
+        len = strlen(parts[0]);
         for (i=0, j=0; i < len && j < 8; i += 2, j++) {
             buf[j] = moloch_hex_to_char[(int)parts[0][i]][(int)parts[0][i+1]];
         }
@@ -2043,6 +2046,7 @@ void moloch_db_init()
         headers[0] = "Content-Type: application/json";
         headers[1] = NULL;
         moloch_http_set_headers(esServer, headers);
+        moloch_http_set_print_errors(esServer);
     }
     myPid = getpid();
     gettimeofday(&startTime, NULL);
@@ -2090,7 +2094,7 @@ void moloch_db_exit()
     }
 
     if (config.tests) {
-        fprintf(stderr, "], \"tags\": {}}\n");
+        fprintf(stderr, "]}\n");
     }
 
     if (ipTree4) {

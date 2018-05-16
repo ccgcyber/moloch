@@ -139,17 +139,29 @@ a.no-decoration { text-decoration: none; }
 /* themed radio/checkbox buttons */
 label.btn-radio, button.btn-checkbox {
   background-image: none;
-  background-color: transparent;
-  border-color    : var(--color-primary);
+  background-color: var(--color-background, white) !important;
+  border-color    : var(--color-primary) !important;
   color           : var(--color-primary);
 }
-label.btn-radio:hover, button.btn-checkbox:hover {
-  color: var(--color-primary-dark);
+label.btn-radio.active:hover:not(:disabled),
+button.btn-checkbox.active:hover:not(:disabled) {
+  background-color: var(--color-primary-darker) !important;
 }
-label.btn-radio.active, button.btn-checkbox.active {
-  color           : var(--color-white);
-  border-color    : var(--color-primary);
-  background-color: var(--color-primary);
+label.btn-radio:hover:not(:disabled),
+button.btn-checkbox:hover:not(:disabled) {
+  color           : var(--color-primary);
+  background-color: var(--color-primary-lightest) !important;
+}
+label.btn-radio.active:not(:disabled),
+button.btn-checkbox.active:not(:disabled) {
+  border-color    : var(--color-primary) !important;
+  background-color: var(--color-primary) !important;
+}
+label.btn-radio:disabled, button.btn-checkbox:disabled {
+  background-color: var(--color-background, white);
+  color: var(--color-gray);
+  border-color: var(--color-gray) !important;
+  cursor: not-allowed;
 }
 
 /* themed labels */
@@ -225,5 +237,44 @@ label.btn-radio.active, button.btn-checkbox.active {
 }
 .alert.alert-sm button.close {
   padding: 0 .5rem;
+}
+
+/* sub navbars */
+.sub-navbar {
+  position: fixed;
+  top: 36px;
+  left: 0;
+  right: 0;
+  padding: var(--px-lg) var(--px-md) var(--px-sm) 13px;
+  background-color: var(--color-secondary-lightest);
+  -webkit-box-shadow: 0 0 16px -2px black;
+     -moz-box-shadow: 0 0 16px -2px black;
+          box-shadow: 0 0 16px -2px black;
+}
+.sub-navbar .sub-navbar-title {
+  font-size: 19px;
+  font-weight: bold;
+}
+.sub-navbar .sub-navbar-title .fa-stack {
+  margin-top: -14px;
+}
+.sub-navbar > .toast-container {
+  margin-top: -6px;
+}
+
+/* description list styles */
+dl.dl-horizontal dt {
+  float: left;
+  width: 190px;
+  overflow: hidden;
+  clear: left;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 0;
+}
+dl.dl-horizontal dd {
+  margin-left: 205px;
+  margin-bottom: 0;
 }
 </style>

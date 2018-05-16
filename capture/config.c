@@ -412,9 +412,10 @@ void moloch_config_load()
     config.timeouts[SESSION_ICMP]= moloch_config_int(keyfile, "icmpTimeout", 10, 1, 0xffff);
     config.timeouts[SESSION_UDP] = moloch_config_int(keyfile, "udpTimeout", 60, 1, 0xffff);
     config.timeouts[SESSION_TCP] = moloch_config_int(keyfile, "tcpTimeout", 60*8, 10, 0xffff);
+    config.timeouts[SESSION_SCTP]= moloch_config_int(keyfile, "sctpTimeout", 60, 10, 0xffff);
     config.tcpSaveTimeout        = moloch_config_int(keyfile, "tcpSaveTimeout", 60*8, 10, 60*120);
-    config.maxStreams            = moloch_config_int(keyfile, "maxStreams", 1500000, 1, 16777215);
-    config.maxPackets            = moloch_config_int(keyfile, "maxPackets", 10000, 1, 100000);
+    int maxStreams               = moloch_config_int(keyfile, "maxStreams", 1500000, 1, 16777215);
+    config.maxPackets            = moloch_config_int(keyfile, "maxPackets", 10000, 1, 0xffff);
     config.maxPacketsInQueue     = moloch_config_int(keyfile, "maxPacketsInQueue", 200000, 10000, 5000000);
     config.dbBulkSize            = moloch_config_int(keyfile, "dbBulkSize", 200000, MOLOCH_HTTP_BUFFER_SIZE*2, 1000000);
     config.dbFlushTimeout        = moloch_config_int(keyfile, "dbFlushTimeout", 5, 1, 60*30);
@@ -425,7 +426,7 @@ void moloch_config_load()
     config.pcapWriteSize         = moloch_config_int(keyfile, "pcapWriteSize", 0x40000, 0x10000, 0x800000);
     config.maxFreeOutputBuffers  = moloch_config_int(keyfile, "maxFreeOutputBuffers", 50, 0, 0xffff);
     config.fragsTimeout          = moloch_config_int(keyfile, "fragsTimeout", 60*8, 60, 0xffff);
-    config.maxFrags              = moloch_config_int(keyfile, "maxFrags", 50000, 1000, 0xffffff);
+    config.maxFrags              = moloch_config_int(keyfile, "maxFrags", 10000, 100, 0xffffff);
     config.snapLen               = moloch_config_int(keyfile, "snapLen", 16384, 1, MOLOCH_PACKET_MAX_LEN);
     config.maxMemPercentage      = moloch_config_int(keyfile, "maxMemPercentage", 100, 5, 100);
     config.maxReqBody            = moloch_config_int(keyfile, "maxReqBody", 256, 0, 0x7fff);
@@ -436,6 +437,7 @@ void moloch_config_load()
     config.logUnknownProtocols   = moloch_config_boolean(keyfile, "logUnknownProtocols", config.debug);
     config.logESRequests         = moloch_config_boolean(keyfile, "logESRequests", config.debug);
     config.logFileCreation       = moloch_config_boolean(keyfile, "logFileCreation", config.debug);
+    config.logHTTPConnections    = moloch_config_boolean(keyfile, "logHTTPConnections", TRUE);
     config.parseSMTP             = moloch_config_boolean(keyfile, "parseSMTP", TRUE);
     config.parseSMB              = moloch_config_boolean(keyfile, "parseSMB", TRUE);
     config.parseQSValue          = moloch_config_boolean(keyfile, "parseQSValue", FALSE);
@@ -445,6 +447,11 @@ void moloch_config_load()
     config.compressES            = moloch_config_boolean(keyfile, "compressES", FALSE);
     config.antiSynDrop           = moloch_config_boolean(keyfile, "antiSynDrop", TRUE);
     config.readTruncatedPackets  = moloch_config_boolean(keyfile, "readTruncatedPackets", FALSE);
+
+    config.maxStreams[SESSION_TCP] = maxStreams/config.packetThreads*1.25;
+    config.maxStreams[SESSION_UDP] = maxStreams/config.packetThreads/20;
+    config.maxStreams[SESSION_SCTP] = maxStreams/config.packetThreads/20;
+    config.maxStreams[SESSION_ICMP] = maxStreams/config.packetThreads/200;
 
 }
 /******************************************************************************/

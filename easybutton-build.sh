@@ -15,10 +15,10 @@ GLIB=2.54.3
 YARA=3.7.1
 MAXMIND=1.3.2
 PCAP=1.8.1
-CURL=7.58.0
+CURL=7.59.0
 LUA=5.3.4
 DAQ=2.0.6
-NODE=8.9.4
+NODE=8.11.1
 
 TDIR="/data/moloch"
 DOPFRING=0
@@ -54,8 +54,18 @@ do
     DONODE=0
     shift
     ;;
+  --help)
+    echo "Make it easier to build Moloch!  This will download and build thirdparty libraries plus build Moloch."
+    echo "--dir <directory>   = The directory to install everything into [/data/moloch]"
+    echo "--clean             = Do a 'make clean' first"
+    echo "--install           = Do a 'make install' at the end, adding our node to the path"
+    echo "--nonode            = Do NOT download and install nodejs into the moloch directory"
+    echo "--pfring            = Build pfring support"
+    echo "--daq               = Build daq support"
+    exit 0;
+    ;;
   -*)
-    echo "Unknown option '$1'"
+    echo "Unknown option '$1', try '--help'"
     exit 1
     ;;
   *)
