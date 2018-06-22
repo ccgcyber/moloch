@@ -122,11 +122,9 @@ export default {
     }
   },
   created: function () {
-    // set the expression if it is in route params
     if (this.$route.query.expression) {
       this.expression = this.$route.query.expression;
     }
-
     this.getFields();
   },
   mounted: function () {
@@ -342,7 +340,7 @@ export default {
       // autocomplete country values
       if (/^(country)/.test(token)) {
         this.loadingValues = true;
-        this.FieldService.getCountryCodes()
+        FieldService.getCountryCodes()
           .then((result) => {
             this.loadingValues = false;
             this.results = this.findMatch(lastToken, result);

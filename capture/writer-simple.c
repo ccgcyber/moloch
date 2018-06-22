@@ -198,16 +198,6 @@ LOCAL void writer_simple_encrypt_key(uint8_t *inkey, int inkeylen, char *outkeyh
     moloch_sprint_hex_string(outkeyhex, ciphertext, ciphertext_len);
 }
 /******************************************************************************/
-struct pcap_timeval {
-    int32_t tv_sec;		/* seconds */
-    int32_t tv_usec;		/* microseconds */
-};
-struct pcap_sf_pkthdr {
-    struct pcap_timeval ts;	/* time stamp */
-    uint32_t caplen;		/* length of portion present */
-    uint32_t pktlen;		/* length this packet (off wire) */
-};
-/******************************************************************************/
 LOCAL void writer_simple_write(const MolochSession_t * const session, MolochPacket_t * const packet)
 {
     char    dekhex[1024];
@@ -265,7 +255,7 @@ LOCAL void writer_simple_write(const MolochSession_t * const session, MolochPack
     packet->writerFileNum = currentInfo[thread]->file->id;
     packet->writerFilePos = currentInfo[thread]->file->pos;
 
-    struct pcap_sf_pkthdr hdr;
+    struct moloch_pcap_sf_pkthdr hdr;
 
     hdr.ts.tv_sec  = packet->ts.tv_sec;
     hdr.ts.tv_usec = packet->ts.tv_usec;
@@ -336,7 +326,8 @@ LOCAL void *writer_simple_thread(void *UNUSED(arg))
             }
         }
         if (info->closing) {
-            ftruncate(info->file->fd, info->file->pos);
+            if (ftruncate(info->file->fd, info->file->pos) < 0 && config.debug)
+                LOG("Truncate failed");
             close(info->file->fd);
             moloch_db_update_filesize(info->file->id, info->file->pos);
         }

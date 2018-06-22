@@ -58,13 +58,21 @@ void moloch_field_define_json(unsigned char *expression, int expression_len, uns
     info->expression = g_strndup((char*)expression, expression_len);
     for (i = 0; out[i]; i += 4) {
         if (strncmp("group", (char*)data + out[i], 5) == 0) {
+            if (info->group)
+                g_free(info->group);
             info->group = g_strndup((char*)data + out[i+2], out[i+3]);
         } else if (strncmp("dbField2", (char*)data + out[i], 7) == 0) {
+            if (info->dbFieldFull)
+                g_free(info->dbFieldFull);
             info->dbFieldFull = info->dbField = g_strndup((char*)data + out[i+2], out[i+3]);
             info->dbFieldLen  = out[i+3];
         } else if (strncmp("type", (char*)data + out[i], 4) == 0) {
+            if (info->kind)
+                g_free(info->kind);
             info->kind = g_strndup((char*)data + out[i+2], out[i+3]);
         } else if (strncmp("category", (char*)data + out[i], 8) == 0) {
+            if (info->category)
+                g_free(info->category);
             info->category = g_strndup((char*)data + out[i+2], out[i+3]);
         } else if (strncmp("disabled", (char*)data + out[i], 8) == 0) {
             if (strncmp((char *)data + out[i+2], "true", 4) == 0) {
@@ -259,7 +267,7 @@ int moloch_field_define(char *group, char *kind, char *expression, char *friendl
     if ((flags & MOLOCH_FIELD_FLAG_FAKE) == 0) {
         if (minfo->pos == -1) {
             minfo->pos = MOLOCH_THREAD_INCROLD(config.maxField);
-            if (config.maxField > 255) {
+            if (config.maxField >= MOLOCH_FIELDS_DB_MAX) {
                 LOGEXIT("ERROR - Max Fields is too large %d", config.maxField);
             }
         }
@@ -540,6 +548,36 @@ gboolean moloch_field_string_add_lower(int pos, MolochSession_t *session, const 
     return TRUE;
 }
 /******************************************************************************/
+gboolean moloch_field_string_add_host(int pos, MolochSession_t *session, char *string, int len)
+{
+    char *host;
+
+    if (len == -1 ) {
+        len = strlen(string);
+    }
+
+    if (string[len] == 0)
+        host = g_hostname_to_unicode(string);
+    else {
+        char ch = string[len];
+        string[len] = 0;
+        host = g_hostname_to_unicode(string);
+        string[len] = ch;
+    }
+
+    // If g_hostname_to_unicode fails, just use the input
+    if (!host) {
+        host = g_strndup(string, len);
+        moloch_session_add_tag(session, "bad-punycode");
+    }
+
+    if (!moloch_field_string_add(pos, session, host, -1, FALSE)) {
+        g_free(host);
+        return FALSE;
+    }
+    return TRUE;
+}
+/******************************************************************************/
 const char *moloch_field_string_uw_add(int pos, MolochSession_t *session, const char *string, int len, gpointer uw, gboolean copy)
 {
     MolochField_t         *field;
@@ -713,8 +751,7 @@ void *moloch_field_parse_ip(const char *str) {
             return NULL;
         }
 
-        ((uint32_t *)v->s6_addr)[0] = 0;
-        ((uint32_t *)v->s6_addr)[1] = 0;
+        memset(v->s6_addr, 0, 8);
         ((uint32_t *)v->s6_addr)[2] = htonl(0xffff);
         ((uint32_t *)v->s6_addr)[3] = addr.s_addr;
     } else {
@@ -750,10 +787,7 @@ gboolean moloch_field_ip_add_str(int pos, MolochSession_t *session, char *str)
             goto added;
         case MOLOCH_FIELD_TYPE_IP_GHASH:
             field->ghash = g_hash_table_new_full(moloch_field_ip_hash, moloch_field_ip_equal, g_free, NULL);
-
-            if (!g_hash_table_add(field->ghash, v)) {
-                g_free(v);
-            }
+            g_hash_table_add(field->ghash, v);
             goto added;
         default:
             LOGEXIT("Not a ip %s", config.fields[pos]->dbField);
@@ -794,8 +828,7 @@ gboolean moloch_field_ip4_add(int pos, MolochSession_t *session, int i)
 
     struct in6_addr *v = g_malloc(sizeof(struct in6_addr));
 
-    ((uint32_t *)v->s6_addr)[0] = 0;
-    ((uint32_t *)v->s6_addr)[1] = 0;
+    memset(v->s6_addr, 0, 8);
     ((uint32_t *)v->s6_addr)[2] = htonl(0xffff);
     ((uint32_t *)v->s6_addr)[3] = i;
 
@@ -809,10 +842,7 @@ gboolean moloch_field_ip4_add(int pos, MolochSession_t *session, int i)
             goto added;
         case MOLOCH_FIELD_TYPE_IP_GHASH:
             field->ghash = g_hash_table_new_full(moloch_field_ip_hash, moloch_field_ip_equal, g_free, NULL);
-
-            if (!g_hash_table_add(field->ghash, v)) {
-                g_free(v);
-            }
+            g_hash_table_add(field->ghash, v);
             goto added;
         default:
             LOGEXIT("Not a ip %s", config.fields[pos]->dbField);
@@ -863,10 +893,7 @@ gboolean moloch_field_ip6_add(int pos, MolochSession_t *session, const uint8_t *
             goto added;
         case MOLOCH_FIELD_TYPE_IP_GHASH:
             field->ghash = g_hash_table_new_full(moloch_field_ip_hash, moloch_field_ip_equal, g_free, NULL);
-
-            if (!g_hash_table_add(field->ghash, v)) {
-                g_free(v);
-            }
+            g_hash_table_add(field->ghash, v);
             goto added;
         default:
             LOGEXIT("Not a ip %s", config.fields[pos]->dbField);
@@ -1161,6 +1188,9 @@ void moloch_field_ops_run(MolochSession_t *session, MolochFieldOps_t *ops)
             case MOLOCH_FIELD_EXSPECIAL_SRC_PORT:
             case MOLOCH_FIELD_EXSPECIAL_DST_IP:
             case MOLOCH_FIELD_EXSPECIAL_DST_PORT:
+            case MOLOCH_FIELD_EXSPECIAL_TCPFLAGS_SYN:
+            case MOLOCH_FIELD_EXSPECIAL_PACKETS_SRC:
+            case MOLOCH_FIELD_EXSPECIAL_PACKETS_DST:
                 break;
             }
             continue;
@@ -1250,6 +1280,13 @@ void moloch_field_ops_add(MolochFieldOps_t *ops, int fieldPos, char *value, int 
         case MOLOCH_FIELD_EXSPECIAL_DST_PORT:
             LOG("Warning - not allow to set src/dst ip/port: %s", op->str);
             break;
+        case MOLOCH_FIELD_EXSPECIAL_TCPFLAGS_SYN:
+            LOG("Warning - not allow to set tcpflags: %s", op->str);
+            break;
+        case MOLOCH_FIELD_EXSPECIAL_PACKETS_SRC:
+        case MOLOCH_FIELD_EXSPECIAL_PACKETS_DST:
+            LOG("Warning - not allow to set num packets: %s", op->str);
+            break;
         }
     } else {
         switch (config.fields[fieldPos]->type) {
@@ -1266,6 +1303,8 @@ void moloch_field_ops_add(MolochFieldOps_t *ops, int fieldPos, char *value, int 
         case  MOLOCH_FIELD_TYPE_STR_GHASH:
         case  MOLOCH_FIELD_TYPE_IP:
         case  MOLOCH_FIELD_TYPE_IP_GHASH:
+            if (valuelen == -1)
+                valuelen = strlen(value);
             if (ops->flags & MOLOCH_FIELD_OPS_FLAGS_COPY)
                 op->str = g_strndup(value, valuelen);
             else
@@ -1297,6 +1336,9 @@ void moloch_field_init()
     moloch_field_by_exp_add_exspecial("port.src", MOLOCH_FIELD_EXSPECIAL_SRC_PORT, MOLOCH_FIELD_TYPE_INT);
     moloch_field_by_exp_add_exspecial("ip.dst", MOLOCH_FIELD_EXSPECIAL_DST_IP, MOLOCH_FIELD_TYPE_IP);
     moloch_field_by_exp_add_exspecial("port.dst", MOLOCH_FIELD_EXSPECIAL_DST_PORT, MOLOCH_FIELD_TYPE_INT);
+    moloch_field_by_exp_add_exspecial("tcpflags.syn", MOLOCH_FIELD_EXSPECIAL_TCPFLAGS_SYN, MOLOCH_FIELD_TYPE_INT);
+    moloch_field_by_exp_add_exspecial("packets.src", MOLOCH_FIELD_EXSPECIAL_PACKETS_SRC, MOLOCH_FIELD_TYPE_INT);
+    moloch_field_by_exp_add_exspecial("packets.dst", MOLOCH_FIELD_EXSPECIAL_PACKETS_DST, MOLOCH_FIELD_TYPE_INT);
 }
 /******************************************************************************/
 void moloch_field_exit()

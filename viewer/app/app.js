@@ -68,24 +68,10 @@
           template      : '<moloch-settings></moloch-settings>',
           reloadOnSearch: false
         })
-        .when('/connections', {
-          title         : 'Connections',
-          template      : '<moloch-connections></moloch-connections>',
-          reloadOnSearch: false
-        })
-        .when('/spigraph', {
-          title         : 'SPIGraph',
-          template      : '<moloch-spigraph></moloch-spigraph>',
-          reloadOnSearch: false
-        })
         .when('/upload', {
           title         : 'Upload',
           template      : '<moloch-upload></moloch-upload>',
           reloadOnSearch: false
-        })
-        .otherwise({
-          title    : 'Not Found',
-          template : '<moloch-404></moloch-404>'
         });
 
       $locationProvider.html5Mode(true); // activate HTML5 Mode

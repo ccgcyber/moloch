@@ -49,13 +49,17 @@ LOCAL int                   protocolField;
 LOCAL int                   ja3Field;
 
 LOCAL uint32_t              fieldsTS;
-LOCAL int                   fieldsMap[256];
+LOCAL int                   fieldsMap[MOLOCH_FIELDS_DB_MAX];
 
 LOCAL uint32_t              inflight;
 
 LOCAL char                **wiseExcludeDomains;
 LOCAL int                  *wiseExcludeDomainsLen;
 LOCAL int                   wiseExcludeDomainsNum;
+
+LOCAL char                 *wiseURL;
+LOCAL int                   wisePort;
+LOCAL char                 *wiseHost;
 
 LOCAL const int validDNS[256] = {
     ['-'] = 1,
@@ -160,7 +164,7 @@ LOCAL void wise_load_fields()
 
     memset(fieldsMap, -1, sizeof(fieldsMap));
 
-    key_len = snprintf(key, sizeof(key), "/fields");
+    key_len = snprintf(key, sizeof(key), "/fields?ver=1");
     size_t         data_len;
     unsigned char *data = moloch_http_send_sync(wiseService, "GET", key, key_len, NULL, 0, NULL, &data_len);;
 
@@ -170,10 +174,27 @@ LOCAL void wise_load_fields()
     int ver = -1, cnt = 0;
     BSB_IMPORT_u32(bsb, fieldsTS);
     BSB_IMPORT_u32(bsb, ver);
-    BSB_IMPORT_u08(bsb, cnt);
 
-    if (ver != 0) {
-        LOGEXIT("Unsupported wise return value %d", ver);
+    if (ver < 0 || ver > 1) {
+        if (wiseURL) {
+            LOGEXIT("Verify wiseURL value of `%s` version: %d - %s",
+                    wiseURL, ver,
+                    (ver == -1?"Couldn't connect to WISE":"Unsupported version"));
+        } else {
+            LOGEXIT("Verify wiseHost:wisePort value of `%s:%d` version: %d - %s",
+                    wiseHost, wisePort, ver,
+                    (ver == -1?"Couldn't connect to WISE":"Unsupported version"));
+        }
+    }
+
+    if (ver == 0) {
+        BSB_IMPORT_u08(bsb, cnt);
+    } else if (ver == 1) {
+        BSB_IMPORT_u16(bsb, cnt);
+    }
+
+    if (cnt > MOLOCH_FIELDS_DB_MAX) {
+        LOGEXIT("Wise server is returning too many fields %d > %d", cnt, MOLOCH_FIELDS_DB_MAX);
     }
 
     int i;
@@ -184,7 +205,7 @@ LOCAL void wise_load_fields()
         if (fieldsMap[i] == -1)
             fieldsTS = 0;
         if (config.debug)
-            LOG("%d %d %s", i, fieldsMap[i], BSB_WORK_PTR(bsb));
+            LOG("Couldn't define field - %d %d %s", i, fieldsMap[i], BSB_WORK_PTR(bsb));
         BSB_IMPORT_skip(bsb, len);
     }
     free(data);
@@ -532,6 +553,8 @@ void wise_plugin_pre_save(MolochSession_t *session, int UNUSED(final))
         iRequest->numItems = 0;
     }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
     //IPs
     if (IN6_IS_ADDR_V4MAPPED(&session->addr1)) {
         wise_lookup_ip4(session, iRequest, MOLOCH_V6_TO_V4(session->addr1));
@@ -545,6 +568,7 @@ void wise_plugin_pre_save(MolochSession_t *session, int UNUSED(final))
         wise_lookup_ip6(session, iRequest, &session->addr2);
     }
 
+#pragma GCC diagnostic pop
 
     //Domains
     if (session->fields[httpHostField]) {
@@ -686,6 +710,12 @@ LOCAL void wise_plugin_exit()
         }
     }
 
+    if (wiseHost)
+        g_free(wiseHost);
+
+    if (wiseURL)
+        g_free(wiseURL);
+
     moloch_http_free_server(wiseService);
     MOLOCH_UNLOCK(item);
 }
@@ -715,8 +745,9 @@ void moloch_plugin_init()
     tcpTuple = moloch_config_boolean(NULL, "wiseTcpTupleLookups", FALSE);
     udpTuple = moloch_config_boolean(NULL, "wiseUdpTupleLookups", FALSE);
 
-    int   port = moloch_config_int(NULL, "wisePort", 8081, 1, 0xffff);
-    char *host = moloch_config_str(NULL, "wiseHost", "127.0.0.1");
+    wiseURL  = moloch_config_str(NULL, "wiseURL", NULL);
+    wisePort = moloch_config_int(NULL, "wisePort", 8081, 1, 0xffff);
+    wiseHost = moloch_config_str(NULL, "wiseHost", "127.0.0.1");
 
     httpHostField    = moloch_field_by_db("http.host");
     httpXffField     = moloch_field_by_db("http.xffIp");
@@ -745,11 +776,14 @@ void moloch_plugin_init()
         emailSha256Field = moloch_field_by_db("email.sha256");
     }
 
-    char hoststr[200];
-    snprintf(hoststr, sizeof(hoststr), "http://%s:%d", host, port);
-    wiseService = moloch_http_create_server(hoststr, maxConns, maxRequests, 0);
+    if (wiseURL) {
+        wiseService = moloch_http_create_server(wiseURL, maxConns, maxRequests, 0);
+    } else {
+        char hoststr[200];
+        snprintf(hoststr, sizeof(hoststr), "http://%s:%d", wiseHost, wisePort);
+        wiseService = moloch_http_create_server(hoststr, maxConns, maxRequests, 0);
+    }
     moloch_http_set_retries(wiseService, 1);
-    g_free(host);
 
     moloch_plugins_register("wise", FALSE);
 

@@ -57,6 +57,9 @@ extern unsigned char    moloch_hex_to_char[256][256];
 LOCAL uint32_t          nextFileNum;
 LOCAL MOLOCH_LOCK_DEFINE(nextFileNum);
 
+LOCAL struct timespec startHealthCheck;
+LOCAL uint64_t        esHealthMS;
+
 /******************************************************************************/
 extern MolochConfig_t        config;
 
@@ -84,6 +87,10 @@ void moloch_db_free_local_ip(MolochIpInfo_t *ii)
         g_free(ii->asn);
     if (ii->rir)
         g_free(ii->rir);
+
+    int i;
+    for (i = 0; i < ii->numtags; i++)
+        g_free(ii->tagsStr[i]);
     MOLOCH_TYPE_FREE(MolochIpInfo_t, ii);
 }
 /******************************************************************************/
@@ -706,6 +713,10 @@ void moloch_db_save_session(MolochSession_t *session, int final)
                 inet_ntop(AF_INET6, ikey, ipsrc, sizeof(ipsrc));
             }
             BSB_EXPORT_sprintf(jbsb, "\"%s\":\"%s\",", config.fields[pos]->dbField, ipsrc);
+
+            if (freeField) {
+                g_free(session->fields[pos]->ip);
+            }
             }
             break;
         case MOLOCH_FIELD_TYPE_IP_GHASH: {
@@ -1127,6 +1138,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         "\"udpSessions\": %u, "
         "\"icmpSessions\": %u, "
         "\"sctpSessions\": %u, "
+        "\"espSessions\": %u, "
         "\"deltaPackets\": %" PRIu64 ", "
         "\"deltaBytes\": %" PRIu64 ", "
         "\"deltaSessions\": %" PRIu64 ", "
@@ -1135,6 +1147,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         "\"deltaFragsDropped\": %" PRIu64 ", "
         "\"deltaOverloadDropped\": %" PRIu64 ", "
         "\"deltaESDropped\": %" PRIu64 ", "
+        "\"esHealthMS\": %" PRIu64 ", "
         "\"deltaMS\": %" PRIu64
         "}",
         VERSION,
@@ -1163,6 +1176,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         moloch_session_watch_count(SESSION_UDP),
         moloch_session_watch_count(SESSION_ICMP),
         moloch_session_watch_count(SESSION_SCTP),
+        moloch_session_watch_count(SESSION_ESP),
         (totalPackets - lastPackets[n]),
         (totalBytes - lastBytes[n]),
         (totalSessions - lastSessions[n]),
@@ -1171,6 +1185,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         (fragsDropped - lastFragsDropped[n]),
         (overloadDropped - lastOverloadDropped[n]),
         (esDropped - lastESDropped[n]),
+        esHealthMS,
         diffms);
 
     lastTime[n]            = currentTime;
@@ -1185,10 +1200,14 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
     lastUsage[n]           = usage;
 
     if (n == 0) {
-        if (sync)
-            moloch_http_send_sync(esServer, "POST", stats_key, stats_key_len, json, json_len, NULL, NULL);
-        else
+        if (sync) {
+            unsigned char *data = moloch_http_send_sync(esServer, "POST", stats_key, stats_key_len, json, json_len, NULL, NULL);
+            if (data)
+                free(data);
+            moloch_http_free_buffer(json);
+        } else {
             moloch_http_set(esServer, stats_key, stats_key_len, json, json_len, NULL, NULL);
+        }
     } else {
         key_len = snprintf(key, sizeof(key), "/%sdstats/dstat/%s-%d-%d", config.prefix, config.nodeName, (int)(currentTime.tv_sec/intervals[n])%1440, intervals[n]);
         moloch_http_set(esServer, key, key_len, json, json_len, NULL, NULL);
@@ -1228,6 +1247,40 @@ LOCAL gboolean moloch_db_flush_gfunc (gpointer user_data )
         }
     }
 
+    return TRUE;
+}
+/******************************************************************************/
+LOCAL void moloch_db_health_check_cb(int UNUSED(code), unsigned char *data, int data_len, gpointer uw)
+{
+    uint32_t           status_len;
+    unsigned char     *status;
+    struct timespec    stopHealthCheck;
+
+    clock_gettime(CLOCK_MONOTONIC, &stopHealthCheck);
+
+    esHealthMS = (stopHealthCheck.tv_sec - startHealthCheck.tv_sec)*1000 +
+                 (stopHealthCheck.tv_nsec - startHealthCheck.tv_nsec)/1000000L;
+
+    if (*data == '[')
+        status = moloch_js0n_get(data+1, data_len-2, "status", &status_len);
+    else
+        status = moloch_js0n_get(data, data_len, "status", &status_len);
+
+    if (code != 200) {
+        LOG("WARNING - Couldn't perform Elasticsearch health check");
+    } else if ( esHealthMS > 20000) {
+        LOG("WARNING - Elasticsearch health check took more then 20 seconds %llums", esHealthMS);
+    } else if ((status[0] == 'y' && uw == (gpointer)1L) || (status[0] == 'r')) {
+        LOG("WARNING - Elasticsearch is %.*s and took %llums to query health, this may cause issues.  See FAQ.", status_len, status, esHealthMS);
+    }
+}
+/******************************************************************************/
+
+// Runs on main thread
+LOCAL gboolean moloch_db_health_check (gpointer user_data )
+{
+    moloch_http_send(esServer, "GET", "/_cat/health?format=json", -1, NULL, 0, NULL, TRUE, moloch_db_health_check_cb, user_data);
+    clock_gettime(CLOCK_MONOTONIC, &startHealthCheck);
     return TRUE;
 }
 /******************************************************************************/
@@ -1406,7 +1459,7 @@ LOCAL void moloch_db_mkpath(char *path)
     }
 }
 /******************************************************************************/
-char *moloch_db_create_file_full(time_t firstPacket, char *name, uint64_t size, int locked, uint32_t *id, ...)
+char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t size, int locked, uint32_t *id, ...)
 {
     char               key[100];
     int                key_len;
@@ -1556,12 +1609,12 @@ char *moloch_db_create_file_full(time_t firstPacket, char *name, uint64_t size, 
     *id = num;
 
     if (name)
-        return name;
+        return (char *)name;
 
     return g_strdup(filename);
 }
 /******************************************************************************/
-char *moloch_db_create_file(time_t firstPacket, char *name, uint64_t size, int locked, uint32_t *id)
+char *moloch_db_create_file(time_t firstPacket, const char *name, uint64_t size, int locked, uint32_t *id)
 {
     return moloch_db_create_file_full(firstPacket, name, size, locked, id, NULL);
 }
@@ -1776,7 +1829,7 @@ LOCAL void moloch_db_load_oui(char *name)
 
         // Break into pieces
         gchar **parts = g_strsplit(line, "\t", 0);
-        char *str;
+        char *str = NULL;
         if (parts[2]) {
             if (parts[2][0])
                 str = parts[2];
@@ -2047,6 +2100,7 @@ void moloch_db_init()
         headers[1] = NULL;
         moloch_http_set_headers(esServer, headers);
         moloch_http_set_print_errors(esServer);
+        moloch_db_health_check((gpointer)1L);
     }
     myPid = getpid();
     gettimeofday(&startTime, NULL);
@@ -2072,6 +2126,7 @@ void moloch_db_init()
         timers[2] = g_timeout_add_seconds( 60, moloch_db_update_stats_gfunc, (gpointer)2);
         timers[3] = g_timeout_add_seconds(600, moloch_db_update_stats_gfunc, (gpointer)3);
         timers[4] = g_timeout_add_seconds(  1, moloch_db_flush_gfunc, 0);
+        timers[5] = g_timeout_add_seconds( 30, moloch_db_health_check, 0);
     }
     int thread;
     for (thread = 0; thread < config.packetThreads; thread++) {

@@ -301,6 +301,7 @@ export default {
       this.fieldClick(field, value, op, null);
 
       this.$router.push({
+        path: '/sessions',
         query: {
           ...this.$route.query,
           expression: this.expression
@@ -541,6 +542,7 @@ export default {
  * class as it is specific to bootstraps dropdown implementation
  * this class is the same as dropdown-menu, but LESS whitespace */
 .session-field-dropdown {
+  font-size: 12px;
   position: absolute;
   opacity: 0;
   visibility: hidden;

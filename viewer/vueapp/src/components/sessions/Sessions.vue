@@ -97,6 +97,7 @@
                     placement="right"
                     :title="field.help">
                     {{ field.friendlyName }}
+                    <small>({{ field.exp }})</small>
                   </b-dropdown-item>
                 </template>
               </b-dropdown> <!-- /column visibility button -->
@@ -424,6 +425,7 @@ export default {
       stickySessions: [],
       settings: {}, // user settings
       colWidths: {},
+      colConfigs: [],
       colConfigError: '',
       headers: [],
       graphData: undefined,
@@ -461,7 +463,7 @@ export default {
         bounding: this.$route.query.bounding || 'last',
         interval: this.$route.query.interval || 'auto',
         view: this.$route.query.view || undefined,
-        expression: this.$route.query.expression || undefined
+        expression: this.$store.state.expression || undefined
       };
     },
     filteredFields: function () {
@@ -469,9 +471,9 @@ export default {
 
       for (let group in this.groupedFields) {
         filteredGroupedFields[group] = this.groupedFields[group].filter((field) => {
-          return field.friendlyName.toLowerCase().includes(
-            this.colQuery.toLowerCase()
-          );
+          return field.regex === undefined &&
+                 field.noFacet !== 'true' &&
+                 field.friendlyName.toLowerCase().includes(this.colQuery.toLowerCase());
         });
       }
 
@@ -955,7 +957,7 @@ export default {
         })
         .catch((error) => {
           this.sessions.data = undefined;
-          this.error = error;
+          this.error = error.text;
           this.loading = false;
         });
     },

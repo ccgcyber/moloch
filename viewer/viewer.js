@@ -44,16 +44,13 @@ var Config         = require('./config.js'),
     pug            = require('pug'),
     https          = require('https'),
     EventEmitter   = require('events').EventEmitter,
+    PNG            = require('pngjs').PNG,
     decode         = require('./decode.js');
 } catch (e) {
   console.log ("ERROR - Couldn't load some dependancies, maybe need to 'npm update' inside viewer directory", e);
   process.exit(1);
   throw new Error("Exiting");
 }
-
-try {
-  var Png = require('png').Png;
-} catch (e) {console.log("WARNING - No png support, maybe need to 'npm update'", e);}
 
 if (typeof express !== "function") {
   console.log("ERROR - Need to run 'npm update' in viewer directory");
@@ -1956,12 +1953,18 @@ function buildSessionQuery(req, buildCb) {
   }
 
   lookupQueryItems(query.query.bool.filter, function (lerr) {
-    if (req.query.date && req.query.date === '-1') {
-      return buildCb(err || lerr, query, "sessions2-*");
+    if (req.query.date === '-1' ||                                      // An all query
+        (req.query.bounding || "last") !== "last" ||                    // Not a last bounded query
+        Config.get("queryAllIndices", Config.get("multiES", false))) {  // queryAllIndices (default: multiES)
+      return buildCb(err || lerr, query, "sessions2-*"); // Then we just go against all indices for a slight overhead
     }
 
-    Db.getIndices(req.query.startTime, req.query.stopTime, Config.get("rotateIndex", "daily"), req.query.bounding || "last", function(indices) {
-      return buildCb(err || lerr, query, indices);
+    Db.getIndices(req.query.startTime, req.query.stopTime, Config.get("rotateIndex", "daily"), function(indices) {
+      if (indices.length > 3000) { // Will url be too long
+        return buildCb(err || lerr, query, "sessions2-*");
+      } else {
+        return buildCb(err || lerr, query, indices);
+      }
     });
   });
 }
@@ -2114,7 +2117,7 @@ app.get('/history/list', function(req, res) {
       query.query.bool.must.push({
         query_string: {
           query : req.query.searchTerm,
-          _source: ['expression','userId','api','view.name','view.expression']
+          fields: ['expression','userId','api','view.name','view.expression']
         }
       });
     }
@@ -2639,12 +2642,22 @@ app.get('/stats.json', function(req, res) {
   noCache(req, res);
 
   var query = {from: +req.query.start || 0,
-               size: Math.min(10000, +req.query.length || 500)
+               size: Math.min(10000, +req.query.length || 500),
+               query: {
+                 bool: {
+                   must: [
+                   ],
+                   should: [
+                   ],
+                   must_not: [
+                     {term: {hide: true}}
+                   ]
+                 }
+               }
               };
 
   if (req.query.filter !== undefined && req.query.filter !== '') {
     let names = req.query.filter.split(',');
-    query.query = { bool: { should: [] } };
     for (let i = 0, len = names.length; i < len; ++i) {
       let name = names[i].trim();
       if (name !== '') {
@@ -2656,12 +2669,6 @@ app.get('/stats.json', function(req, res) {
   }
 
   if (req.query.hide !== undefined && req.query.hide !== "none") {
-    if (query.query === undefined) {
-      query.query = { bool: { must: [] } };
-    } else {
-      query.query.bool = {must: [{bool: query.query.bool}]};
-    }
-
     if (req.query.hide === "old" || req.query.hide === "both") {
       query.query.bool.must.push({range: {currentTime: {gte: "now-5m"}}});
     }
@@ -2694,8 +2701,8 @@ app.get('/stats.json', function(req, res) {
       fields.id        = stats.hits.hits[i]._id;
 
       for (const key of ["totalPackets", "totalK", "totalSessions",
-       "monitoring", "tcpSessions", "udpSessions", "icmpSessions", "sctpSessions",
-       "freeSpaceM", "freeSpaceP", "memory", "memoryP", "frags", "cpu",
+       "monitoring", "tcpSessions", "udpSessions", "icmpSessions", "sctpSessions", "espSessions",
+       "freeSpaceM", "freeSpaceP", "memory", "memoryP", "frags", "cpu", "esHealthMS",
        "diskQueue", "esQueue", "packetQueue", "closeQueue", "needSave", "fragsQueue",
        "deltaFragsDropped", "deltaOverloadDropped", "deltaESDropped"
       ]) {
@@ -3012,7 +3019,7 @@ app.get('/sessions.json', logAction('sessions'), function(req, res) {
     }
 
     if (Config.debug) {
-      console.log("sessions.json query", JSON.stringify(query, null, 1));
+      console.log(`sessions.json ${indices} query`, JSON.stringify(query, null, 1));
     }
 
     Promise.all([Db.searchPrimary(indices, 'session', query),
@@ -3411,7 +3418,6 @@ function buildConnections(req, res, cb) {
     if (bsqErr) {
       return cb(bsqErr, 0, 0, 0);
     }
-
     query.query.bool.filter.push({exists: {field: req.query.srcField}});
     query.query.bool.filter.push({exists: {field: req.query.dstField}});
 
@@ -3422,10 +3428,10 @@ function buildConnections(req, res, cb) {
       query._source.push("dstPort");
     }
 
-    console.log("buildConnections query", JSON.stringify(query));
+    //console.log("buildConnections query", JSON.stringify(query, null, 2));
 
     Db.searchPrimary(indices, 'session', query, function (err, graph) {
-    //console.log("buildConnections result", JSON.stringify(graph));
+    //console.log("buildConnections result", JSON.stringify(graph, null, 2));
       if (err || graph.error) {
         console.log("Build Connections ERROR", err, graph.error);
         return cb(err || graph.error);
@@ -4128,6 +4134,11 @@ function localSessionDetail(req, res) {
         session._err = err;
         localSessionDetailReturn(req, res, session, results || []);
       });
+    } else if (packets[0].ip.p === 50) {
+      Pcap.reassemble_esp(packets, +req.query.packets || 200, function(err, results) {
+        session._err = err;
+        localSessionDetailReturn(req, res, session, results || []);
+      });
     } else if (packets[0].ip.p === 58) {
       Pcap.reassemble_icmp(packets, +req.query.packets || 200, function(err, results) {
         session._err = err;
@@ -4264,19 +4275,15 @@ app.get('/:nodeName/:id/body/:bodyType/:bodyNum/:bodyName', checkProxyRequest, f
 });
 
 app.get('/:nodeName/:id/bodypng/:bodyType/:bodyNum/:bodyName', checkProxyRequest, function(req, res) {
-  if (!Png) {
-    return res.send (internals.emptyPNG);
-  }
   reqGetRawBody(req, function (err, data) {
     if (err || data === null || data.length === 0) {
       return res.send (internals.emptyPNG);
     }
     res.setHeader("Content-Type", "image/png");
 
-    var png = new Png(data, internals.PNG_LINE_WIDTH, Math.ceil(data.length/internals.PNG_LINE_WIDTH), 'gray');
-    var png_image = png.encodeSync();
-
-    res.send(png_image);
+    var png = new PNG({width: internals.PNG_LINE_WIDTH, height: Math.ceil(data.length/internals.PNG_LINE_WIDTH)});
+    png.data = data;
+    res.send(PNG.sync.write(png, {inputColorType:0, colorType: 0, bitDepth:8, inputHasAlpha:false}));
   });
 });
 
@@ -4405,10 +4412,6 @@ app.get('/:nodeName/pcap/:id.pcap', checkProxyRequest, function(req, res) {
 app.get('/:nodeName/raw/:id.png', checkProxyRequest, function(req, res) {
   noCache(req, res, "image/png");
 
-  if (!Png) {
-    return res.send (internals.emptyPNG);
-  }
-
   processSessionIdAndDecode(req.params.id, 1000, function(err, session, results) {
     if (err) {
       return res.send (internals.emptyPNG);
@@ -4418,7 +4421,7 @@ app.get('/:nodeName/raw/:id.png', checkProxyRequest, function(req, res) {
     for (i = (req.query.type !== 'dst'?0:1), ilen = results.length; i < ilen; i+=2) {
       size += results[i].data.length + 2*internals.PNG_LINE_WIDTH - (results[i].data.length % internals.PNG_LINE_WIDTH);
     }
-    var buffer = Buffer.alloc(size);
+    var buffer = Buffer.alloc(size, 0);
     var pos = 0;
     if (size === 0) {
       return res.send (internals.emptyPNG);
@@ -4431,10 +4434,9 @@ app.get('/:nodeName/raw/:id.png', checkProxyRequest, function(req, res) {
       buffer.fill(0xff, fillpos, pos);
     }
 
-    var png = new Png(buffer, internals.PNG_LINE_WIDTH, (size/internals.PNG_LINE_WIDTH)-1, 'gray');
-    var png_image = png.encodeSync();
-
-    res.send(png_image);
+    var png = new PNG({width: internals.PNG_LINE_WIDTH, height: (size/internals.PNG_LINE_WIDTH)-1});
+    png.data = buffer;
+    res.send(PNG.sync.write(png, {inputColorType:0, colorType: 0, bitDepth:8, inputHasAlpha:false}));
   });
 });
 
@@ -4626,7 +4628,7 @@ app.post('/user/create', logAction(), checkCookieToken, function(req, res) {
     return res.molochError(403, 'Missing/Empty required fields');
   }
 
-  if (req.body.userId.match(/[^\w.-]/)) {
+  if (req.body.userId.match(/[^@\w.-]/)) {
     return res.molochError(403, 'User ID must be word characters');
   }
 
@@ -5750,7 +5752,7 @@ app.use('/static', express.static(`${__dirname}/vueapp/dist/static`));
 // expose vue bundle (dev)
 app.use(['/app.js', '/vueapp/app.js'], express.static(`${__dirname}/vueapp/dist/app.js`));
 
-app.get(['/stats', '/sessions', '/help', '/files', '/users', '/history', '/spiview'], (req, res) => {
+app.get(['/stats', '/sessions', '/help', '/files', '/users', '/history', '/spiview', '/spigraph', '/connections'], (req, res) => {
   let cookieOptions = { path: app.locals.basePath };
   if (Config.isHTTPS()) { cookieOptions.secure = true; }
 
@@ -6118,6 +6120,25 @@ function main () {
     })
     .listen(Config.get("viewPort", "8005"), viewHost);
 }
+//////////////////////////////////////////////////////////////////////////////////
+//// Command Line Parsing
+//////////////////////////////////////////////////////////////////////////////////
+function processArgs(argv) {
+  for (var i = 0, ilen = argv.length; i < ilen; i++) {
+    if (argv[i] === "--help") {
+      console.log("node.js [<options>]");
+      console.log("");
+      console.log("Options:");
+      console.log("  -c <config file>      Config file to use");
+      console.log("  -host <host name>     Host name to use, default os hostname");
+      console.log("  -n <node name>        Node name section to use in config file, default first part of hostname");
+      console.log("  --debug               Increase debug level, multiple are supported");
+
+      process.exit(0);
+    }
+  }
+}
+processArgs(process.argv);
 //////////////////////////////////////////////////////////////////////////////////
 //// DB
 //////////////////////////////////////////////////////////////////////////////////

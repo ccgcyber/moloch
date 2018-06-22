@@ -288,7 +288,7 @@ function issueAlert(cluster, issue) {
 
   for (let n in internals.notifiers) {
     // quit before sending the alert if the notifier is off
-    if (!parliament.settings.notifiers[n].on) {
+    if (!parliament.settings.notifiers || !parliament.settings.notifiers[n] || !parliament.settings.notifiers[n].on) {
       continue;
     }
 
@@ -433,6 +433,8 @@ function getStats(cluster) {
     timeout: 5000
   };
 
+  // Get now before the query since we don't know how long query/response will take
+  let now   = Date.now()/1000;
   rp(options)
     .then((response) => {
       cluster.statsError = undefined;
@@ -471,7 +473,7 @@ function getStats(cluster) {
 
       // Look for issues
       for (let stat of stats.data) {
-        if ((Date.now()/1000 - stat.currentTime) > 30) {
+        if ((now - stat.currentTime) > 70) {
           setIssue(cluster, {
             type  : 'outOfDate',
             node  : stat.nodeName,

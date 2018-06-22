@@ -413,6 +413,7 @@ void moloch_config_load()
     config.timeouts[SESSION_UDP] = moloch_config_int(keyfile, "udpTimeout", 60, 1, 0xffff);
     config.timeouts[SESSION_TCP] = moloch_config_int(keyfile, "tcpTimeout", 60*8, 10, 0xffff);
     config.timeouts[SESSION_SCTP]= moloch_config_int(keyfile, "sctpTimeout", 60, 10, 0xffff);
+    config.timeouts[SESSION_ESP] = moloch_config_int(keyfile, "espTimeout", 60*10, 10, 0xffff);
     config.tcpSaveTimeout        = moloch_config_int(keyfile, "tcpSaveTimeout", 60*8, 10, 60*120);
     int maxStreams               = moloch_config_int(keyfile, "maxStreams", 1500000, 1, 16777215);
     config.maxPackets            = moloch_config_int(keyfile, "maxPackets", 10000, 1, 0xffff);
@@ -447,11 +448,53 @@ void moloch_config_load()
     config.compressES            = moloch_config_boolean(keyfile, "compressES", FALSE);
     config.antiSynDrop           = moloch_config_boolean(keyfile, "antiSynDrop", TRUE);
     config.readTruncatedPackets  = moloch_config_boolean(keyfile, "readTruncatedPackets", FALSE);
+    config.trackESP              = moloch_config_boolean(keyfile, "trackESP", FALSE);
+    config.yaraEveryPacket       = moloch_config_boolean(keyfile, "yaraEveryPacket", TRUE);
 
     config.maxStreams[SESSION_TCP] = maxStreams/config.packetThreads*1.25;
     config.maxStreams[SESSION_UDP] = maxStreams/config.packetThreads/20;
     config.maxStreams[SESSION_SCTP] = maxStreams/config.packetThreads/20;
     config.maxStreams[SESSION_ICMP] = maxStreams/config.packetThreads/200;
+    config.maxStreams[SESSION_ESP] = maxStreams/config.packetThreads/200;
+
+
+    gchar **saveUnknownPackets     = moloch_config_str_list(keyfile, "saveUnknownPackets", NULL);
+    if (saveUnknownPackets) {
+        for (i = 0; saveUnknownPackets[i]; i++) {
+            char *s = saveUnknownPackets[i];
+
+            if (strcmp(s, "all") == 0) {
+                memset(&config.etherSavePcap, 0xff, 1024);
+                memset(&config.ipSavePcap, 0xff, 4);
+            } else if (strcmp(s, "ip:all") == 0) {
+                memset(&config.ipSavePcap, 0xff, 4);
+            } else if (strcmp(s, "ether:all") == 0) {
+                memset(&config.etherSavePcap, 0xff, 1024);
+            } else if (strncmp(s, "ip:", 3) == 0) {
+                int n = atoi(s+3);
+                if (n < 0 || n > 0xff)
+                    LOGEXIT("Bad value: %s", s);
+                BIT_SET(n, config.ipSavePcap);
+            } else if (strncmp(s, "-ip:", 4) == 0) {
+                int n = atoi(s+4);
+                if (n < 0 || n > 0xff)
+                    LOGEXIT("Bad value: %s", s);
+                BIT_CLR(n, config.ipSavePcap);
+            } else if (strncmp(s, "ether:", 6) == 0) {
+                int n = atoi(s+6);
+                if (n < 0 || n > 0xffff)
+                    LOGEXIT("Bad value: %s", s);
+                BIT_SET(n, config.etherSavePcap);
+            } else if (strncmp(s, "-ether:", 7) == 0) {
+                int n = atoi(s+7);
+                if (n < 0 || n > 0xffff)
+                    LOGEXIT("Bad value: %s", s);
+                BIT_CLR(n, config.etherSavePcap);
+            } else {
+                LOGEXIT("Not sure what %s is", s);
+            }
+        }
+    }
 
 }
 /******************************************************************************/
@@ -643,70 +686,121 @@ void moloch_config_load_header(char *section, char *group, char *helpBase, char 
 }
 
 /******************************************************************************/
+#define MOLOCH_CONFIG_FILES 100
 typedef struct {
     char                 *desc;
-    char                 *name;
+    int                   num;
+    char                 *name[MOLOCH_CONFIG_FILES];
     MolochFileChange_cb   cb;
-    off_t                 size;
-    int64_t               modify;
+    MolochFilesChange_cb  cbs;
+    off_t                 size[MOLOCH_CONFIG_FILES];
+    int64_t               modify[MOLOCH_CONFIG_FILES];
     char                  freeOld;
 } MolochFileChange_t;
 
 LOCAL int                numFiles;
-LOCAL MolochFileChange_t files[100];
+LOCAL MolochFileChange_t files[MOLOCH_CONFIG_FILES];
 /******************************************************************************/
 void moloch_config_monitor_file(char *desc, char *name, MolochFileChange_cb cb)
 {
     struct stat     sb;
 
-    if (numFiles >= 100)
+    if (numFiles >= MOLOCH_CONFIG_FILES)
         LOGEXIT("Couldn't monitor anymore files %s %s", desc, name);
 
     if (stat(name, &sb) != 0) {
         LOGEXIT("Couldn't stat %s file %s error %s", desc, name, strerror(errno));
     }
 
+    files[numFiles].name[0] = g_strdup(name);
+    files[numFiles].modify[0] = sb.st_mtime;
+
     files[numFiles].desc = g_strdup(desc);
-    files[numFiles].name = g_strdup(name);
     files[numFiles].cb = cb;
-    files[numFiles].modify = sb.st_mtime;
+    files[numFiles].num = 1;
+
     numFiles++;
     cb(name);
 }
 /******************************************************************************/
+void moloch_config_monitor_files(char *desc, char **names, MolochFilesChange_cb cb)
+{
+    struct stat     sb;
+    int             i;
+
+    if (numFiles >= MOLOCH_CONFIG_FILES)
+        LOGEXIT("Couldn't monitor anymore files %s %s", desc, names[0]);
+
+    for (i = 0; names[i] && i < MOLOCH_CONFIG_FILES; i++) {
+        if (stat(names[i], &sb) != 0) {
+            LOGEXIT("Couldn't stat %s file %s error %s", desc, names[i], strerror(errno));
+        }
+
+        files[numFiles].name[i] = g_strdup(names[i]);
+        files[numFiles].modify[i] = sb.st_mtime;
+    }
+
+    files[numFiles].desc = g_strdup(desc);
+    files[numFiles].cbs = cb;
+    files[numFiles].num = i;
+
+    numFiles++;
+    cb(names);
+}
+/******************************************************************************/
 gboolean moloch_config_reload_files (gpointer UNUSED(user_data))
 {
-    int             i;
-    struct stat     sb;
+    int             i, f;
+    struct stat     sb[MOLOCH_CONFIG_FILES];
 
     for (i = 0; i < numFiles; i++) {
         if (files[i].freeOld) {
             if (config.debug)
-                LOG("Free old %s %s", files[i].desc, files[i].name);
-            files[i].cb(NULL);
+                LOG("Free old %s %s %d", files[i].desc, files[i].name[0], files[i].num);
+            if (files[i].cbs)
+                files[i].cbs(NULL);
+            else
+                files[i].cb(NULL);
             files[i].freeOld = 0;
         }
 
-        if (stat(files[i].name, &sb) != 0) {
-            LOG("Couldn't stat %s file %s error %s", files[i].desc, files[i].name, strerror(errno));
-            continue;
-        }
-
-        if (sb.st_size <= 1) { // Ignore tiny files for reloads
-            continue;
-        }
-
-        if (sb.st_mtime > files[i].modify) {
-            if (files[i].size != sb.st_size) {
-                files[i].size = sb.st_size;
-                continue;
+        int changed = 0;
+        for (f = 0; f < files[i].num; f++) {
+            if (stat(files[i].name[f], &sb[f]) != 0) {
+                LOG("Couldn't stat %s file %s error %s", files[i].desc, files[i].name[f], strerror(errno));
+                changed = 0;
+                break;
             }
-            if (config.debug)
-                LOG("Load new %s %s", files[i].desc, files[i].name);
-            files[i].cb(files[i].name);
+
+            if (sb[f].st_size <= 1) { // Ignore tiny files for reloads
+                changed = 0;
+                break;
+            }
+
+            if (sb[f].st_mtime > files[i].modify[f]) {
+                if (files[i].size[f] != sb[f].st_size) {
+                    files[i].size[f] = sb[f].st_size;
+                    changed = 0;
+                    break;
+                }
+                if (config.debug)
+                    LOG("Changed %s %s", files[i].desc, files[i].name[f]);
+                changed = 1;
+            }
+        }
+
+        // Something was changed
+        if (changed) {
+            if (files[i].cbs)
+                files[i].cbs(files[i].name);
+            else
+                files[i].cb(files[i].name[0]);
+
             files[i].freeOld = 1;
-            files[i].size = 0;
-            files[i].modify = sb.st_mtime;
+            for (f = 0; f < files[i].num; f++) {
+                files[i].size[f] = 0;
+                files[i].modify[f] = sb[f].st_mtime;
+            }
         }
     }
 

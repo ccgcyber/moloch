@@ -1,5 +1,6 @@
 import Vue from 'vue';
 import Router from 'vue-router';
+import store from '@/store';
 import Stats from '@/components/stats/Stats';
 import Help from '@/components/help/Help';
 import Files from '@/components/files/Files';
@@ -7,6 +8,8 @@ import Users from '@/components/users/Users';
 import History from '@/components/history/History';
 import Sessions from '@/components/sessions/Sessions';
 import Spiview from '@/components/spiview/Spiview';
+import Spigraph from '@/components/spigraph/Spigraph';
+import Connections from '@/components/connections/Connections';
 
 Vue.use(Router);
 
@@ -63,6 +66,16 @@ const router = new Router({
       path: '/spiview',
       name: 'Spiview',
       component: Spiview
+    },
+    {
+      path: '/spigraph',
+      name: 'Spigraph',
+      component: Spigraph
+    },
+    {
+      path: '/connections',
+      name: 'Connections',
+      component: Connections
     }
   ]
 });
@@ -70,11 +83,14 @@ const router = new Router({
 router.beforeEach((to, from, next) => {
   // TODO update/remove as angular pages go away
   // loads the angular app pages
-  if (!to.path.includes('history') && !to.path.includes('users') &&
-    !to.path.includes('files') && !to.path.includes('help') &&
-    !to.path.includes('stats') && !to.path.includes('sessions') &&
-    !to.path.includes('spiview') && to.path !== '/') {
+  if (to.path.includes('/settings') || to.path.includes('/upload')) {
     location.reload();
+  }
+
+  // always use the expression in the url query parameter if the navigation
+  // was initiated from anything not in the moloch UI (browser forward/back btns)
+  if (!to.params.nav && store.state.expression !== to.query.expression) {
+    store.commit('setExpression', to.query.expression);
   }
 
   let page = to.name || 'Moloch - ';
@@ -88,7 +104,7 @@ router.beforeEach((to, from, next) => {
 
   document.title = title;
 
-  next(); // complete route change
+  next();
 });
 
 export default router;

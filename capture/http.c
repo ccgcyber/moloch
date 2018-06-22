@@ -157,7 +157,7 @@ LOCAL size_t moloch_http_curl_write_callback(void *contents, size_t size, size_t
     return sz;
 }
 /******************************************************************************/
-unsigned char *moloch_http_send_sync(void *serverV, const char *method, const char *key, uint32_t key_len, char *data, uint32_t data_len, char **headers, size_t *return_len)
+unsigned char *moloch_http_send_sync(void *serverV, const char *method, const char *key, int32_t key_len, char *data, uint32_t data_len, char **headers, size_t *return_len)
 {
     MolochHttpServer_t        *server = serverV;
     struct curl_slist         *headerList = NULL;
@@ -212,6 +212,9 @@ unsigned char *moloch_http_send_sync(void *serverV, const char *method, const ch
     if (headerList) {
         curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headerList);
     }
+
+    if (key_len == -1)
+        key_len = strlen(key);
 
     memcpy(server->syncRequest.key, key, key_len);
     server->syncRequest.key[key_len] = 0;
@@ -697,9 +700,12 @@ LOCAL gboolean moloch_http_send_timer_callback(gpointer UNUSED(unused))
     return G_SOURCE_REMOVE;
 }
 /******************************************************************************/
-gboolean moloch_http_send(void *serverV, const char *method, const char *key, uint32_t key_len, char *data, uint32_t data_len, char **headers, gboolean dropable, MolochHttpResponse_cb func, gpointer uw)
+gboolean moloch_http_send(void *serverV, const char *method, const char *key, int32_t key_len, char *data, uint32_t data_len, char **headers, gboolean dropable, MolochHttpResponse_cb func, gpointer uw)
 {
     MolochHttpServer_t        *server = serverV;
+
+    if (key_len == -1)
+        key_len = strlen(key);
 
     if (key_len > 1000) {
         LOGEXIT("Url too long %.*s", key_len, key);
@@ -873,6 +879,8 @@ void moloch_http_free_server(void *serverV)
     g_strfreev(server->names);
     free(server->snames);
 
+    g_hash_table_destroy(server->fd2ev);
+
     MOLOCH_TYPE_FREE(MolochHttpServer_t, server);
 }
 /******************************************************************************/
@@ -920,7 +928,7 @@ void *moloch_http_create_server(const char *hostnames, int maxConns, int maxOuts
     server->maxConns = maxConns;
     server->maxOutstandingRequests = maxOutstandingRequests;
     server->compress = compress;
-    server->snames = malloc(server->namesCnt * sizeof(MolochHttpServer_t));
+    server->snames = malloc(server->namesCnt * sizeof(MolochHttpServerName_t));
     server->maxRetries = 3;
 
     for (i = 0; server->names[i]; i++) {
@@ -956,7 +964,6 @@ void moloch_http_init()
     curl_global_init(CURL_GLOBAL_SSL);
 
     HASH_INIT(h_, connections, moloch_session_hash, moloch_http_conn_cmp);
-    memset(&connectionsSet, 0, sizeof(connectionsSet));
     DLL_INIT(rqt_, &requests);
 }
 /******************************************************************************/

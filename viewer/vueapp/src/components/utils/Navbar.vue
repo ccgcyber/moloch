@@ -25,10 +25,12 @@
         <b-nav-item
           v-for="item of menu"
           :key="item.link"
-          :href="item.href"
-          :active="isActive(item.link)"
+          class="cursor-pointer"
           v-has-permission="item.permission">
-          {{ item.title }}
+          <router-link :to="{ path: item.link, query: item.query, params: { nav: true } }"
+            :class="{'router-link-active': $route.path === `/${item.link}`}">
+            {{ item.title }}
+          </router-link>
         </b-nav-item>
       </b-navbar-nav>
 
@@ -46,8 +48,6 @@
 </template>
 
 <script>
-import qs from 'qs';
-
 import ESHealth from './ESHealth';
 
 export default {
@@ -79,7 +79,11 @@ export default {
       // preserve url query parameters
       for (let m in menu) {
         let item = menu[m];
-        item.href = `${item.link}?${qs.stringify(this.$route.query)}`;
+        // make sure the stored expression is part of the query
+        item.query = {
+          ...this.$route.query,
+          expression: this.$store.state.expression
+        };
       }
 
       return menu;
@@ -114,6 +118,17 @@ nav.navbar {
 }
 ul.navbar-nav {
   margin-left: 20px;
+}
+
+a.nav-link > a {
+  text-decoration: none;
+  color: rgba(255, 255, 255, 0.5);
+}
+a.nav-link:hover > a {
+  color: rgba(255, 255, 255, 0.75);
+}
+a.nav-link > a.router-link-active {
+  color: #fff;
 }
 
 /* apply theme colors to navbar */
