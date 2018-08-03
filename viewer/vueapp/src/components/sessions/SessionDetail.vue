@@ -23,10 +23,10 @@
     </div> <!-- /detail -->
 
     <!-- packet options -->
-    <div v-show="!loading"
+    <div v-show="!loading && !hidePackets"
       class="packet-options mr-1 ml-1">
       <form class="form-inline mb-2 pt-2">
-        <fieldset :disabled="loading || loadingPackets || errorPackets || renderingPackets">
+        <fieldset :disabled="hidePackets || loading || loadingPackets || errorPackets || renderingPackets">
           <div class="form-group">
             <div class="input-group input-group-sm mb-1 mr-1">
               <span class="input-group-prepend cursor-help"
@@ -186,8 +186,8 @@
     </div> <!-- /packet options -->
 
     <!-- packets loading -->
-    <div v-if="!loading && loadingPackets"
-      class="mt-4 mb-4 large">
+    <div v-if="!loading && loadingPackets && !hidePackets"
+      class="mt-4 mb-4 ml-2 mr-2 large">
       <span class="fa fa-spinner fa-spin">
       </span>&nbsp;
       Loading session packets&nbsp;
@@ -201,8 +201,8 @@
     </div> <!-- /packets loading -->
 
     <!-- packets rendering -->
-    <div v-if="!loading && renderingPackets"
-      class="mt-4 mb-4 large">
+    <div v-if="!loading && renderingPackets && !hidePackets"
+      class="mt-4 mb-4 ml-2 mr-2 large">
       <span class="fa fa-spinner fa-spin">
       </span>&nbsp;
       Rendering session packets
@@ -210,7 +210,7 @@
 
     <!-- packets error -->
     <div v-if="!error && errorPackets"
-      class="mt-4 mb-4 large">
+      class="mt-4 mb-4 ml-2 mr-2 large">
       <span class="text-danger">
         <span class="fa fa-exclamation-triangle">
         </span>&nbsp;
@@ -226,7 +226,7 @@
     </div> <!-- /packets error -->
 
     <!-- packets -->
-    <div v-if="!loadingPackets && !errorPackets"
+    <div v-if="!loadingPackets && !errorPackets && !hidePackets"
       class="inner packet-container mr-1 ml-1"
       v-html="packetHtml"
       ref="packetContainer"
@@ -234,7 +234,7 @@
     </div> <!-- packets -->
 
     <!-- packet options -->
-    <div v-show="!loading && !loadingPackets && !errorPackets"
+    <div v-show="!loading && !loadingPackets && !errorPackets && !hidePackets"
       class="mr-1 ml-1">
       <form class="form-inline mb-2 pt-2">
         <fieldset :disabled="loading || loadingPackets || errorPackets || renderingPackets">
@@ -428,6 +428,7 @@ export default {
     return {
       error: '',
       loading: true,
+      hidePackets: true,
       errorPackets: '',
       loadingPackets: false,
       userSettings: {},
@@ -563,6 +564,12 @@ export default {
         .then((responses) => {
           this.loading = false;
 
+          this.hidePackets = responses[2].data.includes('hidePackets="true"');
+          if (!this.hidePackets) {
+            this.getDecodings(); // IMPORTANT: kicks of packet request
+          }
+          this.fields = responses[0];
+
           new Vue({
             // template string here
             template: responses[2].data,
@@ -573,7 +580,7 @@ export default {
             // components scope, as you create a new component
             propsData: {
               session: this.session,
-              fields: responses[0],
+              fields: this.fields,
               molochclusters: responses[1]
             },
             props: [ 'session', 'fields', 'molochclusters' ],
@@ -604,6 +611,12 @@ export default {
               }
             },
             methods: {
+              getField: function (expr) {
+                if (!this.$parent.fields[expr]) {
+                  console.log('UNDEFINED', expr);
+                }
+                return this.$parent.fields[expr];
+              },
               actionFormDone: function (message, success, reload) {
                 if (message) {
                   this.message = message;
@@ -638,7 +651,7 @@ export default {
                 let params = {
                   expression: `id == ${this.session.id}`,
                   startTime: Math.floor(this.session.firstPacket / 1000),
-                  stopTime: Math.floor(this.session.lastPacket / 1000),
+                  stopTime: Math.ceil(this.session.lastPacket / 1000),
                   openAll: 1
                 };
 
@@ -725,12 +738,10 @@ export default {
           this.userSettings = response;
 
           this.setUserParams();
-          this.getDecodings(); // IMPORTANT: kicks of packet request
         })
         .catch((error) => {
           // can't get user, so use defaults
           this.userSettings = defaultUserSettings;
-          this.getDecodings(); // IMPORTANT: kicks of packet request
         });
     },
     /* sets some of the session detail query parameters based on user settings */
@@ -806,7 +817,7 @@ export default {
     /* Gets the packets for the session from the server */
     getPackets: function () {
       // already loading, don't load again!
-      if (this.loadingPackets) { return; }
+      if (this.loadingPackets || this.hidePackets) { return; }
 
       this.loadingPackets = true;
       this.errorPackets = false;
@@ -886,6 +897,17 @@ export default {
               img.appendChild(tooltip);
             }
 
+            // add listeners to fetch the src/dst bytes images on mouse enter
+            let srcBytes = this.$refs.packetContainer.getElementsByClassName('srccol');
+            if (srcBytes && srcBytes.length) {
+              srcBytes[0].addEventListener('mouseenter', this.showSrcBytesImg);
+            }
+
+            let dstBytes = this.$refs.packetContainer.getElementsByClassName('dstcol');
+            if (dstBytes && dstBytes.length) {
+              dstBytes[0].addEventListener('mouseenter', this.showDstBytesImg);
+            }
+
             this.renderingPackets = false;
           });
         })
@@ -894,11 +916,37 @@ export default {
           this.errorPackets = error;
           this.packetPromise = undefined;
         });
+    },
+    showSrcBytesImg: function () {
+      this.$refs.packetContainer.getElementsByClassName('src-col-tip')[0].innerHTML = `Source Bytes:
+        <br>
+        <img src="${this.session.node}/raw/${this.session.id}.png?type=src">
+      `;
+      this.$refs.packetContainer.getElementsByClassName('srccol')[0].removeEventListener('mouseenter', this.showSrcBytesImg);
+    },
+    showDstBytesImg: function () {
+      this.$refs.packetContainer.getElementsByClassName('dst-col-tip')[0].innerHTML = `Destination Bytes:
+        <br>
+        <img src="${this.session.node}/raw/${this.session.id}.png?type=dst">
+      `;
+      this.$refs.packetContainer.getElementsByClassName('dstcol')[0].removeEventListener('mouseenter', this.showDstBytesImg);
     }
   },
   beforeDestroy: function () {
     if (this.packetPromise) {
       this.cancelPacketLoad();
+    }
+
+    if (this.$refs.packetContainer) {
+      let srcBytes = this.$refs.packetContainer.getElementsByClassName('srccol');
+      if (srcBytes && srcBytes.length) {
+        srcBytes[0].removeEventListener('mouseenter', this.showSrcBytesImg);
+      }
+
+      let dstBytes = this.$refs.packetContainer.getElementsByClassName('dstcol');
+      if (dstBytes && dstBytes.length) {
+        dstBytes[0].removeEventListener('mouseenter', this.showDstBytesImg);
+      }
     }
   }
 };

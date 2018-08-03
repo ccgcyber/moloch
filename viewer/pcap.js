@@ -125,7 +125,7 @@ Pcap.prototype.unref = function() {
     if (this.closing && this.count === 0) {
       delete internals.pcaps[this.key];
       if (this.fd) {
-        fs.close(this.fd);
+        fs.close(this.fd, () => {});
       }
       delete this.fd;
     } else {
@@ -429,6 +429,9 @@ Pcap.prototype.gre = function (buffer, obj, pos) {
     break;
   case 0x880b:
     this.ppp(buffer.slice(bpos), obj, pos+bpos);
+    break;
+  case 0x88be:
+    this.ether(buffer.slice(bpos+8), obj, pos+bpos+8);
     break;
   default:
     console.log("gre Unknown type", obj.gre.type);

@@ -22,21 +22,32 @@
       id="nav_collapse">
 
       <b-navbar-nav>
-        <b-nav-item
-          v-for="item of menu"
-          :key="item.link"
-          class="cursor-pointer"
-          v-has-permission="item.permission">
-          <router-link :to="{ path: item.link, query: item.query, params: { nav: true } }"
-            :class="{'router-link-active': $route.path === `/${item.link}`}">
+        <template v-for="item of menu">
+          <b-nav-item
+            v-if="item.oldPage"
+            :key="item.link"
+            class="cursor-pointer"
+            :href="item.href"
+            :active="isActive(item.link)"
+            v-has-permission="item.permission">
             {{ item.title }}
-          </router-link>
-        </b-nav-item>
+          </b-nav-item>
+          <b-nav-item
+            v-else
+            :key="item.link"
+            class="cursor-pointer"
+            v-has-permission="item.permission">
+            <router-link :to="{ path: item.link, query: item.query, params: { nav: true } }"
+              :class="{'router-link-active': $route.path === `/${item.link}`}">
+              {{ item.title }}
+            </router-link>
+          </b-nav-item>
+        </template>
       </b-navbar-nav>
 
       <b-navbar-nav
         class="ml-auto">
-        <small class="navbar-text mr-2">
+        <small class="navbar-text mr-2 text-right">
           v{{ molochVersion }}
         </small>
         <e-s-health></e-s-health>
@@ -48,6 +59,8 @@
 </template>
 
 <script>
+import qs from 'qs';
+
 import ESHealth from './ESHealth';
 
 export default {
@@ -79,6 +92,7 @@ export default {
       // preserve url query parameters
       for (let m in menu) {
         let item = menu[m];
+        item.href = `${item.link}?${qs.stringify(this.$route.query)}`;
         // make sure the stored expression is part of the query
         item.query = {
           ...this.$route.query,

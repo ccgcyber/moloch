@@ -81,6 +81,7 @@ LOCAL int moloch_packet_ip4(MolochPacketBatch_t * batch, MolochPacket_t * const 
 LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len);
 LOCAL int moloch_packet_frame_relay(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len);
 LOCAL int moloch_packet_ppp(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len);
+LOCAL int moloch_packet_ether(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len);
 
 typedef struct molochfrags_t {
     struct molochfrags_t  *fragh_next, *fragh_prev;
@@ -126,6 +127,16 @@ LOCAL void moloch_packet_free(MolochPacket_t *packet)
 /******************************************************************************/
 void moloch_packet_tcp_free(MolochSession_t *session)
 {
+    if (session->tcpData.td_count == 1 && session->tcpFlagCnt[MOLOCH_TCPFLAG_PSH] == 1) {
+        MolochTcpData_t *ftd = DLL_PEEK_HEAD(td_, &session->tcpData);
+        const int which = ftd->packet->direction;
+        const uint8_t *data = ftd->packet->pkt + ftd->dataOffset;
+        const int len = ftd->len;
+
+        moloch_parsers_classify_tcp(session, data, len, which);
+        moloch_packet_process_data(session, data, len, which);
+    }
+
     MolochTcpData_t *td;
     while (DLL_POP_HEAD(td_, &session->tcpData, td)) {
         moloch_packet_free(td->packet);
@@ -762,7 +773,6 @@ LOCAL void *moloch_packet_thread(void *threadp)
 static FILE *unknownPacketFile[2];
 LOCAL void moloch_packet_save_unknown_packet(int type, MolochPacket_t * const packet)
 {
-    static const char *names[] = {"unknown.ether", "unknown.ip"};
     static MOLOCH_LOCK_DEFINE(lock);
 
     struct moloch_pcap_sf_pkthdr hdr;
@@ -773,7 +783,9 @@ LOCAL void moloch_packet_save_unknown_packet(int type, MolochPacket_t * const pa
 
     MOLOCH_LOCK(lock);
     if (!unknownPacketFile[type]) {
-        char str[PATH_MAX];
+        char               str[PATH_MAX];
+        static const char *names[] = {"unknown.ether", "unknown.ip"};
+
         snprintf(str, sizeof(str), "%s/%s.%d.pcap", config.pcapDir[0], names[type], getpid());
         unknownPacketFile[type] = fopen(str, "w");
         fwrite(&pcapFileHeader, 24, 1, unknownPacketFile[type]);
@@ -784,6 +796,22 @@ LOCAL void moloch_packet_save_unknown_packet(int type, MolochPacket_t * const pa
     MOLOCH_UNLOCK(lock);
 }
 
+/******************************************************************************/
+LOCAL int moloch_packet_erspan(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len)
+{
+    if (unlikely(len) < 8 || unlikely(!data))
+        return MOLOCH_PACKET_CORRUPT;
+
+    if ((*data >> 4) == 1)
+        return moloch_packet_ether(batch, packet, data + 8, len - 8);
+
+
+    if (config.logUnknownProtocols)
+        LOG("Unknown ERSPAN protocol %d", *data >> 4);
+    if (BIT_ISSET(0x88be, config.etherSavePcap))
+        moloch_packet_save_unknown_packet(0, packet);
+    return MOLOCH_PACKET_UNKNOWN;
+}
 /******************************************************************************/
 LOCAL int moloch_packet_gre4(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len)
 {
@@ -803,6 +831,7 @@ LOCAL int moloch_packet_gre4(MolochPacketBatch_t * batch, MolochPacket_t * const
     case 0x86dd:
     case 0x6559:
     case 0x880b:
+    case 0x88be:
         break;
     default:
         if (config.logUnknownProtocols)
@@ -855,6 +884,8 @@ LOCAL int moloch_packet_gre4(MolochPacketBatch_t * batch, MolochPacket_t * const
         return moloch_packet_frame_relay(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
     case 0x880b:
         return moloch_packet_ppp(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
+    case 0x88be:
+        return moloch_packet_erspan(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
     default:
         return MOLOCH_PACKET_UNKNOWN;
     }
@@ -934,12 +965,11 @@ LOCAL gboolean moloch_packet_frags_process(MolochPacket_t * const packet)
 
     int off = 0;
     struct ip *fip4;
-    uint16_t fip_off;
 
     int payloadLen = 0;
     DLL_FOREACH(packet_, &frags->packets, fpacket) {
         fip4 = (struct ip*)(fpacket->pkt + fpacket->ipOffset);
-        fip_off = ntohs(fip4->ip_off) & IP_OFFMASK;
+        uint16_t fip_off = ntohs(fip4->ip_off) & IP_OFFMASK;
         if (fip_off != off)
             break;
         off += fpacket->payloadLen/8;
@@ -1083,7 +1113,7 @@ LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const pa
         MOLOCH_LOCK(packetQ[thread].lock);
         overloadDrops[thread]++;
         if ((overloadDrops[thread] % 10000) == 1) {
-            LOG("WARNING - Packet Q %d is overflowing, total dropped %u, increase packetThreads or maxPacketsInQueue", thread, overloadDrops[thread]);
+            LOG("WARNING - Packet Q %u is overflowing, total dropped %u, increase packetThreads or maxPacketsInQueue", thread, overloadDrops[thread]);
         }
         packet->pkt = 0;
         MOLOCH_COND_SIGNAL(packetQ[thread].lock);
@@ -1335,6 +1365,7 @@ LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const 
             moloch_session_id6(sessionId, ip6->ip6_src.s6_addr, udphdr->uh_sport,
                                ip6->ip6_dst.s6_addr, udphdr->uh_dport);
             packet->ses = SESSION_SCTP;
+            done = 1;
             break;
         case IPPROTO_ESP:
             if (!config.trackESP)
@@ -1682,7 +1713,7 @@ void moloch_packet_batch(MolochPacketBatch_t * batch, MolochPacket_t * const pac
         rc = moloch_packet_nflog(batch, packet, packet->pkt, packet->pktlen);
         break;
     default:
-        LOGEXIT("ERROR - Unsupported pcap link type %d", pcapFileHeader.linktype);
+        LOGEXIT("ERROR - Unsupported pcap link type %u", pcapFileHeader.linktype);
     }
     MOLOCH_THREAD_INCR(packetStats[rc]);
 

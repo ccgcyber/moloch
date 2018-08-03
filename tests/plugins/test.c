@@ -8,6 +8,9 @@ extern MolochConfig_t        config;
 static int test_number;
 static int test_ip;
 static int test_string;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
 /******************************************************************************/
 void test_plugin_pre_save(MolochSession_t *session, int UNUSED(final))
 {
@@ -19,6 +22,7 @@ void test_plugin_pre_save(MolochSession_t *session, int UNUSED(final))
         moloch_field_string_add(test_string, session, tmp, -1, TRUE);
     }
 }
+#pragma GCC diagnostic pop
 
 /******************************************************************************/
 void moloch_plugin_init()

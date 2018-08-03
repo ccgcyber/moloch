@@ -22,6 +22,7 @@ var ini            = require('iniparser')
   , express        = require('express')
   , fs             = require('fs')
   , http           = require('http')
+  , https          = require('https')
   , glob           = require('glob')
   , async          = require('async')
   , sprintf        = require('./sprintf.js').sprintf
@@ -41,36 +42,9 @@ var internals = {
   fieldsTS: 0,
   fields: [],
   fieldsSize: 0,
-  ip: {
-    sources: []
-  },
-  domain: {
-    sources: []
-  },
-  md5: {
-    sources: []
-  },
-  email: {
-    sources: []
-  },
-  url: {
-    sources: []
-  },
-  tuple: {
-    sources: []
-  },
-  ja3: {
-    sources: []
-  },
-  sha256: {
-    sources: []
-  },
   sources: [],
-  requestStats: [0,0,0,0,0,0,0],
-  foundStats: [0,0,0,0,0,0,0],
-  cacheHitStats: [0,0,0,0,0,0,0],
-  cacheSrcHitStats: [0,0,0,0,0,0,0],
-  cacheSrcRefreshStats: [0,0,0,0,0,0,0],
+  types: {
+  },
   views: {},
   rightClicks: {},
   workers: 1
@@ -163,12 +137,14 @@ function addField(field) {
   var match = field.match(/field:([^;]+)/);
   var name = match[1];
 
+  var db;
   if ((match = field.match(/db:([^;]+)/))) {
-    var db = match[1];
+    db = match[1];
   }
 
+  var friendly;
   if ((match = field.match(/friendly:([^;]+)/))) {
-    var friendly = match[1];
+    friendly = match[1];
   }
 
   if (wiseSource.field2Pos[name] !== undefined) {
@@ -186,9 +162,9 @@ function addField(field) {
     internals.fieldsBuf0.writeUInt32BE(internals.fieldsTS, 0);
     internals.fieldsBuf0.writeUInt32BE(0, 4);
     internals.fieldsBuf0.writeUInt8(internals.fields.length, 8);
-    var offset = 9;
-    for (var i = 0; i < internals.fields.length; i++) {
-      var len = internals.fieldsBuf0.write(internals.fields[i], offset+2);
+    let offset = 9;
+    for (let i = 0; i < internals.fields.length; i++) {
+      let len = internals.fieldsBuf0.write(internals.fields[i], offset+2);
       internals.fieldsBuf0.writeUInt16BE(len+1, offset);
       internals.fieldsBuf0.writeUInt8(0, offset+2+len);
       offset += 3 + len;
@@ -201,9 +177,9 @@ function addField(field) {
   internals.fieldsBuf1.writeUInt32BE(internals.fieldsTS, 0);
   internals.fieldsBuf1.writeUInt32BE(1, 4);
   internals.fieldsBuf1.writeUInt16BE(internals.fields.length, 8);
-  var offset = 10;
-  for (var i = 0; i < internals.fields.length; i++) {
-    var len = internals.fieldsBuf1.write(internals.fields[i], offset+2);
+  let offset = 10;
+  for (let i = 0; i < internals.fields.length; i++) {
+    let len = internals.fieldsBuf1.write(internals.fields[i], offset+2);
     internals.fieldsBuf1.writeUInt16BE(len+1, offset);
     internals.fieldsBuf1.writeUInt8(0, offset+2+len);
     offset += 3 + len;
@@ -232,62 +208,50 @@ internals.sourceApi = {
   getConfigSections: getConfigSections,
   getConfigSection: getConfigSection,
   addField: addField,
-  addView: function (name, view) {
-    if (view.includes("require:")) {
-      var match = view.match(/require:([^;]+)/);
+  addView: function (name, input) {
+    if (input.includes("require:")) {
+      var match = input.match(/require:([^;]+)/);
       var require = match[1];
-      match = view.match(/title:([^;]+)/);
+      match = input.match(/title:([^;]+)/);
       var title = match[1];
-      match = view.match(/fields:([^;]+)/);
+      match = input.match(/fields:([^;]+)/);
       var fields = match[1];
 
-      var view = `if (session.${require})\n  div.sessionDetailMeta.bold ${title}\n  dl.sessionDetailMeta\n`;
+      let output = `if (session.${require})\n  div.sessionDetailMeta.bold ${title}\n  dl.sessionDetailMeta\n`;
       for (let field of fields.split(",")) {
         let info = wiseSource.field2Info[field];
-        if (!info)
+        if (!info) {
           continue;
+        }
         var parts = splitRemain(info.db, '.', 1);
-        if (parts.length == 1) {
-          view += `    +arrayList(session, '${parts[0]}', '${info.friendly}', '${field}')\n`;
+        if (parts.length === 1) {
+          output += `    +arrayList(session, '${parts[0]}', '${info.friendly}', '${field}')\n`;
         } else {
-          view += `    +arrayList(session.${parts[0]}, '${parts[1]}', '${info.friendly}', '${field}')\n`;
+          output += `    +arrayList(session.${parts[0]}, '${parts[1]}', '${info.friendly}', '${field}')\n`;
         }
       }
+      internals.views[name] = output;
+    } else {
+      internals.views[name] = input;
     }
-    internals.views[name] = view;
   },
   addRightClick: function (name, rightClick) {
     internals.rightClicks[name] = rightClick;
   },
   debug: internals.debug,
   addSource: function(section, src) {
-    src.srcInProgress = {ip: {}, domain: {}, email: {}, md5: {}, url: {}, tuple: {}, ja3: {}, sha256: {}};
     internals.sources[section] = src;
-    if (src.getIp) {
-      internals.ip.sources.push(src);
-    }
-    if (src.getDomain) {
-      internals.domain.sources.push(src);
-    }
-    if (src.getMd5) {
-      internals.md5.sources.push(src);
-    }
-    if (src.getEmail) {
-      internals.email.sources.push(src);
-    }
-    if (src.getURL) {
-      internals.url.sources.push(src);
-    }
-    if (src.getTuple) {
-      internals.tuple.sources.push(src);
-    }
-    if (src.getJa3) {
-      internals.ja3.sources.push(src);
-    }
-    if (src.getSha256) {
-      internals.sha256.sources.push(src);
+
+    // If a type has already registered add this source if we support it
+    for (let type in internals.types) {
+      let typeInfo = internals.types[type];
+      if (src[typeInfo.funcName]) {
+        typeInfo.sources.push(src);
+        src.srcInProgress[type] = [];
+      }
     }
   },
+  funcName: funcName,
   app: app
 };
 //////////////////////////////////////////////////////////////////////////////////
@@ -323,34 +287,137 @@ app.get("/rightClicks", function(req, res) {
   res.send(internals.rightClicks);
 });
 //////////////////////////////////////////////////////////////////////////////////
-internals.type2Func = ["getIp", "getDomain", "getMd5", "getEmail", "getURL", "getTuple", "getJa3", "getSha256"];
 internals.type2Name = ["ip", "domain", "md5", "email", "url", "tuple", "ja3", "sha256"];
-internals.name2Type = {ip:0, 0:0, domain:1, 1:1, md5:2, 2:2, email:3, 3:3, url:4, 4:4, tuple:5, 5:5, ja3:6, 6:6, sha256:7, 7:7};
 
 //////////////////////////////////////////////////////////////////////////////////
-function processQuery(req, query, cb) {
-  var typeName = internals.type2Name[query.type];
-  var funcName = internals.type2Func[query.type];
-  var typeInfo = internals[typeName];
+function globalAllowed (value) {
+  for(var i = 0; i < this.excludes.length; i++) {
+    if (value.match(this.excludes[i])) {
+      if (internals.debug > 0) {
+        console.log(`Found in Global ${this.name} Exclude`, value);
+      }
+      return false;
+    }
+  }
+  return true;
+}
+//////////////////////////////////////////////////////////////////////////////////
+function globalIPAllowed (value) {
+  if (this.excludes.find(value)) {
+    if (internals.debug > 0) {
+      console.log("Found in Global IP Exclude", value);
+    }
+    return false;
+  }
+  return true;
+}
+//////////////////////////////////////////////////////////////////////////////////
+function sourceAllowed (src, value) {
+  var excludes = src[this.excludeName] || [];
+  for(var i = 0; i < excludes.length; i++) {
+    if (value.match(excludes[i])) {
+      if (internals.debug > 0) {
+        console.log("Found in", src.section, this.name, "exclude", value);
+      }
+      return false;
+    }
+  }
+  return true;
+}
+//////////////////////////////////////////////////////////////////////////////////
+function sourceIPAllowed (src, value) {
+  if (src.excludeIPs.find(value)) {
+    if (internals.debug > 0) {
+      console.log("Found in", src.section, "IP Exclude", value);
+    }
+    return false;
+  }
+  if (src.onlyIPs && !src.onlyIPs.find(value)) {
+    return false;
+  }
+  return true;
+}
+//////////////////////////////////////////////////////////////////////////////////
+function funcName(typeName) {
+  if (typeName === 'url') {
+    return 'getURL';
+  }
 
-  if (query.type === 2 || query.type == 7) {
+  return 'get' + typeName[0].toUpperCase() + typeName.slice(1);
+}
+//////////////////////////////////////////////////////////////////////////////////
+function processQuery(req, query, cb) {
+
+  var typeInfo = internals.types[query.typeName];
+
+  // First time we've seen this typeName
+  if (!typeInfo) {
+    typeInfo = internals.types[query.typeName] = {
+      name: query.typeName,
+      excludeName: 'exclude' + query.typeName[0].toUpperCase() + query.typeName.slice(1) + 's',
+      funcName: funcName(query.typeName),
+      sources: [],
+      requestStats: 0,
+      foundStats: 0,
+      cacheHitStats: 0,
+      cacheSrcHitStats: 0,
+      cacheSrcRefreshStats: 0,
+      excludes: [],
+      globalAllowed: globalAllowed,
+      sourceAllowed: sourceAllowed
+    };
+
+    if (query.typeName === 'url') {
+      typeInfo.excludeName = 'excludeURLs';
+    }
+
+    if (query.typeName === 'ip') {
+      typeInfo.excludeName = 'excludeIPs';
+      typeInfo.globalAllowed = globalIPAllowed;
+      typeInfo.sourceAllowed = sourceIPAllowed;
+    }
+
+    for (var src in internals.sources) {
+      if (internals.sources[src][typeInfo.funcName]) {
+        typeInfo.sources.push(internals.sources[src]);
+        internals.sources[src].srcInProgress[query.typeName] = [];
+      }
+    }
+
+    var items = getConfig("wiseService", typeInfo.excludeName, "");
+    if (query.typeName === 'ip') {
+      typeInfo.excludes = new iptrie.IPTrie();
+      items.split(";").map(item => item.trim()).filter(item=>item !== "").forEach((item) => {
+        var parts = item.split("/");
+        typeInfo.excludes.add(parts[0], +parts[1] || (parts[0].includes(':')?128:32), true);
+      });
+    } else {
+      typeInfo.excludes = items.split(";").map(item=>item.trim()).filter(item=>item !== "").map(item => RegExp.fromWildExp(item, "ailop"));
+    }
+  }
+
+  typeInfo.requestStats++;
+
+  // md5/sha256 have content type
+  if (query.typeName === "md5" || query.typeName === "sha256") {
     var parts = query.value.split(";");
     query.value = parts[0];
     query.contentType = parts[1];
   }
 
+  // Check if globally allowed
   try {
-    if (!typeInfo.global_allowed(query.value)) {
+    if (!typeInfo.globalAllowed(query.value)) {
       return cb(null, wiseSource.emptyCombinedResult);
     }
   } catch (e) {
-    console.log("ERROR", typeName, query, e);
+    console.log("ERROR", query.typeName, query.value, e);
   }
 
   // Fetch the cache for this query
   internals.cache.get(query, (err, cacheResult) => {
     if (req.timedout) {
-      return cb("Timed out " + typeName + " " + query.value);
+      return cb("Timed out " + query.typeName + " " + query.value);
     }
 
     var now = Math.floor(Date.now()/1000);
@@ -359,11 +426,11 @@ function processQuery(req, query, cb) {
     if (cacheResult === undefined) {
       cacheResult = {};
     } else {
-      internals.cacheHitStats[query.type]++;
+      typeInfo.cacheHitStats++;
     }
 
     async.map(query.sources || typeInfo.sources, (src, cb) => {
-      if (!typeInfo.source_allowed(src, query.value)) {
+      if (!typeInfo.sourceAllowed(src, query.value)) {
         // This source isn't allowed for query
         return setImmediate(cb, undefined);
       }
@@ -373,22 +440,22 @@ function processQuery(req, query, cb) {
           src.cacheMissStat++;
         } else {
           src.cacheRefreshStat++;
-          internals.cacheSrcRefreshStats[query.type]++;
+          typeInfo.cacheSrcRefreshStats++;
         }
 
         // Can't use the cache or there is no cache for this source
         delete cacheResult[src.section];
 
         // If already in progress then add to the list and return, cb called later;
-        if (query.value in src.srcInProgress[typeName]) {
-          src.srcInProgress[typeName][query.value].push(cb);
+        if (query.value in src.srcInProgress[query.typeName]) {
+          src.srcInProgress[query.typeName][query.value].push(cb);
           return;
         }
 
         // First query for this value
-        src.srcInProgress[typeName][query.value] = [cb];
+        src.srcInProgress[query.typeName][query.value] = [cb];
         let startTime = Date.now();
-        src[funcName](src.fullQuery===true?query:query.value, (err, result) => {
+        src[typeInfo.funcName](src.fullQuery===true?query:query.value, (err, result) => {
           src.average100MS = (99.0 * src.average100MS + (Date.now() - startTime))/100.0;
 
           if (!err && src.cacheTimeout !== -1 && result !== undefined) { // If err or cacheTimeout is -1 then don't cache
@@ -400,8 +467,8 @@ function processQuery(req, query, cb) {
             err = null;
             result = undefined;
           }
-          var srcInProgress = src.srcInProgress[typeName][query.value];
-          delete src.srcInProgress[typeName][query.value];
+          var srcInProgress = src.srcInProgress[query.typeName][query.value];
+          delete src.srcInProgress[query.typeName][query.value];
           for (var i = 0, l = srcInProgress.length; i < l; i++) {
             srcInProgress[i](err, result);
           }
@@ -409,7 +476,7 @@ function processQuery(req, query, cb) {
         });
       } else {
         src.cacheHitStat++;
-        internals.cacheSrcHitStats[query.type]++;
+        typeInfo.cacheSrcHitStats++;
         // Woot, we can use the cache
         setImmediate(cb, null, cacheResult[src.section].result);
       }
@@ -419,11 +486,11 @@ function processQuery(req, query, cb) {
         return cb(err);
       }
       if (internals.debug > 2) {
-        console.log("RESULT", funcName, query.value, wiseSource.result2Str(wiseSource.combineResults(results)));
+        console.log("RESULT", typeInfo.funcName, query.value, wiseSource.result2Str(wiseSource.combineResults(results)));
       }
 
       if (req.timedout) {
-        cb("Timed out " + typeName + " " + query.value);
+        cb("Timed out " + query.typeName + " " + query.value);
       } else {
         cb(null, wiseSource.combineResults(results));
       }
@@ -446,14 +513,25 @@ app.post("/get", function(req, res) {
     var queries = [];
     for (var buf = Buffer.concat(buffers); offset < buf.length; ) {
       var type = buf[offset];
-      var len  = buf.readUInt16BE(offset+1);
-      var value = buf.toString('utf8', offset+3, offset+3+len);
-      if (internals.debug > 1) {
-        console.log(internals.type2Func[type], value);
+      offset++;
+
+      var typeName;
+      if (type & 0x80) {
+        typeName = buf.toString('utf8', offset, offset + (type & ~0x80));
+        offset += (type & ~0x80);
+      } else {
+        typeName = internals.type2Name[type];
       }
-      offset += 3 + len;
-      queries.push({type: type, value: value});
-      internals.requestStats[type]++;
+
+      var len  = buf.readUInt16BE(offset);
+      offset += 2;
+
+      var value = buf.toString('utf8', offset, offset+len);
+      if (internals.debug > 1) {
+        console.log(typeName, value);
+      }
+      offset += len;
+      queries.push({typeName: typeName, value: value});
     }
 
     async.map(queries, (query, cb) => {
@@ -469,7 +547,7 @@ app.post("/get", function(req, res) {
       res.write(buf);
       for (var r = 0; r < results.length; r++) {
         if (results[r][0] > 0) {
-          internals.foundStats[queries[r].type]++;
+          internals.types[queries[r].typeName].foundStats++;
         }
         res.write(results[r]);
       }
@@ -478,19 +556,15 @@ app.post("/get", function(req, res) {
   });
 });
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/:source/:type/:value", function(req, res) {
+app.get("/:source/:typeName/:value", function(req, res) {
   var source = internals.sources[req.params.source];
   if (!source) {
     return res.end("Unknown source " + req.params.source);
   }
 
-  var query = {type: internals.name2Type[req.params.type],
+  var query = {typeName: req.params.typeName,
                value: req.params.value,
                sources: [source]};
-
-  if (query.type === undefined) {
-    return res.end("Unknown type " + req.params.type);
-  }
 
   processQuery(req, query, (err, result) => {
     if (err || !result) {
@@ -573,13 +647,8 @@ app.get("/bro/:type", function(req, res) {
 });
 */
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/:type/:value", function(req, res, next) {
-  var type = internals.name2Type[req.params.type];
-  if (type === undefined) {
-    return next();
-  }
-
-  var query = {type: type,
+app.get("/:typeName/:value", function(req, res, next) {
+  var query = {typeName: req.params.typeName,
                value: req.params.value};
 
   processQuery(req, query, (err, result) => {
@@ -599,160 +668,34 @@ if (getConfig("wiseService", "regressionTests")) {
 //////////////////////////////////////////////////////////////////////////////////
 function printStats()
 {
-  console.log(sprintf("REQUESTS:          domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d sha256: %7d",
-      internals.requestStats[1], internals.requestStats[0], internals.requestStats[3], internals.requestStats[2], internals.requestStats[4], internals.requestStats[5], internals.requestStats[6], internals.requestStats[7]));
-  console.log(sprintf("FOUND:             domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d sha256: %7d",
-      internals.foundStats[1], internals.foundStats[0], internals.foundStats[3], internals.foundStats[2], internals.foundStats[4], internals.foundStats[5], internals.foundStats[6], internals.foundStats[7]));
-  console.log(sprintf("CACHE HIT:         domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d sha256: %7d",
-      internals.cacheHitStats[1], internals.cacheHitStats[0], internals.cacheHitStats[3], internals.cacheHitStats[2], internals.cacheHitStats[4], internals.cacheHitStats[5], internals.cacheHitStats[6], internals.cacheHitStats[7]));
-  console.log(sprintf("CACHE SRC HIT:     domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d sha256: %7d",
-      internals.cacheSrcHitStats[1], internals.cacheSrcHitStats[0], internals.cacheSrcHitStats[3], internals.cacheSrcHitStats[2], internals.cacheSrcHitStats[4], internals.cacheSrcHitStats[5], internals.cacheSrcHitStats[6], internals.cacheSrcHitStats[7]));
-  console.log(sprintf("CACHE SRC REFRESH: domain: %7d ip: %7d email: %7d md5: %7d url: %7d tuple: %7d ja3: %7d sha256: %7d",
-      internals.cacheSrcRefreshStats[1], internals.cacheSrcRefreshStats[0], internals.cacheSrcRefreshStats[3], internals.cacheSrcRefreshStats[2], internals.cacheSrcRefreshStats[4], internals.cacheSrcRefreshStats[5], internals.cacheSrcRefreshStats[6], internals.cacheSrcRefreshStats[7]));
+  var keys = Object.keys(internals.types).sort();
+  var lines = [];
+  lines[0] = "                   ";
+  lines[1] = "REQUESTS:          ";
+  lines[2] = "FOUND:             ";
+  lines[3] = "CACHE HIT:         ";
+  lines[4] = "CACHE SRC HIT:     ";
+  lines[5] = "CACHE SRC REFRESH: ";
+
+  for (var key of keys) {
+    let typeInfo = internals.types[key];
+    lines[0] += sprintf(" %11s", key);
+    lines[1] += sprintf(" %11d", typeInfo.requestStats);
+    lines[2] += sprintf(" %11d", typeInfo.foundStats);
+    lines[3] += sprintf(" %11d", typeInfo.cacheHitStats);
+    lines[4] += sprintf(" %11d", typeInfo.cacheSrcHitStats);
+    lines[5] += sprintf(" %11d", typeInfo.cacheSrcRefreshStats);
+  }
+
+  for (var i = 0; i < lines.length; i++) {
+    console.log(lines[i]);
+  }
 
   for (var section in internals.sources) {
     let src = internals.sources[section];
     console.log(sprintf("SRC %-30s    cached: %7d lookup: %7d refresh: %7d dropped: %7d avgMS: %7d",
       section, src.cacheHitStat, src.cacheMissStat, src.cacheRefreshStat, src.cacheDroppedStat, src.average100MS));
   }
-}
-//////////////////////////////////////////////////////////////////////////////////
-internals.ip.global_allowed = function(value) {
-  if (internals.excludeIPs.find(value)) {
-    if (internals.debug > 0) {
-      console.log("Found in Global IP Exclude", value);
-    }
-    return false;
-  }
-  return true;
-};
-internals.md5.global_allowed = function(value) {return true;};
-internals.email.global_allowed = function(value) {
-  for(var i = 0; i < internals.excludeEmails.length; i++) {
-    if (value.match(internals.excludeEmails[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in Global Email Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.domain.global_allowed = function(value) {
-  for(var i = 0; i < internals.excludeDomains.length; i++) {
-    if (value.match(internals.excludeDomains[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in Global Domain Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.url.global_allowed = function(value) {
-  for(var i = 0; i < internals.excludeURLs.length; i++) {
-    if (value.match(internals.excludeURLs[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in Global URL Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.tuple.global_allowed = function(value) {
-  for(var i = 0; i < internals.excludeTuples.length; i++) {
-    if (value.match(internals.excludeTuples[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in Global Tuple Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.ja3.global_allowed = function(value) {return true;};
-internals.sha256.global_allowed = function(value) {return true;};
-
-internals.ip.source_allowed = function(src, value) {
-  if (src.excludeIPs.find(value)) {
-    if (internals.debug > 0) {
-      console.log("Found in", src.section, "IP Exclude", value);
-    }
-    return false;
-  }
-  if (src.onlyIPs && !src.onlyIPs.find(value)) {
-    return false;
-  }
-  return true;
-};
-internals.md5.source_allowed = function(src, value) {return true;};
-internals.email.source_allowed = function(src, value) {
-  for(var i = 0; i < src.excludeEmails.length; i++) {
-    if (value.match(src.excludeEmails[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in", src.section, "Email Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.domain.source_allowed = function(src, value) {
-  for(var i = 0; i < src.excludeDomains.length; i++) {
-    if (value.match(src.excludeDomains[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in", src.section, "Domain Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.url.source_allowed = function(src, value) {
-  for(var i = 0; i < src.excludeURLs.length; i++) {
-    if (value.match(src.excludeURLs[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in", src.section, "URL Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.tuple.source_allowed = function(src, value) {
-  for(var i = 0; i < src.excludeTuples.length; i++) {
-    if (value.match(src.excludeTuples[i])) {
-      if (internals.debug > 0) {
-        console.log("Found in", src.section, "Tuple Exclude", value);
-      }
-      return false;
-    }
-  }
-  return true;
-};
-internals.ja3.source_allowed = function(src, value) {return true;};
-internals.sha256.source_allowed = function(src, value) {return true;};
-//////////////////////////////////////////////////////////////////////////////////
-function loadExcludes() {
-  ["excludeDomains", "excludeEmails", "excludeURLs", "excludeTuples"].forEach((type) => {
-    var items = getConfig("wiseService", type);
-    internals[type] = [];
-    if (!items) {return;}
-    items.split(";").map(item => item.trim()).forEach((item) => {
-      internals[type].push(RegExp.fromWildExp(item, "ailop"));
-    });
-  });
-
-  internals.excludeIPs = new iptrie.IPTrie();
-  var items = getConfig("wiseService", "excludeIPs", "");
-  items.split(";").map(item => item.trim()).forEach((item) => {
-    if (item === "") {
-      return;
-    }
-    var parts = item.split("/");
-    internals.excludeIPs.add(parts[0], +parts[1] || (parts[0].includes(':')?128:32), true);
-  });
 }
 //////////////////////////////////////////////////////////////////////////////////
 //// jPaq
@@ -780,7 +723,6 @@ function main() {
 
   addField("field:tags"); // Always add tags field so we have at least 1 field
 
-  loadExcludes();
   loadSources();
   setInterval(printStats, 60*1000);
 

@@ -83,46 +83,32 @@ void moloch_yara_open(char *filename, YR_COMPILER **compiler, YR_RULES **rules)
 /******************************************************************************/
 void moloch_yara_load(char *name)
 {
-    static YR_COMPILER *yCompilerOld;
-    static YR_RULES *yRulesOld;
-
-    if (!name) {
-        yr_rules_destroy(yRulesOld);
-        yr_compiler_destroy(yCompilerOld);
-        yRulesOld    = NULL;
-        yCompilerOld = NULL;
-        return;
-    }
-
     YR_COMPILER *compiler;
     YR_RULES *rules;
+
     moloch_yara_open(name, &compiler, &rules);
 
-    yCompilerOld = yCompiler;
-    yRulesOld = yRules;
+    if (yRules)
+        moloch_free_later(yRules, (GDestroyNotify) yr_rules_destroy);
+    if (yCompiler)
+        moloch_free_later(yCompiler, (GDestroyNotify) yr_compiler_destroy);
+
     yCompiler = compiler;
     yRules = rules;
 }
 /******************************************************************************/
 void moloch_yara_load_email(char *name)
 {
-    static YR_COMPILER *yCompilerOld;
-    static YR_RULES *yRulesOld;
-
-    if (!name) {
-        yr_rules_destroy(yRulesOld);
-        yr_compiler_destroy(yCompilerOld);
-        yRulesOld    = NULL;
-        yCompilerOld = NULL;
-        return;
-    }
-
     YR_COMPILER *compiler;
     YR_RULES *rules;
+
     moloch_yara_open(name, &compiler, &rules);
 
-    yCompilerOld = yEmailCompiler;
-    yRulesOld = yEmailRules;
+    if (yEmailRules)
+        moloch_free_later(yEmailRules, (GDestroyNotify) yr_rules_destroy);
+    if (yEmailCompiler)
+        moloch_free_later(yEmailCompiler, (GDestroyNotify) yr_compiler_destroy);
+
     yEmailCompiler = compiler;
     yEmailRules = rules;
 }
@@ -144,18 +130,19 @@ void moloch_yara_init()
 /******************************************************************************/
 int moloch_yara_callback(int message, YR_RULE* rule, MolochSession_t* session)
 {
+    if (message != CALLBACK_MSG_RULE_MATCHING)
+        return CALLBACK_CONTINUE;
+
     char tagname[256];
     const char* tag;
 
-    if (message == CALLBACK_MSG_RULE_MATCHING) {
-        snprintf(tagname, sizeof(tagname), "yara:%s", rule->identifier);
+    snprintf(tagname, sizeof(tagname), "yara:%s", rule->identifier);
+    moloch_session_add_tag(session, tagname);
+    tag = rule->tags;
+    while(tag != NULL && *tag) {
+        snprintf(tagname, sizeof(tagname), "yara:%s", tag);
         moloch_session_add_tag(session, tagname);
-        tag = rule->tags;
-        while(tag != NULL && *tag) {
-            snprintf(tagname, sizeof(tagname), "yara:%s", tag);
-            moloch_session_add_tag(session, tagname);
-            tag += strlen(tag) + 1;
-        }
+        tag += strlen(tag) + 1;
     }
 
     return CALLBACK_CONTINUE;

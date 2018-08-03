@@ -242,7 +242,7 @@ void moloch_db_geo_lookup6(MolochSession_t *session, struct in6_addr addr, char 
 
             if (status == MMDB_SUCCESS) {
                 char buf[1000];
-                sprintf(buf, "AS%d %.*s", num.uint32, org.data_size, org.utf8_string);
+                sprintf(buf, "AS%u %.*s", num.uint32, org.data_size, org.utf8_string);
                 *as = g_strdup(buf);
                 *asFree = 1;
             }
@@ -252,7 +252,7 @@ void moloch_db_geo_lookup6(MolochSession_t *session, struct in6_addr addr, char 
 /******************************************************************************/
 LOCAL void moloch_db_send_bulk(char *json, int len)
 {
-    moloch_http_set(esServer, "/_bulk", 6, json, len, NULL, NULL);
+    moloch_http_send(esServer, "POST", "/_bulk", 6, json, len, NULL, FALSE, NULL, NULL);
 }
 LOCAL MolochDbSendBulkFunc sendBulkFunc = moloch_db_send_bulk;
 /******************************************************************************/
@@ -329,8 +329,23 @@ void moloch_db_save_session(MolochSession_t *session, int final)
         case MOLOCH_ROTATE_HOURLY:
             snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02dh%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday, tmp.tm_hour);
             break;
+        case MOLOCH_ROTATE_HOURLY2:
+            snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02dh%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday, (tmp.tm_hour/2)*2);
+            break;
+        case MOLOCH_ROTATE_HOURLY3:
+            snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02dh%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday, (tmp.tm_hour/3)*3);
+            break;
+        case MOLOCH_ROTATE_HOURLY4:
+            snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02dh%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday, (tmp.tm_hour/4)*4);
+            break;
         case MOLOCH_ROTATE_HOURLY6:
             snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02dh%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday, (tmp.tm_hour/6)*6);
+            break;
+        case MOLOCH_ROTATE_HOURLY8:
+            snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02dh%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday, (tmp.tm_hour/8)*8);
+            break;
+        case MOLOCH_ROTATE_HOURLY12:
+            snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02dh%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday, (tmp.tm_hour/12)*12);
             break;
         case MOLOCH_ROTATE_DAILY:
             snprintf(dbInfo[thread].prefix, sizeof(dbInfo[thread].prefix), "%02d%02d%02d", tmp.tm_year%100, tmp.tm_mon+1, tmp.tm_mday);
@@ -449,9 +464,9 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     char ipdst[INET6_ADDRSTRLEN];
     if (IN6_IS_ADDR_V4MAPPED(&session->addr1)) {
         uint32_t ip = MOLOCH_V6_TO_V4(session->addr1);
-        snprintf(ipsrc, sizeof(ipsrc), "%d.%d.%d.%d", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
+        snprintf(ipsrc, sizeof(ipsrc), "%u.%u.%u.%u", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
         ip = MOLOCH_V6_TO_V4(session->addr2);
-        snprintf(ipdst, sizeof(ipdst), "%d.%d.%d.%d", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
+        snprintf(ipdst, sizeof(ipdst), "%u.%u.%u.%u", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
     } else {
         inet_ntop(AF_INET6, &session->addr1, ipsrc, sizeof(ipsrc));
         inet_ntop(AF_INET6, &session->addr2, ipdst, sizeof(ipdst));
@@ -591,7 +606,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
             break;
         case MOLOCH_FIELD_TYPE_STR_ARRAY:
             if (flags & MOLOCH_FIELD_FLAG_CNT) {
-                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\":%d,", config.fields[pos]->dbField, session->fields[pos]->sarray->len);
+                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\":%u,", config.fields[pos]->dbField, session->fields[pos]->sarray->len);
             }
             BSB_EXPORT_sprintf(jbsb, "\"%s\":[", config.fields[pos]->dbField);
             for(i = 0; i < session->fields[pos]->sarray->len; i++) {
@@ -629,7 +644,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
         case MOLOCH_FIELD_TYPE_STR_GHASH:
             ghash = session->fields[pos]->ghash;
             if (flags & MOLOCH_FIELD_FLAG_CNT) {
-                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\": %d,", config.fields[pos]->dbField, g_hash_table_size(ghash));
+                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\": %u,", config.fields[pos]->dbField, g_hash_table_size(ghash));
             }
             BSB_EXPORT_sprintf(jbsb, "\"%s\":[", config.fields[pos]->dbField);
             g_hash_table_iter_init (&iter, ghash);
@@ -666,12 +681,12 @@ void moloch_db_save_session(MolochSession_t *session, int final)
         case MOLOCH_FIELD_TYPE_INT_GHASH:
             ghash = session->fields[pos]->ghash;
             if (flags & MOLOCH_FIELD_FLAG_CNT) {
-                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\": %d,", config.fields[pos]->dbField, g_hash_table_size(ghash));
+                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\": %u,", config.fields[pos]->dbField, g_hash_table_size(ghash));
             }
             BSB_EXPORT_sprintf(jbsb, "\"%s\":[", config.fields[pos]->dbField);
             g_hash_table_iter_init (&iter, ghash);
             while (g_hash_table_iter_next (&iter, &ikey, NULL)) {
-                BSB_EXPORT_sprintf(jbsb, "%u", (int)(long)ikey);
+                BSB_EXPORT_sprintf(jbsb, "%u", (unsigned int)(long)ikey);
                 BSB_EXPORT_u08(jbsb, ',');
             }
 
@@ -708,7 +723,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
 
             if (IN6_IS_ADDR_V4MAPPED((struct in6_addr *)ikey)) {
                 uint32_t ip = MOLOCH_V6_TO_V4(*(struct in6_addr *)ikey);
-                snprintf(ipsrc, sizeof(ipsrc), "%d.%d.%d.%d", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
+                snprintf(ipsrc, sizeof(ipsrc), "%u.%u.%u.%u", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
             } else {
                 inet_ntop(AF_INET6, ikey, ipsrc, sizeof(ipsrc));
             }
@@ -722,7 +737,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
         case MOLOCH_FIELD_TYPE_IP_GHASH: {
             ghash = session->fields[pos]->ghash;
             if (flags & MOLOCH_FIELD_FLAG_CNT) {
-                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\":%d,", config.fields[pos]->dbField, g_hash_table_size(ghash));
+                BSB_EXPORT_sprintf(jbsb, "\"%sCnt\":%u,", config.fields[pos]->dbField, g_hash_table_size(ghash));
             }
 
             char                 *as[MAX_IPS];
@@ -742,7 +757,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
 
                 if (IN6_IS_ADDR_V4MAPPED((struct in6_addr *)ikey)) {
                     uint32_t ip = MOLOCH_V6_TO_V4(*(struct in6_addr *)ikey);
-                    snprintf(ipsrc, sizeof(ipsrc), "%d.%d.%d.%d", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
+                    snprintf(ipsrc, sizeof(ipsrc), "%u.%u.%u.%u", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
                 } else {
                     inet_ntop(AF_INET6, ikey, ipsrc, sizeof(ipsrc));
                 }
@@ -907,7 +922,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     BSB_EXPORT_cstr(jbsb, "}\n");
 
     if (BSB_IS_ERROR(jbsb)) {
-        LOG("ERROR - Ran out of memory creating DB record supposed to be %d", jsonSize);
+        LOG("ERROR - Ran out of memory creating DB record supposed to be %u", jsonSize);
         goto cleanup;
     }
 
@@ -936,7 +951,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     }
 
     if (jsonSize < (uint32_t)(BSB_WORK_PTR(jbsb) - startPtr)) {
-        LOG("WARNING - %s BIGGER then expected json %d %d\n", id, jsonSize,  (int)(BSB_WORK_PTR(jbsb) - startPtr));
+        LOG("WARNING - %s BIGGER then expected json %u %d\n", id, jsonSize,  (int)(BSB_WORK_PTR(jbsb) - startPtr));
         if (config.debug)
             LOG("Data:\n%.*s\n", (int)(BSB_WORK_PTR(jbsb) - startPtr), startPtr);
     }
@@ -953,13 +968,12 @@ LOCAL uint64_t zero_atoll(char *v) {
 
 /******************************************************************************/
 #define NUMBER_OF_STATS 4
+LOCAL  uint64_t dbVersion;
 LOCAL  uint64_t dbTotalPackets[NUMBER_OF_STATS];
 LOCAL  uint64_t dbTotalK[NUMBER_OF_STATS];
 LOCAL  uint64_t dbTotalSessions[NUMBER_OF_STATS];
 LOCAL  uint64_t dbTotalDropped[NUMBER_OF_STATS];
 
-LOCAL  char     stats_key[200];
-LOCAL  int      stats_key_len = 0;
 
 LOCAL void moloch_db_load_stats()
 {
@@ -968,10 +982,20 @@ LOCAL void moloch_db_load_stats()
     uint32_t           source_len;
     unsigned char     *source = 0;
 
+    char     stats_key[200];
+    int      stats_key_len = 0;
     stats_key_len = snprintf(stats_key, sizeof(stats_key), "/%sstats/stat/%s", config.prefix, config.nodeName);
 
     unsigned char     *data = moloch_http_get(esServer, stats_key, stats_key_len, &data_len);
 
+    uint32_t            version_len;
+    unsigned char *version = moloch_js0n_get(data, data_len, "_version", &version_len);
+
+    if (!version_len || !version) {
+        dbVersion = 0;
+    } else {
+        dbVersion = atol((char *)version);
+    }
     source = moloch_js0n_get(data, data_len, "_source", &source_len);
     if (source) {
         dbTotalPackets[0]  = zero_atoll((char*)moloch_js0n_get(source, source_len, "totalPackets", &len));
@@ -1040,6 +1064,55 @@ LOCAL uint64_t moloch_db_memory_max()
 }
 
 /******************************************************************************/
+LOCAL uint64_t moloch_db_used_space()
+{
+    if (config.pcapDirTemplate)
+        return 0;
+
+    uint64_t   spaceM = 0;
+    static int nodeNameLen = 0;
+
+    if (nodeNameLen == 0) {
+        nodeNameLen = strlen(config.nodeName);
+    }
+
+    int i;
+    for (i = 0; config.pcapDir[i]; i++) {
+        GError   *error = NULL;
+        GDir     *dir = g_dir_open(config.pcapDir[i], 0, &error);
+        if (!dir || error) {
+            if (dir)
+                g_dir_close(dir);
+            if (error)
+                g_free(error);
+            continue;
+        }
+
+        const gchar *filename;
+        while ((filename = g_dir_read_name(dir))) {
+            // Skip hidden files/directories
+            if (filename[0] == '.')
+                continue;
+            int len = strlen(filename);
+            if (len < nodeNameLen + 21 ||
+                filename[nodeNameLen] != '-' ||
+                memcmp(filename, config.nodeName, nodeNameLen) != 0 ||
+                memcmp(filename+nodeNameLen+16, ".pcap", 5) != 0) {
+                continue;
+            }
+
+            gchar *fullfilename = g_build_filename (config.pcapDir[i], filename, NULL);
+            struct stat sb;
+            if (stat(fullfilename, &sb) == 0) {
+                spaceM += sb.st_size;
+            }
+            g_free(fullfilename);
+        }
+        g_dir_close(dir);
+    }
+    return spaceM/(1000*1000);
+}
+/******************************************************************************/
 LOCAL void moloch_db_update_stats(int n, gboolean sync)
 {
     static uint64_t       lastPackets[NUMBER_OF_STATS];
@@ -1053,11 +1126,10 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
     static struct rusage  lastUsage[NUMBER_OF_STATS];
     static struct timeval lastTime[NUMBER_OF_STATS];
     static int            intervals[NUMBER_OF_STATS] = {1, 5, 60, 600};
+    static uint64_t       lastUsedSpaceM = 0;
     uint64_t              freeSpaceM = 0;
     uint64_t              totalSpaceM = 0;
     int                   i;
-    char                  key[200];
-    int                   key_len = 0;
 
     char *json = moloch_http_get_buffer(MOLOCH_HTTP_BUFFER_SIZE);
     struct timeval currentTime;
@@ -1066,6 +1138,10 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
 
     if (lastPackets[n] == 0) {
         lastTime[n] = startTime;
+    }
+
+    if (n == 0) {
+        lastUsedSpaceM = moloch_db_used_space();
     }
 
     uint64_t overloadDropped = moloch_packet_dropped_overload();
@@ -1077,8 +1153,8 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
     for (i = 0; config.pcapDir[i]; i++) {
         struct statvfs vfs;
         statvfs(config.pcapDir[i], &vfs);
-        freeSpaceM += (uint64_t)(vfs.f_frsize/1024.0*vfs.f_bavail/1024.0);
-        totalSpaceM += (uint64_t)(vfs.f_frsize/1024.0*vfs.f_blocks/1024.0);
+        freeSpaceM += (uint64_t)(vfs.f_frsize/1000.0*vfs.f_bavail/1000.0);
+        totalSpaceM += (uint64_t)(vfs.f_frsize/1000.0*vfs.f_blocks/1000.0);
     }
 
     const uint64_t cursec = currentTime.tv_sec;
@@ -1097,14 +1173,14 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
     dbTotalPackets[n] += (totalPackets - lastPackets[n]);
     dbTotalSessions[n] += (totalSessions - lastSessions[n]);
     dbTotalDropped[n] += (totalDropped - lastDropped[n]);
-    dbTotalK[n] += (totalBytes - lastBytes[n])/1024;
+    dbTotalK[n] += (totalBytes - lastBytes[n])/1000;
 
     uint64_t mem = moloch_db_memory_size();
     double   memMax = moloch_db_memory_max();
     float    memUse = mem/memMax*100.0;
 
     if (memUse > config.maxMemPercentage) {
-        LOG("Aborting, max memory percentage reached: %.2f > %d", memUse, config.maxMemPercentage);
+        LOG("Aborting, max memory percentage reached: %.2f > %u", memUse, config.maxMemPercentage);
         fflush(stdout);
         fflush(stderr);
         kill(getpid(), SIGSEGV);
@@ -1117,6 +1193,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         "\"hostname\": \"%s\", "
         "\"interval\": %d, "
         "\"currentTime\": %" PRIu64 ", "
+        "\"usedSpaceM\": %" PRIu64 ", "
         "\"freeSpaceM\": %" PRIu64 ", "
         "\"freeSpaceP\": %.2f, "
         "\"monitoring\": %u, "
@@ -1155,6 +1232,7 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
         config.hostName,
         intervals[n],
         cursec,
+        lastUsedSpaceM,
         freeSpaceM,
         freeSpaceM*100.0/totalSpaceM,
         moloch_session_monitoring(),
@@ -1200,17 +1278,27 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
     lastUsage[n]           = usage;
 
     if (n == 0) {
+        char     stats_key[200];
+        int      stats_key_len = 0;
+        if (config.pcapReadOffline) {
+            stats_key_len = snprintf(stats_key, sizeof(stats_key), "/%sstats/stat/%s", config.prefix, config.nodeName);
+        } else {
+            // Prevent out of order stats records when doing live captures
+            dbVersion++;
+            stats_key_len = snprintf(stats_key, sizeof(stats_key), "/%sstats/stat/%s?version_type=external&version=%" PRIu64, config.prefix, config.nodeName, dbVersion);
+        }
         if (sync) {
             unsigned char *data = moloch_http_send_sync(esServer, "POST", stats_key, stats_key_len, json, json_len, NULL, NULL);
             if (data)
                 free(data);
             moloch_http_free_buffer(json);
         } else {
-            moloch_http_set(esServer, stats_key, stats_key_len, json, json_len, NULL, NULL);
+            moloch_http_send(esServer, "POST", stats_key, stats_key_len, json, json_len, NULL, TRUE, NULL, NULL);
         }
     } else {
-        key_len = snprintf(key, sizeof(key), "/%sdstats/dstat/%s-%d-%d", config.prefix, config.nodeName, (int)(currentTime.tv_sec/intervals[n])%1440, intervals[n]);
-        moloch_http_set(esServer, key, key_len, json, json_len, NULL, NULL);
+        char key[200];
+        int key_len = snprintf(key, sizeof(key), "/%sdstats/dstat/%s-%d-%d", config.prefix, config.nodeName, (int)(currentTime.tv_sec/intervals[n])%1440, intervals[n]);
+        moloch_http_send(esServer, "POST", key, key_len, json, json_len, NULL, TRUE, NULL, NULL);
     }
 }
 /******************************************************************************/
@@ -1252,6 +1340,11 @@ LOCAL gboolean moloch_db_flush_gfunc (gpointer user_data )
 /******************************************************************************/
 LOCAL void moloch_db_health_check_cb(int UNUSED(code), unsigned char *data, int data_len, gpointer uw)
 {
+    if (code != 200) {
+        LOG("WARNING - Couldn't perform Elasticsearch health check");
+        return;
+    }
+
     uint32_t           status_len;
     unsigned char     *status;
     struct timespec    stopHealthCheck;
@@ -1266,12 +1359,10 @@ LOCAL void moloch_db_health_check_cb(int UNUSED(code), unsigned char *data, int 
     else
         status = moloch_js0n_get(data, data_len, "status", &status_len);
 
-    if (code != 200) {
-        LOG("WARNING - Couldn't perform Elasticsearch health check");
-    } else if ( esHealthMS > 20000) {
-        LOG("WARNING - Elasticsearch health check took more then 20 seconds %llums", esHealthMS);
+    if ( esHealthMS > 20000) {
+        LOG("WARNING - Elasticsearch health check took more then 20 seconds %" PRIu64 "ms", esHealthMS);
     } else if ((status[0] == 'y' && uw == (gpointer)1L) || (status[0] == 'r')) {
-        LOG("WARNING - Elasticsearch is %.*s and took %llums to query health, this may cause issues.  See FAQ.", status_len, status, esHealthMS);
+        LOG("WARNING - Elasticsearch is %.*s and took %" PRIu64 "ms to query health, this may cause issues.  See FAQ.", status_len, status, esHealthMS);
     }
 }
 /******************************************************************************/
@@ -1321,23 +1412,21 @@ void moloch_db_get_sequence_number(char *name, MolochSeqNum_cb func, gpointer uw
 
     key_len = snprintf(key, sizeof(key), "/%ssequence/sequence/%s", config.prefix, name);
     int json_len = snprintf(json, MOLOCH_HTTP_BUFFER_SIZE, "{}");
-    moloch_http_set(esServer, key, key_len, json, json_len, moloch_db_get_sequence_number_cb, r);
+    moloch_http_send(esServer, "POST", key, key_len, json, json_len, NULL, FALSE, moloch_db_get_sequence_number_cb, r);
 }
 /******************************************************************************/
 uint32_t moloch_db_get_sequence_number_sync(char *name)
 {
-    char                key[100];
-    int                 key_len;
-    unsigned char      *data;
-    size_t              data_len;
-    unsigned char      *version;
-    uint32_t            version_len;
 
     while (1) {
-        key_len = snprintf(key, sizeof(key), "/%ssequence/sequence/%s", config.prefix, name);
+        char key[100];
+        int key_len = snprintf(key, sizeof(key), "/%ssequence/sequence/%s", config.prefix, name);
 
-        data = moloch_http_send_sync(esServer, "POST", key, key_len, "{}", 2, NULL, &data_len);
-        version = moloch_js0n_get(data, data_len, "_version", &version_len);
+        size_t data_len;
+        uint8_t *data = moloch_http_send_sync(esServer, "POST", key, key_len, "{}", 2, NULL, &data_len);
+
+        uint32_t version_len;
+        uint8_t *version = moloch_js0n_get(data, data_len, "_version", &version_len);
 
         if (!version_len || !version) {
             LOG("ERROR - Couldn't fetch sequence: %d %.*s", (int)data_len, (int)data_len, data);
@@ -1465,13 +1554,9 @@ char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t 
     int                key_len;
     uint32_t           num;
     char               filename[1024];
-    struct tm         *tmp;
     char              *json = moloch_http_get_buffer(MOLOCH_HTTP_BUFFER_SIZE);
     BSB                jbsb;
     const uint64_t     fp = firstPacket;
-    double             maxFreeSpacePercent = 0;
-    uint64_t           maxFreeSpaceBytes   = 0;
-    int                i;
 
 
     BSB_INIT(jbsb, json, MOLOCH_HTTP_BUFFER_SIZE);
@@ -1497,14 +1582,14 @@ char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t 
             numHexRegex = g_regex_new("#NUMHEX#", 0, 0, 0);
         }
         char numstr[100];
-        snprintf(numstr, sizeof(numstr), "%d", num);
+        snprintf(numstr, sizeof(numstr), "%u", num);
 
         char *name1 = g_regex_replace_literal(numRegex, name, -1, 0, numstr, 0, NULL);
         name = g_regex_replace_literal(numHexRegex, name1, -1, 0, (char *)moloch_char_to_hexstr[num%256], 0, NULL);
         g_free(name1);
 
         BSB_EXPORT_sprintf(jbsb, "{\"num\":%d, \"name\":\"%s\", \"first\":%" PRIu64 ", \"node\":\"%s\", \"filesize\":%" PRIu64 ", \"locked\":%d", num, name, fp, config.nodeName, size, locked);
-        key_len = snprintf(key, sizeof(key), "/%sfiles/file/%s-%d?refresh=true", config.prefix, config.nodeName,num);
+        key_len = snprintf(key, sizeof(key), "/%sfiles/file/%s-%u?refresh=true", config.prefix, config.nodeName,num);
     } else {
 
         uint16_t flen = strlen(config.pcapDir[config.pcapDirPos]);
@@ -1514,7 +1599,7 @@ char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t 
 
         strcpy(filename, config.pcapDir[config.pcapDirPos]);
 
-        tmp = localtime(&firstPacket);
+        struct tm *tmp = localtime(&firstPacket);
 
         if (config.pcapDirTemplate) {
             int tlen;
@@ -1531,30 +1616,41 @@ char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t 
 
         if (strcmp(config.pcapDirAlgorithm, "max-free-percent") == 0) {
             // Select the pcapDir with the highest percentage of free space
+
+            double maxFreeSpacePercent = 0;
+            int i;
             for (i = 0; config.pcapDir[i]; i++) {
                 struct statvfs vfs;
                 statvfs(config.pcapDir[i], &vfs);
-                LOG("%s has %0.2f%% free", config.pcapDir[i], 100 * ((double)vfs.f_bavail / (double)vfs.f_blocks));
+                if (config.debug)
+                    LOG("%s has %0.2f%% free", config.pcapDir[i], 100 * ((double)vfs.f_bavail / (double)vfs.f_blocks));
+
                 if ((double)vfs.f_bavail / (double)vfs.f_blocks >= maxFreeSpacePercent)
                 {
                     maxFreeSpacePercent = (double)vfs.f_bavail / (double)vfs.f_blocks;
                     config.pcapDirPos = i;
                 }
             }
-            LOG("%s has the highest percentage of available disk space", config.pcapDir[config.pcapDirPos]);
+            if (config.debug)
+                LOG("%s has the highest percentage of available disk space", config.pcapDir[config.pcapDirPos]);
         } else if (strcmp(config.pcapDirAlgorithm, "max-free-bytes") == 0) {
             // Select the pcapDir with the most bytes free
+
+            uint64_t maxFreeSpaceBytes   = 0;
+            int i;
             for (i = 0; config.pcapDir[i]; i++) {
                 struct statvfs vfs;
                 statvfs(config.pcapDir[i], &vfs);
-                LOG("%s has %" PRIu64 " megabytes available", config.pcapDir[i], (uint64_t)vfs.f_bavail * (uint64_t)vfs.f_frsize / 1024 / 1024);
+                if (config.debug)
+                    LOG("%s has %" PRIu64 " megabytes available", config.pcapDir[i], (uint64_t)vfs.f_bavail * (uint64_t)vfs.f_frsize / (1000 * 1000));
                 if ((uint64_t)vfs.f_bavail * (uint64_t)vfs.f_frsize >= maxFreeSpaceBytes)
                 {
                     maxFreeSpaceBytes = (uint64_t)vfs.f_bavail * (uint64_t)vfs.f_frsize;
                     config.pcapDirPos = i;
                 }
             }
-            LOG("%s has the most available space", config.pcapDir[config.pcapDirPos]);
+            if (config.debug)
+                LOG("%s has the most available space", config.pcapDir[config.pcapDirPos]);
         } else {
             // Select pcapDir by round robin
             config.pcapDirPos++;
@@ -1571,21 +1667,20 @@ char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t 
             moloch_db_mkpath(filename);
         }
 
-        snprintf(filename+flen, sizeof(filename) - flen, "/%s-%02d%02d%02d-%08d.pcap", config.nodeName, tmp->tm_year%100, tmp->tm_mon+1, tmp->tm_mday, num);
+        snprintf(filename+flen, sizeof(filename) - flen, "/%s-%02d%02d%02d-%08u.pcap", config.nodeName, tmp->tm_year%100, tmp->tm_mon+1, tmp->tm_mday, num);
 
         BSB_EXPORT_sprintf(jbsb, "{\"num\":%d, \"name\":\"%s\", \"first\":%" PRIu64 ", \"node\":\"%s\", \"locked\":%d", num, filename, fp, config.nodeName, locked);
-        key_len = snprintf(key, sizeof(key), "/%sfiles/file/%s-%d?refresh=true", config.prefix, config.nodeName,num);
+        key_len = snprintf(key, sizeof(key), "/%sfiles/file/%s-%u?refresh=true", config.prefix, config.nodeName, num);
     }
 
-    char    *field, *value;
     va_list  args;
     va_start(args, id);
     while (1) {
-        field = va_arg(args, char *);
+        char *field = va_arg(args, char *);
         if (!field)
             break;
 
-        value = va_arg(args, char *);
+        char *value = va_arg(args, char *);
         if (!value)
             break;
 
@@ -1599,12 +1694,12 @@ char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t 
 
     BSB_EXPORT_u08(jbsb, '}');
 
-    moloch_http_set(esServer, key, key_len, json, BSB_LENGTH(jbsb), NULL, NULL);
+    moloch_http_send(esServer, "POST", key, key_len, json, BSB_LENGTH(jbsb), NULL, FALSE, NULL, NULL);
 
     MOLOCH_UNLOCK(nextFileNum);
 
     if (config.logFileCreation)
-        LOG("Creating file %d with key >%s< using >%.*s<", num, key, (int)BSB_LENGTH(jbsb), json);
+        LOG("Creating file %u with key >%s< using >%.*s<", num, key, (int)BSB_LENGTH(jbsb), json);
 
     *id = num;
 
@@ -1680,18 +1775,14 @@ LOCAL void moloch_db_check()
 }
 
 /******************************************************************************/
+LOCAL void moloch_db_free_mmdb(MMDB_s *geo)
+{
+    MMDB_close(geo);
+    g_free(geo);
+}
+/******************************************************************************/
 LOCAL void moloch_db_load_geo_country(char *name)
 {
-    static MMDB_s  *countryOld;
-
-    // Reload country
-    if (!name) {
-        MMDB_close(countryOld);
-        g_free(countryOld);
-        countryOld = NULL;
-        return;
-    }
-
     MMDB_s  *country = malloc(sizeof(MMDB_s));
     int status = MMDB_open(name, MMDB_MODE_MMAP, country);
     if (MMDB_SUCCESS != status) {
@@ -1701,22 +1792,13 @@ LOCAL void moloch_db_load_geo_country(char *name)
     if (geoCountry)
         LOG("Loading new version of country file");
 
-    countryOld = geoCountry;
+    if (geoCountry)
+        moloch_free_later(geoCountry, (GDestroyNotify) moloch_db_free_mmdb);
     geoCountry = country;
 }
 /******************************************************************************/
 LOCAL void moloch_db_load_geo_asn(char *name)
 {
-    static MMDB_s  *asnOld;
-
-    // Reload asn
-    if (!name) {
-        MMDB_close(asnOld);
-        g_free(asnOld);
-        asnOld = NULL;
-        return;
-    }
-
     MMDB_s  *asn = malloc(sizeof(MMDB_s));
     int status = MMDB_open(name, MMDB_MODE_MMAP, asn);
     if (MMDB_SUCCESS != status) {
@@ -1726,25 +1808,13 @@ LOCAL void moloch_db_load_geo_asn(char *name)
     if (geoASN)
         LOG("Loading new version of asn file");
 
-    asnOld = geoASN;
+    if (geoASN)
+        moloch_free_later(geoASN, (GDestroyNotify) moloch_db_free_mmdb);
     geoASN = asn;
 }
 /******************************************************************************/
 LOCAL void moloch_db_load_rir(char *name)
 {
-    static char *oldRirs[256];
-
-    if (!name) {
-        int i;
-        for (i = 0; i < 256; i++) {
-            if (oldRirs[i]) {
-                g_free(oldRirs[i]);
-                oldRirs[i] = NULL;
-            }
-        }
-        return;
-    }
-
     FILE *fp;
     char line[1000];
     if (!(fp = fopen(name, "r"))) {
@@ -1774,7 +1844,8 @@ LOCAL void moloch_db_load_rir(char *name)
             } else if (*start && cnt == 3) {
                 gchar **parts = g_strsplit(start, ".", 0);
                 if (parts[1] && *parts[1]) {
-                    oldRirs[num] = rirs[num];
+                    if (rirs[num])
+                        moloch_free_later(rirs[num], g_free);
                     rirs[num] = g_ascii_strup(parts[1], -1);
                 }
                 g_strfreev(parts);
@@ -1789,20 +1860,13 @@ LOCAL void moloch_db_load_rir(char *name)
     fclose(fp);
 }
 /******************************************************************************/
-/* Only called in main thread.  Check if the file changed, if so reload.
- * Don't free old version until called again incase other threads are using.
- */
+LOCAL void moloch_db_free_oui(patricia_tree_t *oui)
+{
+    Destroy_Patricia(oui, g_free);
+}
+/******************************************************************************/
 LOCAL void moloch_db_load_oui(char *name)
 {
-    static patricia_tree_t   *ouiOld;
-
-    // Clean up old elements
-    if (!name) {
-        Destroy_Patricia(ouiOld, g_free);
-        ouiOld = NULL;
-        return;
-    }
-
     if (ouiTree)
         LOG("Loading new version of oui file");
 
@@ -1810,8 +1874,8 @@ LOCAL void moloch_db_load_oui(char *name)
     patricia_tree_t *oui = New_Patricia(48); // 48 - Ethernet Size
     FILE *fp;
     char line[2000];
-    if (!(fp = fopen(config.ouiFile, "r"))) {
-        printf("Couldn't open OUI from %s", config.ouiFile);
+    if (!(fp = fopen(name, "r"))) {
+        printf("Couldn't open OUI from %s", name);
         exit(1);
     }
 
@@ -1875,7 +1939,8 @@ LOCAL void moloch_db_load_oui(char *name)
     fclose(fp);
 
     // Save old tree to free later and flip to new tree
-    ouiOld  = ouiTree;
+    if (ouiTree)
+        moloch_free_later(ouiTree, (GDestroyNotify) moloch_db_free_oui);
     ouiTree = oui;
 }
 /******************************************************************************/
@@ -1948,7 +2013,6 @@ void moloch_db_add_field(char *group, char *kind, char *expression, char *friend
     char                   key[100];
     int                    key_len;
     BSB                    bsb;
-    char                  *field, *value;
 
     if (config.dryRun)
         return;
@@ -1968,11 +2032,11 @@ void moloch_db_add_field(char *group, char *kind, char *expression, char *friend
 
     if (haveap) {
         while (1) {
-            field = va_arg(ap, char *);
+            char *field = va_arg(ap, char *);
             if (!field)
                 break;
 
-            value = va_arg(ap, char *);
+            char *value = va_arg(ap, char *);
             if (!value)
                 break;
 
@@ -2024,7 +2088,7 @@ void moloch_db_update_filesize(uint32_t fileid, uint64_t filesize)
 
     char                  *json = moloch_http_get_buffer(1000);
 
-    key_len = snprintf(key, sizeof(key), "/%sfiles/file/%s-%d/_update", config.prefix, config.nodeName, fileid);
+    key_len = snprintf(key, sizeof(key), "/%sfiles/file/%s-%u/_update", config.prefix, config.nodeName, fileid);
 
     json_len = snprintf(json, 1000, "{\"doc\": {\"filesize\": %" PRIu64 "}}", filesize);
 
@@ -2136,10 +2200,8 @@ void moloch_db_init()
 /******************************************************************************/
 void moloch_db_exit()
 {
-    int i;
-
     if (!config.dryRun) {
-        for (i = 0; timers[i]; i++) {
+        for (int i = 0; timers[i]; i++) {
             g_source_remove(timers[i]);
         }
 

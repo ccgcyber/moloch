@@ -79,7 +79,6 @@ typedef struct {
 
 LOCAL MolochRulesInfo_t current;
 LOCAL MolochRulesInfo_t loading;
-LOCAL MolochRulesInfo_t freeing;
 
 LOCAL pcap_t                *deadPcap;
 extern MolochPcapFileHdr_t   pcapFileHeader;
@@ -110,7 +109,7 @@ YamlNode_t *moloch_rules_add_node(YamlNode_t *parent, char *key, char *value)
     if (parent) {
         if (!key) {
             char str[10];
-            sprintf(str, "%d", parent->values->len);
+            sprintf(str, "%u", parent->values->len);
             node->key = g_strdup(str);
         }
         g_ptr_array_add(parent->values, node);
@@ -527,53 +526,58 @@ void moloch_rules_load_complete()
     memset(&loading, 0, sizeof(loading));
 }
 /******************************************************************************/
-void moloch_rules_load(char **names)
+void moloch_rules_free(MolochRulesInfo_t *freeing)
 {
     int    i, t, r;
 
-    if (!names) {
-        for (i = 0; i < MOLOCH_FIELDS_MAX; i++) {
-            if (freeing.fieldsHash[i]) {
-                g_hash_table_destroy(freeing.fieldsHash[i]);
-            }
-            if (freeing.fieldsTree4[i]) {
-                Destroy_Patricia(freeing.fieldsTree4[i], moloch_rules_free_array);
-            }
-            if (freeing.fieldsTree6[i]) {
-                Destroy_Patricia(freeing.fieldsTree6[i], moloch_rules_free_array);
-            }
+    for (i = 0; i < MOLOCH_FIELDS_MAX; i++) {
+        if (freeing->fieldsHash[i]) {
+            g_hash_table_destroy(freeing->fieldsHash[i]);
         }
-
-        for (t = 0; t < MOLOCH_RULE_TYPE_NUM; t++) {
-            for (r = 0; r < freeing.rulesLen[t]; r++) {
-                MolochRule_t *rule = freeing.rules[t][r];
-
-                if (rule->bpf)
-                    g_free(rule->bpf);
-
-                for (i = 0; i < MOLOCH_FIELDS_MAX; i++) {
-                    if (rule->hash[i]) {
-                        g_hash_table_destroy(rule->hash[i]);
-                    }
-                    if (rule->tree4[i]) {
-                        Destroy_Patricia(rule->tree4[i], moloch_rules_free_array);
-                    }
-                    if (rule->tree6[i]) {
-                        Destroy_Patricia(rule->tree6[i], moloch_rules_free_array);
-                    }
-                }
-
-                moloch_field_ops_free(&rule->ops);
-                MOLOCH_TYPE_FREE(MolochRule_t, rule);
-            }
+        if (freeing->fieldsTree4[i]) {
+            Destroy_Patricia(freeing->fieldsTree4[i], moloch_rules_free_array);
         }
-
-        memset(&freeing, 0, sizeof(loading));
-        return;
+        if (freeing->fieldsTree6[i]) {
+            Destroy_Patricia(freeing->fieldsTree6[i], moloch_rules_free_array);
+        }
     }
 
+    for (t = 0; t < MOLOCH_RULE_TYPE_NUM; t++) {
+        for (r = 0; r < freeing->rulesLen[t]; r++) {
+            MolochRule_t *rule = freeing->rules[t][r];
+
+            if (rule->bpf)
+                g_free(rule->bpf);
+
+            for (i = 0; i < MOLOCH_FIELDS_MAX; i++) {
+                if (rule->hash[i]) {
+                    g_hash_table_destroy(rule->hash[i]);
+                }
+                if (rule->tree4[i]) {
+                    Destroy_Patricia(rule->tree4[i], moloch_rules_free_array);
+                }
+                if (rule->tree6[i]) {
+                    Destroy_Patricia(rule->tree6[i], moloch_rules_free_array);
+                }
+            }
+
+            moloch_field_ops_free(&rule->ops);
+            MOLOCH_TYPE_FREE(MolochRule_t, rule);
+        }
+    }
+
+    MOLOCH_TYPE_FREE(MolochRulesInfo_t, freeing);
+}
+/******************************************************************************/
+void moloch_rules_load(char **names)
+{
+    int    i;
+
     // Make a copy of current items to free later
-    memcpy(&freeing, &current, sizeof(loading));
+
+    MolochRulesInfo_t *freeing = MOLOCH_TYPE_ALLOC0(MolochRulesInfo_t);
+    memcpy(freeing, &current, sizeof(current));
+    moloch_free_later(freeing, (GDestroyNotify) moloch_rules_free);
 
     // Load all the rule files
     for (i = 0; names[i]; i++) {
@@ -869,17 +873,22 @@ void moloch_rules_run_before_save(MolochSession_t *session, int final)
 void moloch_rules_session_create(MolochSession_t *session)
 {
     switch (session->protocol) {
+    case IPPROTO_SCTP:
     case IPPROTO_TCP:
     case IPPROTO_UDP:
-        if (config.fields[MOLOCH_FIELD_EXSPECIAL_SRC_IP]->ruleEnabled)
-            moloch_rules_run_field_set(session, MOLOCH_FIELD_EXSPECIAL_SRC_IP, &session->addr1);
-        if (config.fields[MOLOCH_FIELD_EXSPECIAL_DST_IP]->ruleEnabled)
-            moloch_rules_run_field_set(session, MOLOCH_FIELD_EXSPECIAL_DST_IP, &session->addr2);
-    case IPPROTO_ICMP:
         if (config.fields[MOLOCH_FIELD_EXSPECIAL_SRC_PORT]->ruleEnabled)
             moloch_rules_run_field_set(session, MOLOCH_FIELD_EXSPECIAL_SRC_PORT, (gpointer)(long)session->port1);
         if (config.fields[MOLOCH_FIELD_EXSPECIAL_DST_PORT]->ruleEnabled)
             moloch_rules_run_field_set(session, MOLOCH_FIELD_EXSPECIAL_DST_PORT, (gpointer)(long)session->port2);
+        // NO BREAK because TCP/UDP/SCTP have ip also
+        // fall through
+    case IPPROTO_ESP:
+    case IPPROTO_ICMP:
+    case IPPROTO_ICMPV6:
+        if (config.fields[MOLOCH_FIELD_EXSPECIAL_SRC_IP]->ruleEnabled)
+            moloch_rules_run_field_set(session, MOLOCH_FIELD_EXSPECIAL_SRC_IP, &session->addr1);
+        if (config.fields[MOLOCH_FIELD_EXSPECIAL_DST_IP]->ruleEnabled)
+            moloch_rules_run_field_set(session, MOLOCH_FIELD_EXSPECIAL_DST_IP, &session->addr2);
         break;
     }
 }

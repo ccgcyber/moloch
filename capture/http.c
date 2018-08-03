@@ -55,7 +55,7 @@ typedef struct molochhttprequest_t {
     char                 *dataOut;
     uint32_t              dataOutLen;
     uint16_t              namePos;
-    uint16_t              retries;
+    int16_t               retries;
 } MolochHttpRequest_t;
 
 typedef struct {
@@ -218,7 +218,7 @@ unsigned char *moloch_http_send_sync(void *serverV, const char *method, const ch
 
     memcpy(server->syncRequest.key, key, key_len);
     server->syncRequest.key[key_len] = 0;
-    server->syncRequest.retries = 0;
+    server->syncRequest.retries = server->maxRetries;
 
     while (1) {
         MOLOCH_LOCK(requests);
@@ -229,12 +229,12 @@ unsigned char *moloch_http_send_sync(void *serverV, const char *method, const ch
         int res = curl_easy_perform(easy);
 
         if (res != CURLE_OK) {
-            if (server->syncRequest.retries < server->maxRetries) {
+            if (server->syncRequest.retries >= 0) {
                 struct timeval now;
                 gettimeofday(&now, NULL);
                 server->snames[server->syncRequest.namePos].allowedAtSeconds = now.tv_sec + 30;
                 LOG("Retry %s error '%s'", server->syncRequest.url, curl_easy_strerror(res));
-                server->syncRequest.retries++;
+                server->syncRequest.retries--;
                 continue;
             }
             LOG("libcurl failure %s error '%s'", server->syncRequest.url, curl_easy_strerror(res));
@@ -372,10 +372,10 @@ LOCAL void moloch_http_curlm_check_multi_info(MolochHttpServer_t *server)
             LOG("HTTPDEBUG DECR %p %d %s", request, server->outstanding, request->url);
 #endif
 
-            if (responseCode == 0 && request->retries < server->maxRetries) {
+            if (responseCode == 0 && request->retries >= 0) {
                 curl_multi_remove_handle(server->multi, easy);
 
-                request->retries++;
+                request->retries--;
                 struct timeval now;
                 gettimeofday(&now, NULL);
                 MOLOCH_LOCK(requests);
@@ -386,7 +386,7 @@ LOCAL void moloch_http_curlm_check_multi_info(MolochHttpServer_t *server)
             } else {
 
                 if (server->printErrors && responseCode/100 != 2) {
-                    LOG("Response length=%d :>\n%.*s", request->used, MIN(request->used, 4000), request->dataIn);
+                    LOG("Response length=%u :>\n%.*s", request->used, MIN(request->used, 4000), request->dataIn);
                 }
 
                 if (request->func) {
@@ -420,9 +420,9 @@ LOCAL gboolean moloch_http_watch_callback(int fd, GIOCondition condition, gpoint
 {
     MolochHttpServer_t        *server = serverV;
 
-    int action = (condition & G_IO_IN ? CURL_CSELECT_IN : 0) |
-                 (condition & G_IO_OUT ? CURL_CSELECT_OUT : 0) |
-                 (condition & (G_IO_HUP | G_IO_ERR) ? CURL_CSELECT_ERR : 0);
+    int action = ((condition & G_IO_IN) ? CURL_CSELECT_IN : 0) |
+                 ((condition & G_IO_OUT) ? CURL_CSELECT_OUT : 0) |
+                 ((condition & (G_IO_HUP | G_IO_ERR)) ? CURL_CSELECT_ERR : 0);
 
     while (curl_multi_socket_action(server->multi, fd, action, &server->multiRunning) == CURLM_CALL_MULTI_PERFORM) {
     }
@@ -446,7 +446,7 @@ LOCAL int moloch_http_curlm_socket_callback(CURL *UNUSED(easy), curl_socket_t fd
             g_source_remove(ev);
         }
 
-        ev = moloch_watch_fd(fd, (what&CURL_POLL_IN?MOLOCH_GIO_READ_COND:0)|(what&CURL_POLL_OUT?MOLOCH_GIO_WRITE_COND:0), moloch_http_watch_callback, server);
+        ev = moloch_watch_fd(fd, ((what&CURL_POLL_IN)?MOLOCH_GIO_READ_COND:0)|((what&CURL_POLL_OUT)?MOLOCH_GIO_WRITE_COND:0), moloch_http_watch_callback, server);
         curl_multi_assign(server->multi, fd, (void*)ev);
     }
 
@@ -713,7 +713,7 @@ gboolean moloch_http_send(void *serverV, const char *method, const char *key, in
 
     // Are we overloaded
     if (dropable && !config.quitting && server->outstanding > server->maxOutstandingRequests) {
-        LOG("ERROR - Dropping request %.*s of size %d queue %d is too big", key_len, key, data_len, server->outstanding);
+        LOG("ERROR - Dropping request %.*s of size %u queue %u is too big", key_len, key, data_len, server->outstanding);
         MOLOCH_THREAD_INCR(server->dropped);
 
         if (data) {
@@ -730,6 +730,11 @@ gboolean moloch_http_send(void *serverV, const char *method, const char *key, in
             request->headerList = curl_slist_append(request->headerList, headers[i]);
         }
     }
+
+    if (dropable)
+        request->retries = 0;
+    else
+        request->retries = server->maxRetries;
 
     if (server->defaultHeaders) {
         int i;

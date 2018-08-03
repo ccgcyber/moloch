@@ -221,19 +221,23 @@ if (Config.get("passwordSecret")) {
     }
 
     // Header auth
-    if (internals.userNameHeader !== undefined && req.headers[internals.userNameHeader] !== undefined) {
-      var userName = req.headers[internals.userNameHeader];
-      Db.getUserCache(userName, function(err, suser) {
-        if (err) {return res.send("ERROR - getUser - user: " + userName + " err:" + err);}
-        if (!suser || !suser.found) {return res.send(userName + " doesn't exist");}
-        if (!suser._source.enabled) {return res.send(userName + " not enabled");}
-        if (!suser._source.headerAuthEnabled) {return res.send(userName + " header auth not enabled");}
+    if (internals.userNameHeader !== undefined) {
+      if (req.headers[internals.userNameHeader] !== undefined) {
+        var userName = req.headers[internals.userNameHeader];
+        Db.getUserCache(userName, function(err, suser) {
+          if (err) {return res.send("ERROR - getUser - user: " + userName + " err:" + err);}
+          if (!suser || !suser.found) {return res.send(userName + " doesn't exist");}
+          if (!suser._source.enabled) {return res.send(userName + " not enabled");}
+          if (!suser._source.headerAuthEnabled) {return res.send(userName + " header auth not enabled");}
 
-        userCleanup(suser._source);
-        req.user = suser._source;
-        return next();
-      });
-      return;
+          userCleanup(suser._source);
+          req.user = suser._source;
+          return next();
+        });
+        return;
+      } else if (Config.debug) {
+        console.log("DEBUG - Couldn't find userNameHeader of", internals.userNameHeader, "in", req.headers, "for", req.url);
+      }
     }
 
     // Browser auth
@@ -324,6 +328,7 @@ function loadFields() {
     Config.loadFields(data);
     app.locals.fieldsMap = JSON.stringify(Config.getFieldsMap());
     app.locals.fieldsArr = Config.getFields().sort(function(a,b) {return (a.exp > b.exp?1:-1);});
+    createSessionDetail();
   });
 }
 
@@ -407,7 +412,45 @@ function dot2value(obj, str) {
       return str.split(".").reduce(function(o, x) { return o[x]; }, obj);
 }
 
-function createSessionDetailNew() {
+function parseCustomView(key, input) {
+  var fieldsMap = Config.getFieldsMap();
+
+  var match = input.match(/require:([^;]+)/);
+  if (!match) {
+    console.log(`custom-view ${key} missing require section`);
+    process.exit(1);
+  }
+  var require = match[1];
+
+  match = input.match(/title:([^;]+)/);
+  var title = match[1] || key;
+
+  match = input.match(/fields:([^;]+)/);
+  if (!match) {
+    console.log(`custom-view ${key} missing fields section`);
+    process.exit(1);
+  }
+  var fields = match[1];
+
+  var output = `  if (session.${require})\n    div.sessionDetailMeta.bold ${title}\n    dl.sessionDetailMeta\n`;
+
+  for (let field of fields.split(",")) {
+    let info = fieldsMap[field];
+    if (!info) {
+      continue;
+    }
+    var parts = splitRemain(info.dbField, '.', 1);
+    if (parts.length === 1) {
+      output += `      +arrayList(session, '${parts[0]}', '${info.friendlyName}', '${field}')\n`;
+    } else {
+      output += `      +arrayList(session.${parts[0]}, '${parts[1]}', '${info.friendlyName}', '${field}')\n`;
+    }
+  }
+
+  return output;
+}
+
+function createSessionDetail() {
   var found = {};
   var dirs = [];
 
@@ -432,6 +475,13 @@ function createSessionDetailNew() {
     } catch (e) {}
   });
 
+  var customViews = Config.keys("custom-views") || [];
+
+  for (let key of customViews) {
+    let view = Config.sectionGet("custom-views", key);
+    found[key] = parseCustomView(key, view);
+  }
+
   var makers = internals.pluginEmitter.listeners("makeSessionDetail");
   async.each(makers, function(cb, nextCb) {
     cb(function (err, items) {
@@ -442,7 +492,7 @@ function createSessionDetailNew() {
     });
   }, function () {
     internals.sessionDetailNew = "include views/mixins.pug\n" +
-                                 "div.session-detail(sessionid=session.id)\n" +
+                                 "div.session-detail(sessionid=session.id,hidePackets=hidePackets)\n" +
                                  "  include views/sessionDetail\n";
     Object.keys(found).sort().forEach(function(k) {
       internals.sessionDetailNew += found[k];
@@ -453,10 +503,6 @@ function createSessionDetailNew() {
                                                            .replace(/a.moloch-right-click.*molochexpr='([^']+)'.*#{(.*)}/g, "+clickableValue('$1', $2)")
                                                            ;
   });
-}
-
-function createSessionDetail() {
-  createSessionDetailNew();
 }
 
 function createRightClicks() {
@@ -607,7 +653,7 @@ function proxyRequest (req, res, errCb) {
         return errCb(err);
       }
       console.log("ERROR - getViewUrl - node:", req.params.nodeName, "err:", err);
-      res.send("Can't find view url for '" + req.params.nodeName + "' check viewer logs on " + Config.hostName());
+      return res.send(`Can't find view url for '${req.params.nodeName}' check viewer logs on '${Config.hostName()}'`);
     }
     var info = url.parse(viewUrl);
     info.path = req.url;
@@ -632,7 +678,7 @@ function proxyRequest (req, res, errCb) {
         return errCb(e);
       }
       console.log("ERROR - Couldn't proxy request=", info, "\nerror=", e);
-      res.send("Error talking to node '" + req.params.nodeName + "' using host '" + info.host + "' check viewer logs on " + Config.hostName());
+      res.send(`Error talking to node '${req.params.nodeName}' using host '${info.host}' check viewer logs on '${Config.hostName()}'`);
     });
     preq.end();
   });
@@ -823,22 +869,6 @@ app.get('/molochclusters', function(req, res) {
   return res.send(clustersClone);
 });
 
-// angular app bundles
-app.get('/app.bundle.js', function(req, res) {
-  res.sendFile(__dirname + '/bundle/app.bundle.js');
-});
-app.get('/vendor.bundle.js', function(req, res) {
-  res.sendFile(__dirname + '/bundle/vendor.bundle.js');
-});
-
-// source maps
-app.get('/app.bundle.js.map', function(req, res) {
-  res.sendFile(__dirname + '/bundle/app.bundle.js.map');
-});
-app.get('/vendor.bundle.js.map', function(req, res) {
-  res.sendFile(__dirname + '/bundle/vendor.bundle.js.map');
-});
-
 // custom user css
 app.get('/user.css', function(req, res) {
   fs.readFile("./views/user.styl", 'utf8', function(err, str) {
@@ -906,7 +936,7 @@ var settingDefaults = {
   timezone      : 'local',
   detailFormat  : 'last',
   showTimestamps: 'last',
-  sortColumn    : 'start',
+  sortColumn    : 'firstPacket',
   sortDirection : 'asc',
   spiGraph      : 'node',
   connSrcField  : 'srcIp',
@@ -1648,7 +1678,7 @@ function expireCheckAll () {
 //////////////////////////////////////////////////////////////////////////////////
 //// Sessions Query
 //////////////////////////////////////////////////////////////////////////////////
-function addSortToQuery(query, info, d, missing) {
+function addSortToQuery(query, info, d) {
 
   function addSortDefault() {
     if (d) {
@@ -1657,9 +1687,7 @@ function addSortToQuery(query, info, d, missing) {
       }
       var obj = {};
       obj[d] = {order: "asc"};
-      if (missing && missing[d] !== undefined) {
-        obj[d].missing = missing[d];
-      }
+      obj[d].missing = '_last';
       query.sort.push(obj);
     }
   }
@@ -1693,9 +1721,16 @@ function addSortToQuery(query, info, d, missing) {
         obj[field] = {order: parts[1]};
       }
 
-      if (missing && missing[field] !== undefined) {
-        obj[field].missing = missing[field];
+      obj[field].unmapped_type = "string";
+      var fieldInfo  = Config.getDBFieldsMap()[field];
+      if (fieldInfo) {
+        if (fieldInfo.type === "ip") {
+          obj[field].unmapped_type = "ip";
+        } else if (fieldInfo.type === "integer") {
+          obj[field].unmapped_type = "long";
+        }
       }
+      obj[field].missing = (parts[1] === 'asc'?'_last':'_first');
       query.sort.push(obj);
     });
     return;
@@ -1719,9 +1754,6 @@ function addSortToQuery(query, info, d, missing) {
     var obj = {};
     var field = info["mDataProp_" + info["iSortCol_" + i]];
     obj[field] = {order: info["sSortDir_" + i]};
-    if (missing && missing[field] !== undefined) {
-      obj[field].missing = missing[field];
-    }
     query.sort.push(obj);
 
     if (field === "firstPacket") {
@@ -1986,7 +2018,7 @@ function sessionsListAddSegments(req, indices, query, list, cb) {
   var writes = 0;
   async.eachLimit(list, 10, function(item, nextCb) {
     var fields = item._source || item.fields;
-    if (!fields.ro || processedRo[fields.ro]) {
+    if (!fields.rootId || processedRo[fields.rootId]) {
       if (writes++ > 100) {
         writes = 0;
         setImmediate(nextCb);
@@ -1995,7 +2027,7 @@ function sessionsListAddSegments(req, indices, query, list, cb) {
       }
       return;
     }
-    processedRo[fields.ro] = true;
+    processedRo[fields.rootId] = true;
 
     query.query.bool.filter.push({term: {rootId: fields.rootId}});
     Db.searchPrimary(indices, 'session', query, function(err, result) {
@@ -2702,7 +2734,7 @@ app.get('/stats.json', function(req, res) {
 
       for (const key of ["totalPackets", "totalK", "totalSessions",
        "monitoring", "tcpSessions", "udpSessions", "icmpSessions", "sctpSessions", "espSessions",
-       "freeSpaceM", "freeSpaceP", "memory", "memoryP", "frags", "cpu", "esHealthMS",
+       "usedSpaceM", "freeSpaceM", "freeSpaceP", "memory", "memoryP", "frags", "cpu", "esHealthMS",
        "diskQueue", "esQueue", "packetQueue", "closeQueue", "needSave", "fragsQueue",
        "deltaFragsDropped", "deltaOverloadDropped", "deltaESDropped"
       ]) {
@@ -2792,7 +2824,7 @@ app.get('/dstats.json', function(req, res) {
     var num = (req.query.stop - req.query.start)/req.query.step;
 
     var mult = 1;
-    if (req.query.name === "freeSpaceM") {
+    if (req.query.name === "freeSpaceM" || req.query.name === "usedSpaceM") {
       mult = 1000000;
     }
 
@@ -3225,7 +3257,7 @@ app.get('/spiview.json', logAction('spiview'), function(req, res) {
     });
     query.size = 0;
 
-    console.log("spiview.json query", JSON.stringify(query), "indices", indices);
+    // console.log("spiview.json query", JSON.stringify(query), "indices", indices);
 
     var graph;
     var map;
@@ -4167,13 +4199,15 @@ app.get('/:nodeName/session/:id/detail', logAction(), function(req, res) {
 
     sortFields(session);
 
-    fixFields(session, function() {
+    let hidePackets = (session.fileId === undefined || session.fileId.length === 0)?"true":"false";
+    fixFields(session, () => {
       pug.render(internals.sessionDetailNew, {
         filename    : "sessionDetail",
         user        : req.user,
         session     : session,
         query       : req.query,
         basedir     : "/",
+        hidePackets : hidePackets,
         reqFields   : Config.headers("headers-http-request"),
         resFields   : Config.headers("headers-http-response"),
         emailFields : Config.headers("headers-email")
@@ -4181,6 +4215,9 @@ app.get('/:nodeName/session/:id/detail', logAction(), function(req, res) {
         if (err) {
           console.trace("ERROR - fixFields - ", err);
           return req.next(err);
+        }
+        if (Config.debug > 1) {
+          console.log("Detail Rendering", data.replace(/>/g, ">\n"));
         }
         res.send(data);
       });
@@ -4193,19 +4230,13 @@ app.get('/:nodeName/session/:id/detail', logAction(), function(req, res) {
  */
 app.get('/:nodeName/session/:id/packets', logAction(), function(req, res) {
   isLocalView(req.params.nodeName, function () {
-     noCache(req, res);
-     req.packetsOnly = true;
-     localSessionDetail(req, res);
-   },
-   function () {
-     return proxyRequest(req, res, function (err) {
-       Db.get(Db.id2Index(req.params.id), 'session', req.params.id, function(err, session) {
-         var fields = session._source || session.fields;
-         fields._err = "Couldn't connect to remote viewer to fetch packets";
-         localSessionDetailReturnFull(req, res, fields, []);
-       });
-     });
-   });
+    noCache(req, res);
+    req.packetsOnly = true;
+    localSessionDetail(req, res);
+  },
+  function () {
+    return proxyRequest(req, res);
+  });
 });
 
 function reqGetRawBody(req, cb) {
@@ -5668,30 +5699,34 @@ app.post('/upload', multer({dest:'/tmp'}).single('file'), function (req, res) {
   var exec = require('child_process').exec,
      child;
 
-  var tags = "";
-  if (req.body.tag) {
-    var t = req.body.tag.replace(/[^-a-zA-Z0-9_:,]/g, "").split(",");
+  var tags = '';
+  if (req.body.tags) {
+    var t = req.body.tags.replace(/[^-a-zA-Z0-9_:,]/g, '').split(',');
     t.forEach(function(tag) {
       if (tag.length > 0) {
-        tags += " --tag " + tag;
+        tags += ' --tag ' + tag;
       }
     });
   }
 
-  var cmd = Config.get("uploadCommand")
-     .replace("{TAGS}", tags)
-     .replace("{NODE}", Config.nodeName())
-     .replace("{TMPFILE}", req.file.path)
-     .replace("{CONFIG}", Config.getConfigFile());
-  console.log("upload command: ", cmd);
+  var cmd = Config.get('uploadCommand')
+     .replace('{TAGS}', tags)
+     .replace('{NODE}', Config.nodeName())
+     .replace('{TMPFILE}', req.file.path)
+     .replace('{CONFIG}', Config.getConfigFile());
+
+  console.log('upload command: ', cmd);
   child = exec(cmd, function (error, stdout, stderr) {
-    res.write("<b>" + cmd + "</b><br>");
-    res.write("<pre>");
-    res.write(stdout);
-    res.end("</pre>");
     if (error !== null) {
-      console.log("exec error: " + error);
+      console.log('<b>exec error: ' + error);
+      res.status(500);
+      res.write('<b>Upload command failed:</b><br>');
     }
+    res.write(cmd);
+    res.write('<br>');
+    res.write('<pre>');
+    res.write(stdout);
+    res.end('</pre>');
     fs.unlink(req.file.path);
   });
 });
@@ -5752,7 +5787,15 @@ app.use('/static', express.static(`${__dirname}/vueapp/dist/static`));
 // expose vue bundle (dev)
 app.use(['/app.js', '/vueapp/app.js'], express.static(`${__dirname}/vueapp/dist/app.js`));
 
-app.get(['/stats', '/sessions', '/help', '/files', '/users', '/history', '/spiview', '/spigraph', '/connections'], (req, res) => {
+app.use((req, res) => {
+  if (req.path === '/users' && !req.user.createEnabled) {
+    return res.status(403).send('Permission denied');
+  }
+
+  if (req.path === '/settings' && Config.get('demoMode', false)) {
+    return res.status(403).send('Permission denied');
+  }
+
   let cookieOptions = { path: app.locals.basePath };
   if (Config.isHTTPS()) { cookieOptions.secure = true; }
 
@@ -5801,42 +5844,6 @@ app.get(['/stats', '/sessions', '/help', '/files', '/users', '/history', '/spivi
     }
 
     res.send(html);
-  });
-});
-
-
-//////////////////////////////////////////////////////////////////////////////////
-// Angular app
-//////////////////////////////////////////////////////////////////////////////////
-app.use(express.static(__dirname + '/views'));
-app.use(express.static(__dirname + '/bundle'));
-app.use(function (req, res) {
-  if (req.path === '/users' && !req.user.createEnabled) {
-    return res.status(403).send('Permission denied');
-  }
-
-  if (req.path === '/settings' && Config.get('demoMode', false)) {
-    return res.status(403).send('Permission denied');
-  }
-
-  var cookieOptions = { path: app.locals.basePath };
-  if (Config.isHTTPS()) { cookieOptions.secure = true; }
-
-  // send cookie for basic, non admin functions
-  res.cookie(
-     'MOLOCH-COOKIE',
-     Config.obj2auth({date: Date.now(), pid: process.pid, userId: req.user.userId}),
-     cookieOptions
-  );
-
-  var theme = req.user.settings.theme || 'default-theme';
-  if (theme.startsWith('custom1')) { theme  = 'custom-theme'; }
-
-  res.render('app.pug', {
-    theme   : theme,
-    demoMode: Config.get('demoMode', false),
-    devMode : Config.get('devMode', false),
-    version : app.locals.molochversion
   });
 });
 
@@ -6084,9 +6091,6 @@ function main () {
   setInterval(loadFields, 2*60*1000);
 
   loadPlugins();
-
-  createSessionDetail();
-  setInterval(createSessionDetail, 5*60*1000);
 
   createRightClicks();
   setInterval(createRightClicks, 5*60*1000);

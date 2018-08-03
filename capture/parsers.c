@@ -348,12 +348,11 @@ const char *moloch_parsers_magic(MolochSession_t *session, int field, const char
 /******************************************************************************/
 void moloch_parsers_initial_tag(MolochSession_t *session)
 {
-    int i;
-
     if (config.nodeClass)
         moloch_session_add_tag(session, classTag);
 
     if (config.extraTags) {
+        int i;
         for (i = 0; config.extraTags[i]; i++) {
             moloch_session_add_tag(session, config.extraTags[i]);
         }
@@ -647,7 +646,6 @@ void moloch_parsers_init()
                 g_free (path);
                 continue;
             }
-            g_free (path);
 
             MolochPluginInitFunc parser_init;
 
@@ -661,6 +659,7 @@ void moloch_parsers_init()
                 LOG("Loaded %s", path);
             }
 
+            g_free (path);
 
             parser_init();
 
@@ -689,6 +688,17 @@ void moloch_parsers_init()
         "Asset name",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
         NULL);
+
+    gsize keys_len;
+    gchar **keys = moloch_config_section_keys(NULL, "custom-fields", &keys_len);
+
+    int i;
+    for (i = 0; i < (int)keys_len; i++) {
+        char *value = moloch_config_section_str(NULL, "custom-fields", keys[i], NULL);
+        moloch_field_define_text_full(keys[i], value, NULL);
+        g_free(value);
+    }
+    g_strfreev(keys);
 
 
     if (config.extraOps) {
@@ -823,6 +833,7 @@ void moloch_parsers_classifier_add(MolochClassifyHead_t *ch, MolochClassify_t *c
     for (i = 0; i < ch->cnt; i++) {
         if (ch->arr[i]->offset == c->offset &&
             ch->arr[i]->func == c->func &&
+            c->matchlen == ch->arr[i]->matchlen &&
             strcmp(ch->arr[i]->name, c->name) == 0 &&
             memcmp(ch->arr[i]->match, c->match, c->matchlen) == 0) {
 
@@ -849,11 +860,11 @@ void moloch_parsers_classifier_add(MolochClassifyHead_t *ch, MolochClassify_t *c
 void moloch_parsers_classifier_register_port_internal(const char *name, void *uw, uint16_t port, uint32_t type, MolochClassifyFunc func, size_t sessionsize, int apiversion)
 {
     if (sizeof(MolochSession_t) != sessionsize) {
-        LOGEXIT("Parser '%s' built with different version of moloch.h\n %lu != %lu", name, sizeof(MolochSession_t),  sessionsize);
+        LOGEXIT("Parser '%s' built with different version of moloch.h\n %u != %u", name, (unsigned int)sizeof(MolochSession_t),  (unsigned int)sessionsize);
     }
 
     if (MOLOCH_API_VERSION != apiversion) {
-        LOGEXIT("Parser '%s' built with different version of moloch.h\n %u %d", name, MOLOCH_API_VERSION, apiversion);
+        LOGEXIT("Parser '%s' built with different version of moloch.h\n %d %d", name, MOLOCH_API_VERSION, apiversion);
     }
 
     MolochClassify_t *c = MOLOCH_TYPE_ALLOC(MolochClassify_t);
@@ -878,11 +889,11 @@ void moloch_parsers_classifier_register_port_internal(const char *name, void *uw
 void moloch_parsers_classifier_register_tcp_internal(const char *name, void *uw, int offset, const unsigned char *match, int matchlen, MolochClassifyFunc func, size_t sessionsize, int apiversion)
 {
     if (sizeof(MolochSession_t) != sessionsize) {
-        LOGEXIT("Parser '%s' built with different version of moloch.h\n %lu != %lu", name, sizeof(MolochSession_t),  sessionsize);
+        LOGEXIT("Parser '%s' built with different version of moloch.h\n %u != %u", name, (unsigned int)sizeof(MolochSession_t),  (unsigned int)sessionsize);
     }
 
     if (MOLOCH_API_VERSION != apiversion) {
-        LOGEXIT("Parser '%s' built with different version of moloch.h\n %u %d", name, MOLOCH_API_VERSION, apiversion);
+        LOGEXIT("Parser '%s' built with different version of moloch.h\n %d %d", name, MOLOCH_API_VERSION, apiversion);
     }
 
     MolochClassify_t *c = MOLOCH_TYPE_ALLOC(MolochClassify_t);

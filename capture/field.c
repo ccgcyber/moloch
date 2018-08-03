@@ -93,10 +93,9 @@ void moloch_field_define_json(unsigned char *expression, int expression_len, uns
     return;
 }
 /******************************************************************************/
-int moloch_field_define_text(char *text, int *shortcut)
+int moloch_field_define_text_full(char *field, char *text, int *shortcut)
 {
     int count = 0;
-    char *field = 0;
     char *kind = 0;
     char *help = 0;
     char *db = 0;
@@ -198,6 +197,11 @@ int moloch_field_define_text(char *text, int *shortcut)
     int pos =  moloch_field_define(group, kind, field, friendly, db, help, type, flags, "category", category, NULL);
     g_strfreev(elements);
     return pos;
+}
+/******************************************************************************/
+int moloch_field_define_text(char *text, int *shortcut)
+{
+    return moloch_field_define_text_full(NULL, text, shortcut);
 }
 /******************************************************************************/
 /* Changes ... to va_list */
@@ -464,6 +468,7 @@ const char *moloch_field_string_add(int pos, MolochSession_t *session, const cha
             hstring->str = (char*)string;
             hstring->len = len;
             hstring->utf8 = 0;
+            hstring->uw = 0;
             HASH_ADD(s_, *hash, hstring->str, hstring);
             goto added;
         case MOLOCH_FIELD_TYPE_STR_GHASH:
@@ -513,6 +518,7 @@ const char *moloch_field_string_add(int pos, MolochSession_t *session, const cha
             hstring->len = len;
             hstring->utf8 = 0;
         }
+        hstring->uw = 0;
         HASH_ADD(s_, *(field->shash), hstring->str, hstring);
         goto added;
     case MOLOCH_FIELD_TYPE_STR_GHASH:
@@ -1030,7 +1036,6 @@ void moloch_field_macoui_add(MolochSession_t *session, int macField, int ouiFiel
 void moloch_field_free(MolochSession_t *session)
 {
     int                       pos;
-    MolochField_t            *field;
     MolochString_t           *hstring;
     MolochStringHashStd_t    *shash;
     MolochInt_t              *hint;
@@ -1039,6 +1044,8 @@ void moloch_field_free(MolochSession_t *session)
     MolochCertsInfoHashStd_t *cihash;
 
     for (pos = 0; pos < session->maxFields; pos++) {
+        MolochField_t        *field;
+
         if (!(field = session->fields[pos]))
             continue;
 

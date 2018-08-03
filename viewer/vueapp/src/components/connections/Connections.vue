@@ -262,24 +262,6 @@ export default {
       this.loadData();
     }
   },
-  created: function () {
-    this.loadUser();
-    FieldService.get(true)
-      .then((result) => {
-        this.fields = result;
-        for (let field of this.fields) {
-          if (field.dbField === this.query.srcField) {
-            this.srcFieldTypeahead = field.friendlyName;
-          }
-          if (field.dbField === this.query.dstField) {
-            this.dstFieldTypeahead = field.friendlyName;
-          }
-        }
-      }).catch((error) => {
-        this.loading = false;
-        this.error = error;
-      });
-  },
   mounted: function () {
     let styles = window.getComputedStyle(document.body);
     this.primaryColor = styles.getPropertyValue('--color-primary').trim();
@@ -288,7 +270,9 @@ export default {
     this.colors = ['', this.primaryColor, this.tertiaryColor, this.secondaryColor];
 
     this.startD3();
-    this.loadData();
+    // IMPORTANT: kicks off the initial search query
+    this.loadUser();
+
     $('.footer').hide();
   },
   beforeDestroy: function () {
@@ -354,6 +338,8 @@ export default {
       UserService.getCurrent()
         .then((response) => {
           this.user = response;
+          // IMPORTANT: kicks off the initial search query
+          this.loadData();
         }, (error) => {
           this.user = { settings: { timezone: 'local' } };
         });
@@ -365,13 +351,46 @@ export default {
       this.svg.selectAll('.link').remove();
       this.svg.selectAll('.node').remove();
 
+      if (!this.$route.query.srcField) {
+        this.query.srcField = this.user.settings.connSrcField;
+      }
+      if (!this.$route.query.dstField) {
+        this.query.dstField = this.user.settings.connDstField;
+      }
+
       this.$http.get('connections.json', { params: this.query })
         .then((response) => {
           this.error = '';
           this.loading = false;
+          this.getFields();
           this.processData(response.data);
           this.recordsFiltered = response.data.recordsFiltered;
         }, (error) => {
+          this.loading = false;
+          this.error = error;
+        });
+    },
+    getFields: function () {
+      FieldService.get(true)
+        .then((result) => {
+          this.fields = result;
+          this.fields.push({
+            dbField: 'ip.dst:port',
+            exp: 'ip.dst:port',
+            help: 'Destination IP:Destination Port',
+            group: 'general',
+            friendlyName: 'Dst IP:Dst Port'
+          });
+
+          for (let field of this.fields) {
+            if (field.dbField === this.query.srcField) {
+              this.srcFieldTypeahead = field.friendlyName;
+            }
+            if (field.dbField === this.query.dstField) {
+              this.dstFieldTypeahead = field.friendlyName;
+            }
+          }
+        }).catch((error) => {
           this.loading = false;
           this.error = error;
         });
@@ -877,9 +896,9 @@ export default {
      -moz-border-radius: var(--px-sm);
           border-radius: var(--px-sm);
 
-  -webkit-box-shadow: var(--px-md) var(--px-md) var(--px-xlg) var(--px-none) var(--color-gray);
-     -moz-box-shadow: var(--px-md) var(--px-md) var(--px-xlg) var(--px-none) var(--color-gray);
-          box-shadow: var(--px-md) var(--px-md) var(--px-xlg) var(--px-none) var(--color-gray);
+  -webkit-box-shadow: 6px 6px 16px -4px black;
+     -moz-box-shadow: 6px 6px 16px -4px black;
+          box-shadow: 6px 6px 16px -4px black;
 }
 .connections-page .connections-popup .dl-horizontal {
   margin-bottom: var(--px-md) !important;
@@ -890,6 +909,15 @@ export default {
 }
 .connections-page .connections-popup .dl-horizontal dd {
   margin-left: 85px !important;
+}
+
+/* apply theme colors */
+.connections-page rect {
+  stroke: var(--color-background, #FFF);
+  fill: var(--color-background, #FFF);
+}
+.connections-page svg {
+  fill: var(--color-foreground, #333);
 }
 </style>
 
@@ -908,9 +936,9 @@ export default {
   right: 0;
   background-color: var(--color-quaternary-lightest);
 
-  -webkit-box-shadow: var(--px-md) var(--px-md) var(--px-xlg) var(--px-none) var(--color-gray);
-     -moz-box-shadow: var(--px-md) var(--px-md) var(--px-xlg) var(--px-none) var(--color-gray);
-          box-shadow: var(--px-md) var(--px-md) var(--px-xlg) var(--px-none) var(--color-gray);
+  -webkit-box-shadow: 0 0 16px -2px black;
+     -moz-box-shadow: 0 0 16px -2px black;
+          box-shadow: 0 0 16px -2px black;
 }
 .connections-page form.connections-form .form-inline {
   margin-top: -3px;
@@ -919,15 +947,6 @@ export default {
 .connections-page form.connections-form .input-group-prepend.legend > .input-group-text {
   font-weight: 700;
   color: white !important;
-}
-
-/* apply theme colors */
-.connections-page rect {
-  stroke: var(--color-background, #FFF);
-  fill: var(--color-background, #FFF);
-}
-.connections-page svg {
-  fill: var(--color-foreground, #333);
 }
 
 .connections-page .connections-content {

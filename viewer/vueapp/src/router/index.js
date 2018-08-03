@@ -10,6 +10,9 @@ import Sessions from '@/components/sessions/Sessions';
 import Spiview from '@/components/spiview/Spiview';
 import Spigraph from '@/components/spigraph/Spigraph';
 import Connections from '@/components/connections/Connections';
+import Settings from '@/components/settings/Settings';
+import Upload from '@/components/upload/Upload';
+import Moloch404 from '@/components/utils/404';
 
 Vue.use(Router);
 
@@ -76,17 +79,26 @@ const router = new Router({
       path: '/connections',
       name: 'Connections',
       component: Connections
+    },
+    {
+      path: '/settings',
+      name: 'Settings',
+      component: Settings
+    },
+    {
+      path: '/upload',
+      name: 'Upload',
+      component: Upload
+    },
+    {
+      path: '*',
+      name: 'Not Found',
+      component: Moloch404
     }
   ]
 });
 
 router.beforeEach((to, from, next) => {
-  // TODO update/remove as angular pages go away
-  // loads the angular app pages
-  if (to.path.includes('/settings') || to.path.includes('/upload')) {
-    location.reload();
-  }
-
   // always use the expression in the url query parameter if the navigation
   // was initiated from anything not in the moloch UI (browser forward/back btns)
   if (!to.params.nav && store.state.expression !== to.query.expression) {

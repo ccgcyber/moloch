@@ -1,21 +1,46 @@
-NOTICE: Upgrading from version prior to 1.0.0 read https://github.com/aol/moloch/wiki/FAQ#How_do_I_upgrade_to_Moloch_1
+NOTICE: Please see https://github.com/aol/moloch/wiki/FAQ#upgrading-moloch for upgrading info
 
 ES Versions:
-  * Moloch >= 1.0.0  supports ES >= 5.5.0, 6.x (not prod tested, only for new installs), not 7.x
-  * Moloch >= 0.50.0 supports ES >= 5.5.0, not 6.x
-  * Moloch >= 0.18.1 supports ES 2.4.x, >= 5.3.1 not 6.x
+  * Moloch >= 1.5.0  supports ES >= 5.5.0, 6.x, not 7.x or later
+  * Moloch >= 1.0.0  supports ES >= 5.5.0, 6.x (not prod tested, only for new installs), not 7.x or later
+  * Moloch >= 0.50.0 supports ES >= 5.5.0, not 6.x or later
+  * Moloch >= 0.18.1 supports ES 2.4.x, >= 5.3.1 not 6.x or later
 
 Node Versions:
   * Moloch >= 1.0.0 requires NodeJS 8.x
   * Moloch >= 0.20.0 requires NodeJS 6.x
   * Moloch >= 0.18.1 requires NodeJS 4.x
 
-NOTICE: Upgrading from versions prior to 0.18.0 or prior to ES 5 require an
-        outage for db.pl upgrade see: https://github.com/aol/moloch/wiki/FAQ#How_do_I_upgrade_to_ES_5x
-
 NOTICE: Restart wiseService before capture when upgrading
 
-1.2.0 2018/06/xx
+1.5.3 2018/08/xx
+  - viewer - fix some spiview display issues
+  - parliament - uses Vue now
+  - capture - if single tcp data packet left at save time, try and classify it (issue #880)
+  - all - new hourly[2348]/hourly12 rotateIndex
+  - capture - for live captures prevent out of order stats records
+  - viewer - fix upload command tags (issue #888)
+
+1.5.2 2018/07/26
+  - capture - new custom-fields section
+  - viewer - new custom-views section
+  - capture - fix for inplace pcap ingestion not displaying pcap in viewer, introduced in 1.5.0
+  - capture - support QUIC version >= 40
+  - release - Build Ubuntu 18.04 version
+  - wise - fixed sources that didn't register at startup
+
+1.5.1 2018/07/23
+  - capture - fix ipv6 sctp hang
+  - viewer - added back many tooltips
+  - viewer - fix crash when node doesn't exist
+  - viewer - fixed some fields not showing up
+  - snf - new config snfFlags
+  - viewer - fix sorting by a column that isn't in all indices
+  - capture - memory leak fix
+  - suricata - keep alerts for suricataExpireMinutes setting
+
+1.5.0 2018/07/16
+  - BREAKING: wiseCache redis name changes
   - viewer - sessions, spiview, spigraph, connections, help, users, history pages implemented
              in Vue instead of AngularJS
   - viewer - split stats capture graphs/stats into 2 tabs
@@ -42,6 +67,14 @@ NOTICE: Restart wiseService before capture when upgrading
   - capture - yaraEveryPacket (default true) when false only does first packets
   - capture - yaraFastMode (default true) when false turns off fast mode
   - viewer - switch to javascript png implementation
+  - all - added some GRE erspan support
+  - viewer - support gt/lt queries for ip
+  - capture/wise - can now configure what fields map to what wise queries and
+                   send almost any field (issue #840)
+  - all - added used space stat
+  - all - changed free space stat to use 1000 based units
+  - viewer - removed AngularJS, all pages implemented in Vue
+  - capture - hsrp classify
 
 1.1.1 2018/05/31
   - all - fix http.statuscode

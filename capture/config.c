@@ -28,6 +28,74 @@ extern MolochConfig_t        config;
 LOCAL GKeyFile             *molochKeyFile;
 
 /******************************************************************************/
+gchar **moloch_config_section_raw_str_list(GKeyFile *keyfile, char *section, char *key, char *d)
+{
+    gchar **result;
+
+    if (!keyfile)
+        keyfile = molochKeyFile;
+
+    if (g_key_file_has_key(keyfile, section, key, NULL)) {
+        result = g_key_file_get_string_list(keyfile, section, key, NULL, NULL);
+    } else if (d) {
+        result = g_strsplit(d, ";", 0);
+    } else {
+        result = NULL;
+    }
+
+    return result;
+}
+
+/******************************************************************************/
+gchar **moloch_config_section_str_list(GKeyFile *keyfile, char *section, char *key, char *d)
+{
+    gchar **strs = moloch_config_section_raw_str_list(keyfile, section, key, d);
+    if (!strs) {
+        if (config.debug) {
+            LOG("%s=(null)", key);
+        }
+        return strs;
+    }
+
+    int i, j;
+    for (i = j = 0; strs[i]; i++) {
+        char *str = strs[i];
+
+        /* Remove leading and trailing spaces */
+        while (isspace(*str))
+            str++;
+        g_strchomp(str);
+
+        /* Empty string */
+        if (*str == 0) {
+            g_free(strs[i]);
+            continue;
+        }
+
+        /* Moved front of string, need to realloc so g_strfreev doesn't blow */
+        if (str != strs[i]) {
+            str = g_strdup(str);
+            g_free(strs[i]);
+        }
+
+        /* Save string back */
+        strs[j] = str;
+        j++;
+    }
+
+    /* NULL anything at the end that was moved forward */
+    for (; j < i; j++)
+        strs[j] = NULL;
+
+    if (config.debug) {
+        gchar *str = g_strjoinv(";", strs);
+        LOG("%s=%s", key, str);
+        g_free(str);
+    }
+    return strs;
+}
+
+/******************************************************************************/
 gchar *moloch_config_section_str(GKeyFile *keyfile, char *section, char *key, char *d)
 {
     char *result;
@@ -193,7 +261,7 @@ uint32_t moloch_config_int(GKeyFile *keyfile, char *key, uint32_t d, uint32_t mi
     }
 
     if (config.debug) {
-        LOG("%s=%d", key, value);
+        LOG("%s=%u", key, value);
     }
 
     return value;
@@ -308,8 +376,18 @@ void moloch_config_load()
 
     if (strcmp(rotateIndex, "hourly") == 0)
         config.rotate = MOLOCH_ROTATE_HOURLY;
+    else if (strcmp(rotateIndex, "hourly2") == 0)
+        config.rotate = MOLOCH_ROTATE_HOURLY2;
+    else if (strcmp(rotateIndex, "hourly3") == 0)
+        config.rotate = MOLOCH_ROTATE_HOURLY3;
+    else if (strcmp(rotateIndex, "hourly4") == 0)
+        config.rotate = MOLOCH_ROTATE_HOURLY4;
     else if (strcmp(rotateIndex, "hourly6") == 0)
         config.rotate = MOLOCH_ROTATE_HOURLY6;
+    else if (strcmp(rotateIndex, "hourly8") == 0)
+        config.rotate = MOLOCH_ROTATE_HOURLY8;
+    else if (strcmp(rotateIndex, "hourly12") == 0)
+        config.rotate = MOLOCH_ROTATE_HOURLY12;
     else if (strcmp(rotateIndex, "daily") == 0)
         config.rotate = MOLOCH_ROTATE_DAILY;
     else if (strcmp(rotateIndex, "weekly") == 0)
@@ -451,11 +529,11 @@ void moloch_config_load()
     config.trackESP              = moloch_config_boolean(keyfile, "trackESP", FALSE);
     config.yaraEveryPacket       = moloch_config_boolean(keyfile, "yaraEveryPacket", TRUE);
 
-    config.maxStreams[SESSION_TCP] = maxStreams/config.packetThreads*1.25;
-    config.maxStreams[SESSION_UDP] = maxStreams/config.packetThreads/20;
-    config.maxStreams[SESSION_SCTP] = maxStreams/config.packetThreads/20;
-    config.maxStreams[SESSION_ICMP] = maxStreams/config.packetThreads/200;
-    config.maxStreams[SESSION_ESP] = maxStreams/config.packetThreads/200;
+    config.maxStreams[SESSION_TCP] = MAX(100, maxStreams/config.packetThreads*1.25);
+    config.maxStreams[SESSION_UDP] = MAX(100, maxStreams/config.packetThreads/20);
+    config.maxStreams[SESSION_SCTP] = MAX(100, maxStreams/config.packetThreads/20);
+    config.maxStreams[SESSION_ICMP] = MAX(100, maxStreams/config.packetThreads/200);
+    config.maxStreams[SESSION_ESP] = MAX(100, maxStreams/config.packetThreads/200);
 
 
     gchar **saveUnknownPackets     = moloch_config_str_list(keyfile, "saveUnknownPackets", NULL);
@@ -464,12 +542,12 @@ void moloch_config_load()
             char *s = saveUnknownPackets[i];
 
             if (strcmp(s, "all") == 0) {
-                memset(&config.etherSavePcap, 0xff, 1024);
-                memset(&config.ipSavePcap, 0xff, 4);
+                memset(&config.etherSavePcap, 0xff, sizeof(config.etherSavePcap));
+                memset(&config.ipSavePcap, 0xff, sizeof(config.ipSavePcap));
             } else if (strcmp(s, "ip:all") == 0) {
-                memset(&config.ipSavePcap, 0xff, 4);
+                memset(&config.ipSavePcap, 0xff, sizeof(config.ipSavePcap));
             } else if (strcmp(s, "ether:all") == 0) {
-                memset(&config.etherSavePcap, 0xff, 1024);
+                memset(&config.etherSavePcap, 0xff, sizeof(config.etherSavePcap));
             } else if (strncmp(s, "ip:", 3) == 0) {
                 int n = atoi(s+3);
                 if (n < 0 || n > 0xff)
@@ -695,7 +773,6 @@ typedef struct {
     MolochFilesChange_cb  cbs;
     off_t                 size[MOLOCH_CONFIG_FILES];
     int64_t               modify[MOLOCH_CONFIG_FILES];
-    char                  freeOld;
 } MolochFileChange_t;
 
 LOCAL int                numFiles;
@@ -731,7 +808,7 @@ void moloch_config_monitor_files(char *desc, char **names, MolochFilesChange_cb 
     if (numFiles >= MOLOCH_CONFIG_FILES)
         LOGEXIT("Couldn't monitor anymore files %s %s", desc, names[0]);
 
-    for (i = 0; names[i] && i < MOLOCH_CONFIG_FILES; i++) {
+    for (i = 0; i < MOLOCH_CONFIG_FILES && names[i]; i++) {
         if (stat(names[i], &sb) != 0) {
             LOGEXIT("Couldn't stat %s file %s error %s", desc, names[i], strerror(errno));
         }
@@ -754,16 +831,6 @@ gboolean moloch_config_reload_files (gpointer UNUSED(user_data))
     struct stat     sb[MOLOCH_CONFIG_FILES];
 
     for (i = 0; i < numFiles; i++) {
-        if (files[i].freeOld) {
-            if (config.debug)
-                LOG("Free old %s %s %d", files[i].desc, files[i].name[0], files[i].num);
-            if (files[i].cbs)
-                files[i].cbs(NULL);
-            else
-                files[i].cb(NULL);
-            files[i].freeOld = 0;
-        }
-
         int changed = 0;
         for (f = 0; f < files[i].num; f++) {
             if (stat(files[i].name[f], &sb[f]) != 0) {
@@ -796,7 +863,6 @@ gboolean moloch_config_reload_files (gpointer UNUSED(user_data))
             else
                 files[i].cb(files[i].name[0]);
 
-            files[i].freeOld = 1;
             for (f = 0; f < files[i].num; f++) {
                 files[i].size[f] = 0;
                 files[i].modify[f] = sb[f].st_mtime;

@@ -49,6 +49,17 @@ MOLOCH_LOCK_DEFINE(LOG);
 /******************************************************************************/
 LOCAL  gboolean showVersion    = FALSE;
 
+typedef struct molochfreelater_t MolochFreeLater_t;
+struct molochfreelater_t {
+    MolochFreeLater_t *fl_next, *fl_prev;
+    void              *ptr;
+    GDestroyNotify     cb;
+    uint32_t           sec;
+    uint32_t           fl_count;
+};
+MolochFreeLater_t freeLaterList;
+MOLOCH_LOCK_DEFINE(freeLaterList);
+
 /******************************************************************************/
 gboolean moloch_debug_flag()
 {
@@ -126,7 +137,7 @@ void parse_args(int argc, char **argv)
         config.configFile = g_strdup("/data/moloch/etc/config.ini");
 
     if (showVersion) {
-        printf("moloch-capture %s/%s session size=%zd packet size=%zd api=%d\n", PACKAGE_VERSION, BUILD_VERSION, sizeof(MolochSession_t), sizeof(MolochPacket_t), MOLOCH_API_VERSION);
+        printf("moloch-capture %s/%s session size=%d packet size=%d api=%d\n", PACKAGE_VERSION, BUILD_VERSION, (int)sizeof(MolochSession_t), (int)sizeof(MolochPacket_t), MOLOCH_API_VERSION);
         printf("glib2: %u.%u.%u\n", glib_major_version, glib_minor_version, glib_micro_version);
         printf("libpcap: %s\n", pcap_lib_version());
         printf("curl: %s\n", curl_version());
@@ -142,7 +153,7 @@ void parse_args(int argc, char **argv)
         glib_minor_version !=  GLIB_MINOR_VERSION ||
         glib_micro_version !=  GLIB_MICRO_VERSION) {
 
-        LOG("WARNING - gilb compiled %d.%d.%d vs linked %d.%d.%d",
+        LOG("WARNING - gilb compiled %d.%d.%d vs linked %u.%u.%u",
                 GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION,
                 glib_major_version, glib_minor_version, glib_micro_version);
     }
@@ -203,18 +214,58 @@ void parse_args(int argc, char **argv)
     }
 }
 /******************************************************************************/
+void moloch_free_later(void *ptr, GDestroyNotify cb)
+{
+    struct timespec currentTime;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &currentTime);
+
+    MolochFreeLater_t *fl = MOLOCH_TYPE_ALLOC(MolochFreeLater_t);
+    fl->sec = currentTime.tv_sec + 5;
+    fl->ptr = ptr;
+    fl->cb  = cb;
+    MOLOCH_LOCK(freeLaterList);
+    DLL_PUSH_TAIL(fl_, &freeLaterList, fl);
+    MOLOCH_UNLOCK(freeLaterList);
+}
+/******************************************************************************/
+LOCAL gboolean moloch_free_later_check (gpointer UNUSED(user_data))
+{
+    if (freeLaterList.fl_count == 0)
+        return TRUE;
+
+    struct timespec currentTime;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &currentTime);
+    MOLOCH_LOCK(freeLaterList);
+    while (freeLaterList.fl_count > 0 &&
+           freeLaterList.fl_next->sec < currentTime.tv_sec) {
+        MolochFreeLater_t *fl;
+        DLL_POP_HEAD(fl_, &freeLaterList, fl);
+        fl->cb(fl->ptr);
+        MOLOCH_TYPE_FREE(MolochFreeLater_t, fl);
+    }
+    MOLOCH_UNLOCK(freeLaterList);
+    return TRUE;
+}
+/******************************************************************************/
+LOCAL void moloch_free_later_init()
+{
+    DLL_INIT(fl_, &freeLaterList);
+    g_timeout_add_seconds(1, moloch_free_later_check, 0);
+}
+
+/******************************************************************************/
 void *moloch_size_alloc(int size, int zero)
 {
     size += 8;
     void *mem = (zero?g_slice_alloc0(size):g_slice_alloc(size));
     memcpy(mem, &size, 4);
-    return mem + 8;
+    return (char *)mem + 8;
 }
 /******************************************************************************/
 int moloch_size_free(void *mem)
 {
     int size;
-    mem -= 8;
+    mem = (char *)mem - 8;
 
     memcpy(&size, mem, 4);
     g_slice_free1(size, mem);
@@ -461,7 +512,7 @@ void moloch_add_can_quit (MolochCanQuitFunc func, const char *name)
 /******************************************************************************/
 /*
  * Don't actually end main loop until all tags are loaded
- * TRUE - call again in 100ms
+ * TRUE - call again
  * FALSE - don't call again
  */
 gboolean moloch_quit_gfunc (gpointer UNUSED(user_data))
@@ -509,7 +560,7 @@ LOCAL gboolean writerExit   = TRUE;
 void moloch_quit()
 {
     config.quitting = TRUE;
-    g_timeout_add(100, moloch_quit_gfunc, 0);
+    g_timeout_add(config.tests?10:100, moloch_quit_gfunc, 0);
 }
 /******************************************************************************/
 /*
@@ -621,6 +672,7 @@ int main(int argc, char **argv)
     if (config.insecure)
         LOG("\n\nDON'T DO IT!!!! `--insecure` is a bad idea\n\n");
 
+    moloch_free_later_init();
     moloch_hex_init();
     moloch_config_init();
     moloch_writers_init();
