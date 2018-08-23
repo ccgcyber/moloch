@@ -87,7 +87,6 @@ export default {
   data: function () {
     return {
       activeIdx: -1,
-      focusInput: true,
       results: [],
       fields: null,
       loadingError: '',
@@ -104,6 +103,14 @@ export default {
       },
       set: function (newValue) {
         this.$store.commit('setExpression', newValue);
+      }
+    },
+    focusInput: {
+      get: function () {
+        return this.$store.state.focusSearch;
+      },
+      set: function (newValue) {
+        this.$store.commit('setFocusSearch', newValue);
       }
     }
   },
@@ -178,6 +185,12 @@ export default {
       if (event.keyCode === 27) {
         // if there's a request in progress, cancel it
         this.cancelPromise();
+
+        // if there's no results blur the input
+        if (!this.results || !this.results.length) {
+          event.target.blur();
+          this.focusInput = false;
+        }
 
         this.loadingValues = false;
         this.loadingError = false;
@@ -254,6 +267,7 @@ export default {
 
         this.results = null;
         this.activeIdx = -1;
+        this.focusInput = false;
       }, 300);
     },
     /* helper functions ------------------------------------------ */
@@ -261,7 +275,6 @@ export default {
     changeExpression: function () {
       this.activeIdx = -1;
       this.results = null;
-      this.focusInput = false;
       this.loadingValues = false;
       this.loadingError = false;
 
@@ -391,7 +404,7 @@ export default {
           .catch((error) => {
             this.cancellablePromise = null;
             this.loadingValues = false;
-            this.loadingError = error;
+            this.loadingError = error.message || error;
           });
       }
     },
@@ -403,9 +416,11 @@ export default {
     addExistsItem: function (strToMatch, operator) {
       if (operator !== '==' && operator !== '!=') { return; }
 
-      if ('EXISTS!'.match(new RegExp(strToMatch + '.*'))) {
-        this.results.push('EXISTS!');
-      }
+      try {
+        if ('EXISTS!'.match(new RegExp(strToMatch + '.*'))) {
+          this.results.push('EXISTS!');
+        }
+      } catch (error) {}
     },
     /* aborts a pending promise */
     cancelPromise: function () {

@@ -66,7 +66,7 @@ var internals = {
   elasticBase: Config.get("elasticsearch", "http://localhost:9200").split(","),
   userNameHeader: Config.get("userNameHeader"),
   httpAgent:   new http.Agent({keepAlive: true, keepAliveMsecs:5000, maxSockets: 40}),
-  httpsAgent:  new https.Agent({keepAlive: true, keepAliveMsecs:5000, maxSockets: 40}),
+  httpsAgent:  new https.Agent({keepAlive: true, keepAliveMsecs:5000, maxSockets: 40, rejectUnauthorized: !Config.insecure}),
   previousNodeStats: [],
   caTrustCerts: {},
   cronRunning: false,
@@ -571,6 +571,38 @@ function addAuth(info, user, node, secret) {
                                                     }, secret);
 }
 
+function loadCaTrust(node) {
+  var caTrustFile = Config.getFull(node, "caTrustFile");
+
+  if (caTrustFile && caTrustFile.length > 0) {
+    let certs = [];
+
+    var caTrustFileLines = fs.readFileSync(caTrustFile, 'utf8');
+    caTrustFileLines = caTrustFileLines.split("\n");
+
+    var foundCert = [];
+
+    for (let i = 0, ilen = caTrustFileLines.length; i < ilen; i++) {
+      let line = caTrustFileLines[i];
+      if (line.length === 0) {
+        continue;
+      }
+      foundCert.push(line);
+      if (line.match(/-END CERTIFICATE-/)) {
+        certs.push(foundCert.join("\n"));
+        foundCert = [];
+      }
+    }
+
+    if (certs.length > 0) {
+      return certs;
+    }
+  }
+
+  return undefined;
+}
+
+
 function addCaTrust(info, node) {
   if (!Config.isHTTPS(node)) {
     return;
@@ -582,34 +614,12 @@ function addCaTrust(info, node) {
     return;
   }
 
-  var caTrustFile = Config.getFull(node, "caTrustFile");
+  internals.caTrustCerts[node] = loadCaTrust(node);
 
-  if (caTrustFile && caTrustFile.length > 0) {
-    var caTrustFileLines = fs.readFileSync(caTrustFile, 'utf8');
-    caTrustFileLines = caTrustFileLines.split("\n");
-
-    var foundCert = [],
-        line;
-
-    internals.caTrustCerts[node] = [];
-
-    for (let i = 0, ilen = caTrustFileLines.length; i < ilen; i++) {
-      line = caTrustFileLines[i];
-      if (line.length === 0) {
-        continue;
-      }
-      foundCert.push(line);
-      if (line.match(/-END CERTIFICATE-/)) {
-        internals.caTrustCerts[node].push(foundCert.join("\n"));
-        foundCert = [];
-      }
-    }
-
-    if (internals.caTrustCerts[node].length > 0) {
-      info.ca = internals.caTrustCerts[node];
-      info.agent.options.ca = internals.caTrustCerts[node];
-      return;
-    }
+  if (internals.caTrustCerts[node] !== undefined && internals.caTrustCerts[node].length > 0) {
+    info.ca = internals.caTrustCerts[node];
+    info.agent.options.ca = internals.caTrustCerts[node];
+    return;
   }
 }
 
@@ -5314,10 +5324,10 @@ function sendSessionWorker(options, cb) {
 
     if (options.tags) {
       tags = options.tags.replace(/[^-a-zA-Z0-9_:,]/g, "").split(",");
-      if (!session.ta) {
-        session.ta = [];
+      if (!session.tags) {
+        session.tags = [];
       }
-      session.ta = session.ta.concat(tags);
+      session.tags = session.tags.concat(tags);
     }
 
     var molochClusters = Config.configMap("moloch-clusters");
@@ -5380,7 +5390,7 @@ app.get('/:nodeName/sendSession/:id', checkProxyRequest, function(req, res) {
     cluster: req.query.cluster,
     id: req.params.id,
     saveId: req.query.saveId,
-    tags: req.query.tags,
+    tags: req.body.tags,
     nodeName: req.params.nodeName
   };
 
@@ -5396,7 +5406,7 @@ app.post('/:nodeName/sendSessions', checkProxyRequest, function(req, res) {
   if (req.body.ids === undefined ||
       req.query.cluster === undefined ||
       req.query.saveId === undefined ||
-      req.query.tags === undefined) {
+      req.body.tags === undefined) {
     return res.end();
   }
 
@@ -5408,7 +5418,7 @@ app.post('/:nodeName/sendSessions', checkProxyRequest, function(req, res) {
       cluster: req.query.cluster,
       id: id,
       saveId: req.query.saveId,
-      tags: req.query.tags,
+      tags: req.body.tags,
       nodeName: req.params.nodeName
     };
 
@@ -5436,7 +5446,7 @@ function sendSessionsList(req, res, list) {
         cluster: req.body.cluster,
         id: item._id,
         saveId: saveId,
-        tags: req.query.tags,
+        tags: req.body.tags,
         nodeName: fields.node
       };
       // Get from our DISK
@@ -5448,8 +5458,8 @@ function sendSessionsList(req, res, list) {
         var info = url.parse(viewUrl);
         info.path = Config.basePath(fields.node) + fields.node + "/sendSession/" + item._id + "?saveId=" + saveId + "&cluster=" + req.body.cluster;
         info.agent = (client === http?internals.httpAgent:internals.httpsAgent);
-        if (req.query.tags) {
-          info.path += "&tags=" + req.query.tags;
+        if (req.body.tags) {
+          info.path += "&tags=" + req.body.tags;
         }
         addAuth(info, req.user, fields.node);
         addCaTrust(info, fields.node);
@@ -6137,6 +6147,7 @@ function processArgs(argv) {
       console.log("  -host <host name>     Host name to use, default os hostname");
       console.log("  -n <node name>        Node name section to use in config file, default first part of hostname");
       console.log("  --debug               Increase debug level, multiple are supported");
+      console.log("  --insecure            Disable cert verification");
 
       process.exit(0);
     }
@@ -6151,4 +6162,7 @@ Db.initialize({host: internals.elasticBase,
                usersHost: Config.get("usersElasticsearch"),
                usersPrefix: Config.get("usersPrefix"),
                nodeName: Config.nodeName(),
-               dontMapTags: Config.get("multiES", false)}, main);
+               dontMapTags: Config.get("multiES", false),
+               insecure: Config.insecure,
+               ca: loadCaTrust(internals.nodeName)
+              }, main);

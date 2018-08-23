@@ -8,25 +8,20 @@
       <span class="fa fa-exclamation-triangle">
       </span>&nbsp;
       {{ error }}
+      <span v-if="!settings && loggedIn && !networkError">
+        If the problem persists, try
+        <a class="no-decoration"
+          href="javascript:void(0)"
+          @click="restoreDefaults('all')">
+          restoring them to the defaults
+        </a>
+      </span>
       <button type="button"
         class="close cursor-pointer"
         @click="error = ''">
         <span>&times;</span>
       </button>
     </div> <!-- /page error -->
-
-    <!-- page success -->
-    <div v-if="success"
-      class="alert alert-success">
-      <span class="fa fa-check">
-      </span>&nbsp;
-      {{ success }}
-      <button type="button"
-        class="close cursor-pointer"
-        @click="success = ''">
-        <span>&times;</span>
-      </button>
-    </div> <!-- /page success -->
 
     <!-- password set but user is not logged in -->
     <div v-if="!error && hasAuth && !loggedIn"
@@ -40,10 +35,11 @@
     <div class="row">
 
       <!-- navigation -->
-      <div v-if="hasAuth && loggedIn"
+      <div v-if="hasAuth && loggedIn && settings"
         class="col-xl-2 col-lg-3 col-md-3 col-sm-4"
         role="tablist"
         aria-orientation="vertical">
+
         <div class="nav flex-column nav-pills">
           <a class="nav-link cursor-pointer"
             @click="openView('general')"
@@ -67,26 +63,66 @@
             Notifiers
           </a>
         </div>
+
+        <!-- settings success -->
+        <div v-if="success"
+          class="alert alert-success mt-3">
+          <button type="button"
+            class="close cursor-pointer"
+            @click="success = ''">
+            <span>&times;</span>
+          </button>
+          <span class="fa fa-check">
+          </span>&nbsp;
+          {{ success }}
+        </div> <!-- /settings success -->
+
+        <!-- settings success -->
+        <div v-if="settingsError"
+          class="alert alert-danger mt-3">
+          <button type="button"
+            class="close cursor-pointer"
+            @click="settingsError = ''">
+            <span>&times;</span>
+          </button>
+          <span class="fa fa-exclamation-triangle">
+          </span>&nbsp;
+          {{ settingsError }}
+        </div> <!-- /settings success -->
+
       </div> <!-- /navigation -->
 
       <!-- general -->
-      <div v-if="visibleTab === 'general' && hasAuth && loggedIn"
+      <div v-if="visibleTab === 'general' && hasAuth && loggedIn && settings"
         class="col">
-        <h3>
-          General
-        </h3>
-        <hr>
         <div class="row">
-          <div class="col-lg-9 col-md-12 form-group">
-            <label for="outOfDate">
-              Capture nodes need to check in at least this often
-            </label>
+          <h3 class="col-xl-9 col-lg-12 form-group">
+            <button type="button"
+              class="btn btn-sm btn-outline-warning pull-right"
+              @click="restoreDefaults('general')"
+              v-b-tooltip.hover.bottomleft
+              title="Restore general settings to the original defaults">
+              Reset Defaults
+            </button>
+            General
+            <hr>
+          </h3>
+        </div>
+        <div class="row"
+          v-if="settings.general">
+          <div class="col-xl-9 col-lg-12 form-group">
             <div class="input-group">
+              <span class="input-group-prepend">
+                <span class="input-group-text">
+                  Capture nodes must check in this often
+                </span>
+              </span>
               <input type="number"
                 class="form-control"
                 id="outOfDate"
                 @input="debounceInput"
                 v-model="settings.general.outOfDate"
+                max="3600"
               />
               <span class="input-group-append">
                 <span class="input-group-text">
@@ -100,16 +136,19 @@
               issue will be added to the node's cluster.
             </p>
           </div>
-          <div class="col-lg-9 col-md-12 form-group">
-            <label for="esQueryTimeout">
-              Elasticsearch query timeout
-            </label>
+          <div class="col-xl-9 col-lg-12 form-group">
             <div class="input-group">
+              <span class="input-group-prepend">
+                <span class="input-group-text">
+                  Elasticsearch query timeout
+                </span>
+              </span>
               <input type="number"
                 class="form-control"
                 id="esQueryTimeout"
                 @input="debounceInput"
                 v-model="settings.general.esQueryTimeout"
+                max="60"
               />
               <span class="input-group-append">
                 <span class="input-group-text">
@@ -121,6 +160,55 @@
               Aborts the queries and adds an
               <strong>ES Down</strong>
               issue if no response is received within the specified time.
+            </p>
+          </div>
+          <div class="col-xl-9 col-lg-12 form-group">
+            <div class="input-group">
+              <span class="input-group-prepend">
+                <span class="input-group-text">
+                  Remove all issues after
+                </span>
+              </span>
+              <input type="number"
+                class="form-control"
+                id="removeIssuesAfter"
+                @input="debounceInput"
+                v-model="settings.general.removeIssuesAfter"
+                max="10080"
+              />
+              <span class="input-group-append">
+                <span class="input-group-text">
+                  minutes
+                </span>
+              </span>
+            </div>
+            <p class="form-text small text-muted">
+              Removes issues that have not been seen again after the specified time.
+            </p>
+          </div>
+          <div class="col-xl-9 col-lg-12 form-group">
+            <div class="input-group">
+              <span class="input-group-prepend">
+                <span class="input-group-text">
+                  Remove acknowledged issues after
+                </span>
+              </span>
+              <input type="number"
+                class="form-control"
+                id="removeAcknowledgedAfter"
+                @input="debounceInput"
+                v-model="settings.general.removeAcknowledgedAfter"
+                max="10080"
+              />
+              <span class="input-group-append">
+                <span class="input-group-text">
+                  minutes
+                </span>
+              </span>
+            </div>
+            <p class="form-text small text-muted">
+              Removes <strong>acknowledged</strong>
+              issues that have not been seen again after the specified time.
             </p>
           </div>
         </div>
@@ -203,13 +291,14 @@
       </div> <!-- /password -->
 
       <!-- notifiers -->
-      <div v-if="visibleTab === 'notifiers' && hasAuth && loggedIn"
+      <div v-if="visibleTab === 'notifiers' && hasAuth && loggedIn && settings"
         class="col">
         <h3>
           Notifiers
         </h3>
         <hr>
-        <div class="row">
+        <div class="row"
+          v-if="settings.notifiers">
           <div class="col-12 col-xl-6"
             v-for="notifier of settings.notifiers"
             :key="notifier.name">
@@ -316,6 +405,7 @@ import SettingsService from './settings.service';
 
 let initialized;
 let inputDebounce;
+let successCloseTimeout;
 
 export default {
   name: 'Settings',
@@ -323,12 +413,15 @@ export default {
     return {
       // page error
       error: '',
+      networkError: false,
       // page success message
       success: '',
       // default tab
-      visibleTab: 'password',
+      visibleTab: 'general',
       // page data
-      settings: {},
+      settings: undefined,
+      // settings error
+      settingsError: '',
       // password settings
       currentPassword: '',
       newPassword: '',
@@ -375,12 +468,34 @@ export default {
       this.saveSettings();
     },
     saveSettings: function () {
+      this.success = '';
+      if (successCloseTimeout) { clearTimeout(successCloseTimeout); }
+
+      if (!this.settings.general.outOfDate || this.settings.general.outOfDate > 3600) {
+        this.settingsError = 'Capture node\'s checkin must contain a number less than or equal to 3600 seconds (1 hour)';
+        return;
+      }
+      if (!this.settings.general.esQueryTimeout || this.settings.general.esQueryTimeout > 60) {
+        this.settingsError = 'Elasticsearch query timeout must contain a number less than or equal to 60 seconds';
+        return;
+      }
+      if (!this.settings.general.removeIssuesAfter || this.settings.general.removeIssuesAfter > 10080) {
+        this.settingsError = 'Remove all issues after must contain a number less than or equal to 10080 minutes (1 week)';
+        return;
+      }
+      if (!this.settings.general.removeAcknowledgedAfter || this.settings.general.removeAcknowledgedAfter > 10080) {
+        this.settingsError = 'Remove acknowledged issues after must contain a number less than or equal to 10080 minutes (1 week)';
+        return;
+      }
+
       SettingsService.saveSettings(this.settings)
         .then((data) => {
-          this.error = '';
+          this.settingsError = '';
+          this.success = data.text || 'Saved your settings.';
+          this.closeSuccess();
         })
         .catch((error) => {
-          this.error = error.text || 'Error saving settings.';
+          this.settingsError = error.text || 'Error saving settings.';
         });
     },
     toggleNotifier: function (notifier) {
@@ -390,17 +505,17 @@ export default {
     testNotifier: function (notifier) {
       SettingsService.testNotifier(notifier.name)
         .then((data) => {
-          this.error = '';
+          this.settingsError = '';
           this.success = data.text || 'Successfully issued alert.';
           this.closeSuccess();
         })
         .catch((error) => {
-          this.error = error.text || 'Error issuing alert.';
+          this.settingsError = error.text || 'Error issuing alert.';
         });
     },
     clearNotifierFields: function (notifier) {
-      for (const field of notifier.fields) {
-        field.value = '';
+      for (let f in notifier.fields) {
+        notifier.fields[f].value = '';
       }
       this.saveSettings();
     },
@@ -414,22 +529,24 @@ export default {
       this.passwordChanged = false;
     },
     updatePassword: function () {
+      this.settingsError = '';
+
       if (!this.currentPassword && this.hasAuth) {
-        this.error = 'You must provide your current password.';
+        this.settingsError = 'You must provide your current password.';
       }
 
       if (!this.newPassword) {
-        this.error = 'You must provide a new password.';
+        this.settingsError = 'You must provide a new password.';
         return;
       }
 
       if (!this.newPasswordConfirm) {
-        this.error = 'You must confirm your new password.';
+        this.settingsError = 'You must confirm your new password.';
         return;
       }
 
       if (this.newPassword !== this.newPasswordConfirm) {
-        this.error = 'Passwords must match.';
+        this.settingsError = 'Passwords must match.';
         this.newPassword = '';
         this.newPasswordConfirm = '';
         return;
@@ -440,17 +557,19 @@ export default {
 
       AuthService.updatePassword(this.currentPassword, this.newPassword)
         .then((response) => {
-          this.error = '';
+          this.settingsError = '';
           this.success = success;
           this.closeSuccess();
           this.cancelChangePassword();
         })
         .catch((error) => {
-          this.error = error.text || 'Error saving password.';
+          this.settingsError = error.text || 'Error saving password.';
           this.cancelChangePassword();
         });
     },
     debounceInput: function () {
+      this.success = '';
+      if (successCloseTimeout) { clearTimeout(successCloseTimeout); }
       if (inputDebounce) { clearTimeout(inputDebounce); }
       inputDebounce = setTimeout(() => {
         this.saveSettings();
@@ -459,8 +578,23 @@ export default {
     toggleVisibleSecretField: function (field) {
       this.$set(field, 'showValue', !field.showValue);
     },
+    restoreDefaults: function (type) {
+      SettingsService.restoreDefaults(type)
+        .then((data) => {
+          this.settingsError = '';
+          this.settings = data.settings;
+          this.success = data.text || `Successfully restored ${type} default settings.`;
+          this.closeSuccess();
+        })
+        .catch((error) => {
+          this.settingsError = error.text || `Error restoring ${type} default settings.`;
+        });
+    },
     /* helper functions ---------------------------------------------------- */
     loadData: function () {
+      this.error = '';
+      this.settingsError = '';
+
       SettingsService.getSettings()
         .then((data) => {
           initialized = true;
@@ -471,6 +605,7 @@ export default {
           initialized = true;
           if (this.hasAuth) {
             this.error = error.text || 'Error fetching settings.';
+            this.networkError = error.networkError;
           } else {
             this.error = 'No password set for your Parliament. Please set a password so you can do more stuff!';
             this.openView('password'); // redirect the user to possibly create a password
@@ -478,9 +613,10 @@ export default {
         });
     },
     closeSuccess: function (time) {
-      setTimeout(() => {
+      if (successCloseTimeout) { clearTimeout(successCloseTimeout); }
+      successCloseTimeout = setTimeout(() => {
         this.success = '';
-      }, time || 10000);
+      }, time || 5000);
     }
   }
 };

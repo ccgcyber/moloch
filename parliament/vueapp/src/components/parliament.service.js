@@ -109,9 +109,23 @@ export default {
     });
   },
 
-  dismissIssue: function (groupId, clusterId, issue) {
+  acknowledgeIssues: function (issues) {
     return new Promise((resolve, reject) => {
-      Vue.axios.put(`api/groups/${groupId}/clusters/${clusterId}/dismissIssue`, {
+      Vue.axios.put(`api/acknowledgeIssues`, {
+        issues: issues
+      })
+        .then((response) => {
+          resolve(response.data);
+        })
+        .catch((error) => {
+          reject(error.response.data);
+        });
+    });
+  },
+
+  removeIssue: function (groupId, clusterId, issue) {
+    return new Promise((resolve, reject) => {
+      Vue.axios.put(`api/groups/${groupId}/clusters/${clusterId}/removeIssue`, {
         type: issue.type,
         node: issue.node
       })
@@ -124,12 +138,23 @@ export default {
     });
   },
 
-  ignoreIssue: function (groupId, clusterId, issue, forMs) {
+  removeAllAcknowledgedIssues: function () {
     return new Promise((resolve, reject) => {
-      Vue.axios.put(`api/groups/${groupId}/clusters/${clusterId}/ignoreIssue`, {
+      Vue.axios.put(`api/issues/removeAllAcknowledgedIssues`, {})
+        .then((response) => {
+          resolve(response.data);
+        })
+        .catch((error) => {
+          reject(error.response.data);
+        });
+    });
+  },
+
+  ignoreIssues: function (issues, forMs) {
+    return new Promise((resolve, reject) => {
+      Vue.axios.put(`api/ignoreIssues`, {
         ms: forMs,
-        type: issue.type,
-        node: issue.node
+        issues: issues
       })
         .then((response) => {
           resolve(response.data);
@@ -140,24 +165,11 @@ export default {
     });
   },
 
-  removeIgnoreIssue: function (groupId, clusterId, issue) {
+  removeIgnoreIssues: function (issues) {
     return new Promise((resolve, reject) => {
-      Vue.axios.put(`api/groups/${groupId}/clusters/${clusterId}/removeIgnoreIssue`, {
-        type: issue.type,
-        node: issue.node
+      Vue.axios.put(`api/removeIgnoreIssues`, {
+        issues: issues
       })
-        .then((response) => {
-          resolve(response.data);
-        })
-        .catch((error) => {
-          reject(error.response.data);
-        });
-    });
-  },
-
-  dismissAllIssues: function (groupId, clusterId) {
-    return new Promise((resolve, reject) => {
-      Vue.axios.put(`api/groups/${groupId}/clusters/${clusterId}/dismissAllIssues`, {})
         .then((response) => {
           resolve(response.data);
         })

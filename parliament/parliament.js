@@ -34,7 +34,9 @@ const issueTypes = {
 const settingsDefault = {
   general : {
     outOfDate: 30,
-    esQueryTimeout: 5
+    esQueryTimeout: 5,
+    removeIssuesAfter: 60,
+    removeAcknowledgedAfter: 15
   },
   notifiers: {}
 };
@@ -148,6 +150,22 @@ try {
   };
 }
 
+// construct the issues file name
+let issuesFilename = 'issues.json';
+if (app.get('file').indexOf('.json') > -1) {
+  let name = app.get('file').replace(/\.json/g, '');
+  issuesFilename = `${name}.issues.json`;
+}
+app.set('issuesfile', issuesFilename);
+
+// get the issues file or create it if it doesn't exist
+let issues;
+try {
+  issues = require(issuesFilename);
+} catch (err) {
+  issues = [];
+}
+
 // define ids for groups and clusters
 let groupId = 0;
 let clusterId = 0;
@@ -250,6 +268,40 @@ function verifyToken (req, res, next) {
 }
 
 /* Helper functions -------------------------------------------------------- */
+// list of alerts that will be sent at every 10 seconds
+let alerts = [];
+// sends alerts in the alerts list
+async function sendAlerts () {
+  let promise = new Promise((resolve, reject) => {
+    for (let i = 0, len = alerts.length; i < len; i++) {
+      (function (i) {
+        // timeout so that alerts are alerted in order
+        setTimeout(() => {
+          let alert = alerts[i];
+          alert.notifier.sendAlert(alert.config, alert.message);
+          if (i === len - 1) { resolve(); }
+        }, 250 * i);
+      })(i);
+    };
+  });
+
+  promise.then(() => {
+    alerts = []; // clear the queue
+  });
+}
+
+// sorts the list of alerts by cluster title then sends them
+// assumes that the alert message starts with the cluster title
+function processAlerts () {
+  if (alerts && alerts.length) {
+    alerts.sort((a, b) => {
+      return a.message.localeCompare(b.message);
+    });
+
+    sendAlerts();
+  }
+}
+
 function formatIssueMessage (cluster, issue) {
   let message = '';
 
@@ -274,7 +326,7 @@ function formatIssueMessage (cluster, issue) {
   return message;
 }
 
-function issueAlert (cluster, issue) {
+function buildAlert (cluster, issue) {
   issue.alerted = Date.now();
 
   const message = `${cluster.title} - ${issue.message}`;
@@ -304,42 +356,50 @@ function issueAlert (cluster, issue) {
       config[f.name] = field.value;
     }
 
-    notifier.sendAlert(config, message);
+    alerts.push({
+      config: config,
+      message: message,
+      notifier: notifier
+    });
   }
 }
 
 // Finds an issue in a cluster
-function findIssue (groupId, clusterId, issueType, node) {
-  for (let group of parliament.groups) {
-    if (group.id === groupId) {
-      for (let cluster of group.clusters) {
-        if (cluster.id === clusterId) {
-          if (cluster.issues) {
-            for (let issue of cluster.issues) {
-              if (issue.type === issueType && issue.node === node) {
-                return issue;
-              }
-            }
-          }
-        }
-      }
+function findIssue (clusterId, issueType, node) {
+  for (let issue of issues) {
+    if (issue.clusterId === clusterId &&
+      issue.type === issueType &&
+      issue.node === node) {
+      return issue;
     }
   }
 }
 
 // Updates an existing issue or pushes a new issue onto the issue array
 function setIssue (cluster, newIssue) {
-  if (!cluster.issues) { cluster.issues = []; }
-
   // build issue
-  let issueType     = issueTypes[newIssue.type];
-  newIssue.text     = issueType.text;
-  newIssue.title    = issueType.name;
+  let issueType = issueTypes[newIssue.type];
+  newIssue.text = issueType.text;
+  newIssue.title = issueType.name;
   newIssue.severity = issueType.severity;
-  newIssue.message  = formatIssueMessage(cluster, newIssue);
+  newIssue.clusterId = cluster.id;
+  newIssue.cluster = cluster.title;
+  newIssue.message = formatIssueMessage(cluster, newIssue);
+  newIssue.provisional = true;
 
-  for (let issue of cluster.issues) {
-    if (issue.type === newIssue.type && issue.node === newIssue.node) {
+  let existingIssue = false;
+
+  // don't duplicate existing issues, update them
+  for (let issue of issues) {
+    if (issue.clusterId === newIssue.clusterId &&
+        issue.type === newIssue.type &&
+        issue.node === newIssue.node) {
+      existingIssue = true;
+
+      // this is at least the second time we've seen this issue
+      // so it must be a persistent issue
+      issue.provisional = false;
+
       if (Date.now() > issue.ignoreUntil && issue.ignoreUntil !== -1) {
         // the ignore has expired, so alert!
         issue.ignoreUntil = undefined;
@@ -348,18 +408,27 @@ function setIssue (cluster, newIssue) {
 
       issue.lastNoticed = Date.now();
 
-      if (!issue.dismissed && !issue.ignoreUntil && !issue.alerted) {
-        issueAlert(cluster, issue);
+      if (!issue.acknowledged && !issue.ignoreUntil && !issue.alerted) {
+        buildAlert(cluster, issue);
       }
-
-      return;
     }
   }
 
-  newIssue.firstNoticed = Date.now();
-  cluster.issues.push(newIssue);
+  if (!existingIssue) {
+    // this is the first time we've seen this issue
+    // don't alert yet, but create the issue
+    newIssue.firstNoticed = Date.now();
+    newIssue.lastNoticed = Date.now();
+    issues.push(newIssue);
+  }
 
-  issueAlert(cluster, cluster.issues[cluster.issues.length - 1]);
+  fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
+    (err) => {
+      if (err) {
+        console.error('Unable to write issue:', err.message || err);
+      }
+    }
+  );
 }
 
 // Retrieves the health of each cluster and updates the cluster with that info
@@ -505,6 +574,48 @@ function getStats (cluster) {
   });
 }
 
+function buildNotifiers () {
+  // build notifiers
+  for (let n in internals.notifiers) {
+    // if the notifier is not in settings, add it
+    if (!parliament.settings.notifiers[n]) {
+      const notifier = internals.notifiers[n];
+
+      let notifierData = { name: n, fields: {}, alerts: {} };
+
+      // add fields to notifier
+      for (let field of notifier.fields) {
+        let fieldData = field;
+        fieldData.value = ''; // has empty value to start
+        notifierData.fields[field.name] = fieldData;
+      }
+
+      // build alerts
+      for (let a in issueTypes) {
+        notifierData.alerts[a] = true;
+      }
+
+      parliament.settings.notifiers[n] = notifierData;
+    }
+  }
+}
+
+function describeNotifierAlerts (settings) {
+  for (let n in settings.notifiers) {
+    const notifier = settings.notifiers[n];
+
+    for (let a in notifier.alerts) {
+      // describe alerts
+      if (issueTypes.hasOwnProperty(a)) {
+        const alert = JSON.parse(JSON.stringify(issueTypes[a]));
+        alert.id = a;
+        alert.on = notifier.alerts[a];
+        notifier.alerts[a] = alert;
+      }
+    }
+  }
+}
+
 // Initializes the parliament with ids for each group and cluster
 // and sets up the parliament settings
 function initializeParliament () {
@@ -529,6 +640,18 @@ function initializeParliament () {
     }
     if (!parliament.settings.general) {
       parliament.settings.general = settingsDefault.general;
+    }
+    if (!parliament.settings.general.outOfDate) {
+      parliament.settings.general.outOfDate = settingsDefault.general.outOfDate;
+    }
+    if (!parliament.settings.general.esQueryTimeout) {
+      parliament.settings.general.esQueryTimeout = settingsDefault.general.esQueryTimeout;
+    }
+    if (!parliament.settings.general.removeIssuesAfter) {
+      parliament.settings.general.removeIssuesAfter = settingsDefault.general.removeIssuesAfter;
+    }
+    if (!parliament.settings.general.removeAcknowledgedAfter) {
+      parliament.settings.general.removeAcknowledgedAfter = settingsDefault.general.removeAcknowledgedAfter;
     }
 
     // build notifiers
@@ -588,21 +711,19 @@ function updateParliament () {
       }
     }
 
-    // remove dismissed issues that have not been seen again for 1 day
-    for (let group of parliament.groups) {
-      for (let cluster of group.clusters) {
-        if (cluster.issues) {
-          for (const [index, issue] of cluster.issues.entries()) {
-            if (issue.dismissed && (Date.now() - issue.lastNoticed > 86400000)) {
-              cluster.issues.splice(index, 1);
-            }
-          }
-        }
-      }
-    }
+    let issuesRemoved = cleanUpIssues();
 
     Promise.all(promises)
       .then(() => {
+        if (issuesRemoved) { // save the issues that were removed
+          fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
+            (err) => {
+              if (err) {
+                console.error('Unable to write issue:', err.message || err);
+              }
+            }
+          );
+        }
         // save the data created after updating the parliament
         fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
           (err) => {
@@ -620,6 +741,40 @@ function updateParliament () {
         return resolve();
       });
   });
+}
+
+function cleanUpIssues () {
+  let issuesRemoved = false;
+
+  let len = issues.length;
+  while (len--) {
+    const issue = issues[len];
+    const timeSinceLastNoticed = Date.now() - issue.lastNoticed || issue.firstNoticed;
+    const removeIssuesAfter = getGeneralSetting('removeIssuesAfter') * 1000 * 60;
+    const removeAcknowledgedAfter = getGeneralSetting('removeAcknowledgedAfter') * 1000 * 60;
+
+    // remove issues that are provisional that haven't been seen since the last cycle
+    if (issue.provisional && timeSinceLastNoticed >= 10000) {
+      issuesRemoved = true;
+      issues.splice(len, 1);
+    }
+
+    // remove all issues that have not been seen again for the removeIssuesAfter time, and
+    // remove all acknowledged issues that have not been seen again for the removeAcknowledgedAfter time
+    if ((!issue.acknowledged && timeSinceLastNoticed > removeIssuesAfter) ||
+        (issue.acknowledged && timeSinceLastNoticed > removeAcknowledgedAfter)) {
+      issuesRemoved = true;
+      issues.splice(len, 1);
+    }
+
+    // if the issue was acknowledged but still persists, unacknowledge and alert again
+    if (issue.acknowledged && (Date.now() - issue.acknowledged) > removeAcknowledgedAfter) {
+      issue.alerted = undefined;
+      issue.acknowledged = undefined;
+    }
+  }
+
+  return issuesRemoved;
 }
 
 function getGeneralSetting (type) {
@@ -656,6 +811,28 @@ function writeParliament (req, res, next, successObj, errorText, sendParliament)
           error.httpStatusCode = 500;
           return next(error);
         });
+    }
+  );
+}
+
+// Writes the issues to the issues json file then sends success or error
+function writeIssues (req, res, next, successObj, errorText, sendIssues) {
+  fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
+    (err) => {
+      if (err) {
+        const errorMsg = `Unable to write issue data: ${err.message || err}`;
+        console.error(errorMsg);
+        const error = new Error(errorMsg);
+        error.httpStatusCode = 500;
+        return next(error);
+      }
+
+      // send the updated issues with the response
+      if (sendIssues && successObj.issues) {
+        successObj.issues = issues;
+      }
+
+      return res.json(successObj);
     }
   );
 }
@@ -765,19 +942,7 @@ router.get('/settings', verifyToken, (req, res, next) => {
     settings.general = settingsDefault.general;
   }
 
-  for (let n in settings.notifiers) {
-    const notifier = settings.notifiers[n];
-
-    for (let a in notifier.alerts) {
-      // describe alerts
-      if (issueTypes.hasOwnProperty(a)) {
-        const alert = JSON.parse(JSON.stringify(issueTypes[a]));
-        alert.id = a;
-        alert.on = notifier.alerts[a];
-        notifier.alerts[a] = alert;
-      }
-    }
-  }
+  describeNotifierAlerts(settings);
 
   return res.json(settings);
 });
@@ -839,6 +1004,42 @@ router.put('/settings', verifyToken, (req, res, next) => {
   writeParliament(req, res, next, successObj, errorText);
 });
 
+// Update the parliament settings object to the defaults
+router.put('/settings/restoreDefaults', verifyToken, (req, res, next) => {
+  let type = 'all'; // default
+  if (req.body.type) {
+    type = req.body.type;
+  }
+
+  if (type === 'general') {
+    parliament.settings.general = JSON.parse(JSON.stringify(settingsDefault.general));
+  } else {
+    parliament.settings = JSON.parse(JSON.stringify(settingsDefault));
+  }
+
+  buildNotifiers();
+
+  let settings = JSON.parse(JSON.stringify(parliament.settings));
+  describeNotifierAlerts(settings);
+
+  fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
+    (err) => {
+      if (err) {
+        const errorMsg = `Unable to write parliament data: ${err.message || err}`;
+        console.error(errorMsg);
+        const error = new Error(errorMsg);
+        error.httpStatusCode = 500;
+        return next(error);
+      }
+
+      return res.json({
+        settings: settings,
+        text: `Successfully restored ${req.body.type} default settings.`
+      });
+    }
+  );
+});
+
 // Get parliament with stats
 router.get('/parliament', (req, res, next) => {
   let parliamentClone = JSON.parse(JSON.stringify(parliament));
@@ -846,9 +1047,10 @@ router.get('/parliament', (req, res, next) => {
   for (const group of parliamentClone.groups) {
     for (let cluster of group.clusters) {
       cluster.activeIssues = [];
-      if (!cluster.issues) { continue; }
-      for (const issue of cluster.issues) {
-        if (!issue.dismissed && !issue.ignoreUntil) {
+      for (let issue of issues) {
+        if (issue.clusterId === cluster.id &&
+          !issue.acknowledged && !issue.ignoreUntil &&
+          !issue.provisional) {
           cluster.activeIssues.push(issue);
         }
       }
@@ -873,6 +1075,7 @@ router.put('/parliament', verifyToken, (req, res, next) => {
   for (const group of req.body.reorderedParliament.groups) {
     group.filteredClusters = undefined;
     for (const cluster of group.clusters) {
+      cluster.issues = undefined;
       cluster.activeIssues = undefined;
     }
   }
@@ -1086,33 +1289,23 @@ router.put('/groups/:groupId/clusters/:clusterId', verifyToken, (req, res, next)
 
 // Get a list of issues
 router.get('/issues', (req, res, next) => {
-  let issues = [];
+  let issuesClone = JSON.parse(JSON.stringify(issues));
 
-  for (let group of parliament.groups) {
-    for (let cluster of group.clusters) {
-      if (cluster.issues) {
-        for (let issue of cluster.issues) {
-          if (issue && !issue.dismissed) {
-            let issueClone = JSON.parse(JSON.stringify(issue));
-            issueClone.groupId    = group.id;
-            issueClone.clusterId  = cluster.id;
-            issueClone.cluster    = cluster.title;
-            issues.push(issueClone);
-          }
-        }
-      }
-    }
-  }
+  // filter out provisional issues
+  issuesClone = issuesClone.filter((issue) => !issue.provisional);
 
   let type = 'string';
   let sortBy = req.query.sort;
-  if (sortBy === 'ignoreUntil' || sortBy === 'firstNoticed' || sortBy === 'lastNoticed') {
+  if (sortBy === 'ignoreUntil' ||
+    sortBy === 'firstNoticed' ||
+    sortBy === 'lastNoticed' ||
+    sortBy === 'acknowledged') {
     type = 'number';
   }
 
   if (sortBy) {
     let order = req.query.order || 'desc';
-    issues.sort((a, b) => {
+    issuesClone.sort((a, b) => {
       if (type === 'string') {
         let aVal = '';
         let bVal = '';
@@ -1133,120 +1326,183 @@ router.get('/issues', (req, res, next) => {
     });
   }
 
-  return res.json({ issues:issues });
+  return res.json({ issues: issuesClone });
 });
 
-// Dismiss an issue with a cluster
-router.put('/groups/:groupId/clusters/:clusterId/dismissIssue', verifyToken, (req, res, next) => {
-  if (!req.body.type) {
-    let message = 'Must specify the issue type to dismiss.';
+// acknowledge one or more issues
+router.put('/acknowledgeIssues', verifyToken, (req, res, next) => {
+  if (!req.body.issues || !req.body.issues.length) {
+    let message = 'Must specify the issue(s) to acknowledge.';
     const error = new Error(message);
     error.httpStatusCode = 422;
     return next(error);
   }
 
   let now = Date.now();
+  let count = 0;
 
-  let issue = findIssue(parseInt(req.params.groupId), parseInt(req.params.clusterId), req.body.type, req.body.node);
+  for (let i of req.body.issues) {
+    let issue = findIssue(parseInt(i.clusterId), i.type, i.node);
+    if (issue) {
+      issue.acknowledged = now;
+      count++;
+    }
+  }
 
-  if (!issue) {
-    const error = new Error('Unable to find issue to dismiss.');
+  if (!count) {
+    let errorText = 'Unable to acknowledge requested issue';
+    if (req.body.issues.length > 1) { errorText += 's'; }
+    const error = new Error(errorText);
     error.httpStatusCode = 500;
     return next(error);
   }
 
-  issue.dismissed = now;
+  let successText = `Successfully acknowledged ${count} requested issue`;
+  let errorText = 'Unable to acknowledge the requested issue';
+  if (count > 1) {
+    successText += 's';
+    errorText += 's';
+  }
 
-  let successObj  = { success:true, text:'Successfully dismissed the requested issue.', dismissed:now };
-  let errorText   = 'Unable to dismiss that issue.';
-  writeParliament(req, res, next, successObj, errorText);
+  let successObj = { success:true, text:successText, acknowledged:now };
+  writeIssues(req, res, next, successObj, errorText);
 });
 
-// Ignore an issue with a cluster
-router.put('/groups/:groupId/clusters/:clusterId/ignoreIssue', verifyToken, (req, res, next) => {
-  if (!req.body.type) {
-    let message = 'Must specify the issue type to ignore.';
+// ignore one or more issues
+router.put('/ignoreIssues', verifyToken, (req, res, next) => {
+  if (!req.body.issues || !req.body.issues.length) {
+    let message = 'Must specify the issue(s) to ignore.';
     const error = new Error(message);
     error.httpStatusCode = 422;
     return next(error);
   }
 
   let ms = req.body.ms || 3600000; // Default to 1 hour
-
   let ignoreUntil = Date.now() + ms;
   if (ms === -1) { ignoreUntil = -1; } // -1 means ignore it forever
 
-  let issue = findIssue(parseInt(req.params.groupId), parseInt(req.params.clusterId), req.body.type, req.body.node);
+  let count = 0;
 
-  if (!issue) {
-    const error = new Error('Unable to find issue to ignore.');
+  for (let i of req.body.issues) {
+    let issue = findIssue(parseInt(i.clusterId), i.type, i.node);
+    if (issue) {
+      issue.ignoreUntil = ignoreUntil;
+      count++;
+    }
+  }
+
+  if (!count) {
+    let errorText = 'Unable to ignore requested issue';
+    if (req.body.issues.length > 1) { errorText += 's'; }
+    const error = new Error(errorText);
     error.httpStatusCode = 500;
     return next(error);
   }
 
-  issue.ignoreUntil = ignoreUntil;
+  let successText = `Successfully ignored ${count} requested issue`;
+  let errorText = 'Unable to ignore the requested issue';
+  if (count > 1) {
+    successText += 's';
+    errorText += 's';
+  }
 
-  let successObj  = { success:true, text:'Successfully ignored the requested issue.', ignoreUntil:ignoreUntil };
-  let errorText   = 'Unable to ignore that issue.';
-  writeParliament(req, res, next, successObj, errorText);
+  let successObj = { success:true, text:successText, ignoreUntil:ignoreUntil };
+  writeIssues(req, res, next, successObj, errorText);
 });
 
-// Allow an issue with a cluster to alert by removing ignoreUntil
-router.put('/groups/:groupId/clusters/:clusterId/removeIgnoreIssue', verifyToken, (req, res, next) => {
-  if (!req.body.type) {
-    let message = 'Must specify the issue type to remove the ignore.';
+// unignore one or more issues
+router.put('/removeIgnoreIssues', verifyToken, (req, res, next) => {
+  if (!req.body.issues || !req.body.issues.length) {
+    let message = 'Must specify the issue(s) to unignore.';
     const error = new Error(message);
     error.httpStatusCode = 422;
     return next(error);
   }
 
-  let issue = findIssue(parseInt(req.params.groupId), parseInt(req.params.clusterId), req.body.type, req.body.node);
-
-  if (!issue) {
-    const error = new Error('Unable to find issue to remove the ignore.');
-    error.httpStatusCode = 500;
-    return next(error);
-  }
-
-  issue.ignoreUntil = undefined;
-  issue.alerted     = undefined; // reset alert time so it can alert again
-
-  let successObj  = { success:true, text:'Successfully removed the ignore for the requested issue.' };
-  let errorText   = 'Unable to remove the ignore for that issue.';
-  writeParliament(req, res, next, successObj, errorText);
-});
-
-// Dismiss all issues with a cluster
-router.put('/groups/:groupId/clusters/:clusterId/dismissAllIssues', verifyToken, (req, res, next) => {
-  let now   = Date.now();
   let count = 0;
 
-  for (let group of parliament.groups) {
-    if (group.id === parseInt(req.params.groupId)) {
-      for (let cluster of group.clusters) {
-        if (cluster.id === parseInt(req.params.clusterId)) {
-          if (cluster.issues) {
-            for (let issue of cluster.issues) {
-              if (!issue.dismissed) {
-                issue.dismissed = now;
-                count++;
-              }
-            }
-          }
-        }
-      }
+  for (let i of req.body.issues) {
+    let issue = findIssue(parseInt(i.clusterId), i.type, i.node);
+    if (issue) {
+      issue.ignoreUntil = undefined;
+      issue.alerted     = undefined; // reset alert time so it can alert again
+      count++;
     }
   }
 
   if (!count) {
-    const error = new Error('There are no issues in this cluster to dimiss.');
+    let errorText = 'Unable to unignore requested issue';
+    if (req.body.issues.length > 1) { errorText += 's'; }
+    const error = new Error(errorText);
+    error.httpStatusCode = 500;
+    return next(error);
+  }
+
+  let successText = `Successfully unignored ${count} requested issue`;
+  let errorText = 'Unable to unignore the requested issue';
+  if (count > 1) {
+    successText += 's';
+    errorText += 's';
+  }
+
+  let successObj = { success:true, text:successText };
+  writeIssues(req, res, next, successObj, errorText);
+});
+
+// Remove an issue with a cluster
+router.put('/groups/:groupId/clusters/:clusterId/removeIssue', verifyToken, (req, res, next) => {
+  if (!req.body.type) {
+    let message = 'Must specify the issue type to remove.';
+    const error = new Error(message);
+    error.httpStatusCode = 422;
+    return next(error);
+  }
+
+  let foundIssue = false;
+  let len = issues.length;
+  while (len--) {
+    const issue = issues[len];
+    if (issue.clusterId === parseInt(req.params.clusterId) &&
+      issue.type === req.body.type &&
+      issue.node === req.body.node) {
+      foundIssue = true;
+      issues.splice(len, 1);
+    }
+  }
+
+  if (!foundIssue) {
+    const error = new Error('Unable to find issue to remove. Maybe it was already removed.');
+    error.httpStatusCode = 500;
+    return next(error);
+  }
+
+  let successObj  = { success:true, text:'Successfully removed the requested issue.' };
+  let errorText   = 'Unable to remove that issue.';
+  writeIssues(req, res, next, successObj, errorText);
+});
+
+// Remove all acknowledged all issues
+router.put('/issues/removeAllAcknowledgedIssues', verifyToken, (req, res, next) => {
+  let count = 0;
+
+  let len = issues.length;
+  while (len--) {
+    const issue = issues[len];
+    if (issue.acknowledged) {
+      count++;
+      issues.splice(len, 1);
+    }
+  }
+
+  if (!count) {
+    const error = new Error('There are no acknowledged issues to remove.');
     error.httpStatusCode = 400;
     return next(error);
   }
 
-  let successObj  = { success:true, text:`Successfully dismissed ${count} issues.`, dismissed:now };
-  let errorText   = 'Unable to dismiss issues.';
-  writeParliament(req, res, next, successObj, errorText);
+  let successObj  = { success:true, text:`Successfully removed ${count} acknowledged issues.`, issues:issues };
+  let errorText   = 'Unable to remove acknowledged issues.';
+  writeIssues(req, res, next, successObj, errorText, true);
 });
 
 // issue a test alert to a specified notifier
@@ -1330,5 +1586,6 @@ server
 
     setInterval(() => {
       updateParliament();
+      processAlerts();
     }, 10000);
   });
