@@ -154,47 +154,6 @@ export default {
   },
 
   /**
-   * Gets a state
-   * @param {string} name       The name of the state to get
-   * @returns {Promise} Promise A promise object that signals the completion
-   *                            or rejection of the request.
-   */
-  getState: function (name) {
-    return new Promise((resolve, reject) => {
-      Vue.axios.get(`state/${name}`)
-        .then((response) => {
-          resolve(response);
-        }, (error) => {
-          reject(error);
-        });
-    });
-  },
-
-  /**
-   * Saves a state
-   * @param {object} state      The object to save as the state
-   * @param {string} name       The name of the state to save
-   * @returns {Promise} Promise A promise object that signals the completion
-   *                            or rejection of the request.
-   */
-  saveState: function (state, name) {
-    return new Promise((resolve, reject) => {
-      let options = {
-        url: `state/${name}`,
-        method: 'POST',
-        data: state
-      };
-
-      Vue.axios(options)
-        .then((response) => {
-          resolve(response);
-        }, (error) => {
-          reject(error);
-        });
-    });
-  },
-
-  /**
    * Adds or Removes tags from sessions
    * @param {Boolean} addTags     Whether to add tags (otherwise remove)
    * @param {object} params       The parameters to be added to the url
@@ -334,7 +293,6 @@ export default {
       options.params.ids = options.data.ids;
     }
 
-    // TODO test passing in fields (params.fields => options.params.fields)
     let url = `${baseUrl}?${qs.stringify(options.params)}`;
 
     window.location = url;
@@ -347,10 +305,12 @@ export default {
    * @param {object} routeParams  The current url route parameters
    */
   exportUniqueValues: function (exp, counts, routeParams) {
-    routeParams.counts = counts;
-    routeParams.exp = exp;
+    let clonedParams = JSON.parse(JSON.stringify(routeParams));
+    clonedParams.counts = counts;
+    clonedParams.exp = exp;
+    clonedParams.field = undefined;
 
-    let url = `unique.txt?${qs.stringify(routeParams)}`;
+    let url = `unique.txt?${qs.stringify(clonedParams)}`;
 
     window.open(url, '_blank');
   },
@@ -361,9 +321,10 @@ export default {
    * @param {object} routeParams  The current url route parameters
    */
   openSpiGraph: function (dbField, routeParams) {
-    routeParams.field = dbField;
+    let clonedParams = JSON.parse(JSON.stringify(routeParams));
+    clonedParams.field = dbField;
 
-    let url = `spigraph?${qs.stringify(routeParams)}`;
+    let url = `spigraph?${qs.stringify(clonedParams)}`;
 
     window.open(url, '_blank');
   },

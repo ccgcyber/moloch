@@ -1,6 +1,6 @@
 <template>
 
-  <div class="ml-1 mr-1">
+  <div class="container-fluid">
 
     <moloch-loading v-if="loading && !error">
     </moloch-loading>
@@ -11,113 +11,67 @@
 
     <div v-show="!error">
 
-      <div class="input-group input-group-sm mt-1">
+      <div class="input-group input-group-sm mt-1 mb-1">
         <div class="input-group-prepend">
-          <span class="input-group-text">
-            <span class="fa fa-search"></span>
+          <span class="input-group-text input-group-text-fw">
+            <span v-if="!shiftKeyHold"
+              class="fa fa-search fa-fw">
+            </span>
+            <span v-else
+              class="query-shortcut">
+              Q
+            </span>
           </span>
         </div>
         <input type="text"
           class="form-control"
           v-model="query.filter"
-          @keyup="searchForES()"
-          placeholder="Begin typing to search for ES indices (hint: this input accepts regex)">
+          v-focus-input="focusInput"
+          @blur="onOffFocus"
+          @input="searchForES"
+          placeholder="Begin typing to search for ES indices (hint: this input accepts regex)"
+        />
+        <span class="input-group-append">
+          <button type="button"
+            @click="clear"
+            :disabled="!query.filter"
+            class="btn btn-outline-secondary btn-clear-input">
+            <span class="fa fa-close">
+            </span>
+          </button>
+        </span>
       </div>
 
-      <table class="table table-sm table-striped text-right small mt-3">
-        <thead>
-          <tr>
-            <th v-for="column of columns"
-              :key="column.name"
-              class="cursor-pointer"
-              :class="{'text-left':!column.doStats}"
-              @click="columnClick(column.sort)">
-              {{ column.name }}
-              <span v-if="column.sort !== undefined">
-                <span v-show="query.sortField === column.sort && !query.desc" class="fa fa-sort-asc"></span>
-                <span v-show="query.sortField === column.sort && query.desc" class="fa fa-sort-desc"></span>
-                <span v-show="query.sortField !== column.sort" class="fa fa-sort"></span>
-              </span>
-            </th>
-          </tr>
-        </thead>
-        <tbody v-if="stats">
-          <template v-if="stats && averageValues && totalValues && stats.data.length > 9">
-            <tr class="bold average-row">
-              <td class="text-left">Average</td>
-              <td>{{ averageValues['docs.count'] | round(0) | commaString }}</td>
-              <td>{{ averageValues['store.size'] | humanReadableBytes }}</td>
-              <td>{{ averageValues.pri | round(0) | commaString }}</td>
-              <td>{{ averageValues.segmentsCount | round(0) | commaString }}</td>
-              <td>{{ averageValues.rep| round(0) | commaString }}</td>
-              <td>{{ averageValues.memoryTotal | humanReadableBytes }}</td>
-              <td class="text-left">-</td>
-              <td class="text-left">-</td>
-            </tr>
-            <tr class="border-bottom-bold bold total-row">
-              <td class="text-left">Total</td>
-              <td>{{ totalValues['docs.count'] | round(0) | commaString }}</td>
-              <td>{{ totalValues['store.size'] | humanReadableBytes }}</td>
-              <td>{{ totalValues.pri | round(0) | commaString }}</td>
-              <td>{{ totalValues.segmentsCount | round(0) | commaString }}</td>
-              <td>{{ totalValues.rep| round(0) | commaString }}</td>
-              <td>{{ totalValues.memoryTotal | humanReadableBytes }}</td>
-              <td class="text-left">-</td>
-              <td class="text-left">-</td>
-            </tr>
-          </template>
-          <tr v-for="(stat, i) of stats.data"
-            :key="stat.name">
-            <td class="text-left">
-              {{ stat.index }}
-              <a class="btn btn-xs btn-danger ml-2"
-                v-has-permission="'createEnabled'"
-                @click="deleteIndex(i, stat.index)">
-                <span class="fa fa-trash-o"></span>
-              </a>
-            </td>
-            <td>{{ stat['docs.count'] | round(0) | commaString }}</td>
-            <td>{{ stat['store.size'] | humanReadableBytes }}</td>
-            <td>{{ stat.pri | round(0) | commaString }}</td>
-            <td>{{ stat.segmentsCount | round(0) | commaString }}</td>
-            <td>{{ stat.rep| round(0) | commaString }}</td>
-            <td>{{ stat.memoryTotal | humanReadableBytes }}</td>
-            <td class="text-left">{{ stat.health }}</td>
-            <td class="text-left">{{ stat.status }}</td>
-          </tr>
-          <tr v-if="stats.data && !stats.data.length">
-            <td :colspan="columns.length"
-              class="text-danger text-center">
-              <span class="fa fa-warning"></span>&nbsp;
-              No results match your search
-            </td>
-          </tr>
-        </tbody>
-        <tfoot v-if="stats && averageValues && totalValues && stats.data.length > 1">
-          <tr class="bold border-top-bold average-row">
-            <td class="text-left">Average</td>
-            <td>{{ averageValues['docs.count'] | round(0) | commaString }}</td>
-            <td>{{ averageValues['store.size'] | humanReadableBytes }}</td>
-            <td>{{ averageValues.pri | round(0) | commaString }}</td>
-            <td>{{ averageValues.segmentsCount | round(0) | commaString }}</td>
-            <td>{{ averageValues.rep| round(0) | commaString }}</td>
-            <td>{{ averageValues.memoryTotal | humanReadableBytes }}</td>
-            <td class="text-left">-</td>
-            <td class="text-left">-</td>
-          </tr>
-          <tr class="border-bottom-bold bold total-row">
-            <td class="text-left">Total</td>
-            <td>{{ totalValues['docs.count'] | round(0) | commaString }}</td>
-            <td>{{ totalValues['store.size'] | humanReadableBytes }}</td>
-            <td>{{ totalValues.pri | round(0) | commaString }}</td>
-            <td>{{ totalValues.segmentsCount | round(0) | commaString }}</td>
-            <td>{{ totalValues.rep| round(0) | commaString }}</td>
-            <td>{{ totalValues.memoryTotal | humanReadableBytes }}</td>
-            <td class="text-left">-</td>
-            <td class="text-left">-</td>
-          </tr>
-        </tfoot>
-      </table>
+      <moloch-table
+        id="esIndicesTable"
+        :data="stats"
+        :loadData="loadData"
+        :columns="columns"
+        :no-results="true"
+        :show-avg-tot="true"
+        :action-column="true"
+        :desc="query.desc"
+        :sortField="query.sortField"
+        table-animation="list"
+        table-classes="table-sm text-right small"
+        table-state-name="esIndicesCols"
+        table-widths-state-name="esIndicesColWidths">
+        <template slot="actions"
+          slot-scope="{ item }">
+          <b-dropdown size="sm"
+            class="row-actions-btn"
+            v-has-permission="'createEnabled'">
+            <b-dropdown-item
+              @click="deleteIndex(item.index)">
+              Delete Index {{ item.index }}
+            </b-dropdown-item>
+            <b-dropdown-item
+              @click="optimizeIndex(item.index)">
+              Optimize Index {{ item.index }}
+            </b-dropdown-item>
+          </b-dropdown>
+        </template>
+      </moloch-table>
 
     </div>
 
@@ -126,19 +80,30 @@
 </template>
 
 <script>
+import Vue from 'vue';
+
 import MolochError from '../utils/Error';
 import MolochLoading from '../utils/Loading';
+import MolochTable from '../utils/Table';
+import FocusInput from '../utils/FocusInput';
 
 let reqPromise; // promise returned from setInterval for recurring requests
 let searchInputTimeout; // timeout to debounce the search input
+let respondedAt; // the time that the last data load succesfully responded
+
+function roundCommaString (val) {
+  let result = Vue.options.filters.commaString(Vue.options.filters.round(val, 0));
+  return result;
+};
 
 export default {
   name: 'EsIndices',
-  props: [ 'dataInterval' ],
-  components: { MolochError, MolochLoading },
+  props: [ 'user', 'dataInterval', 'refreshData' ],
+  components: { MolochError, MolochLoading, MolochTable },
+  directives: { FocusInput },
   data: function () {
     return {
-      stats: {},
+      stats: null,
       error: '',
       loading: true,
       totalValues: null,
@@ -149,17 +114,35 @@ export default {
         desc: false
       },
       columns: [ // es indices table columns
-        { name: 'Name', sort: 'index', doStats: false },
-        { name: 'Documents', sort: 'docs.count', doStats: true },
-        { name: 'Disk Size', sort: 'store.size', doStats: true },
-        { name: 'Shards', sort: 'pri', doStats: true },
-        { name: 'Segments', sort: 'segmentsCount', doStats: true },
-        { name: 'Replicas', sort: 'rep', doStats: true },
-        { name: 'Memory', sort: 'memoryTotal', doStats: true },
-        { name: 'Health', sort: 'health', doStats: false },
-        { name: 'Status', sort: 'status', doStats: false }
+        // default columns
+        { id: 'index', name: 'Name', sort: 'index', dataField: 'index', doStats: false, default: true, width: 200 },
+        { id: 'docs.count', name: 'Documents', sort: 'docs.count', dataField: 'docs.count', doStats: true, default: true, width: 100, dataFunction: roundCommaString },
+        { id: 'store.size', name: 'Disk Size', sort: 'store.size', dataField: 'store.size', doStats: true, default: true, width: 100, dataFunction: (val) => { return this.$options.filters.humanReadableBytes(val); } },
+        { id: 'pri', name: 'Shards', sort: 'pri', dataField: 'pri', doStats: true, default: true, width: 100, dataFunction: roundCommaString },
+        { id: 'segmentsCount', name: 'Segments', sort: 'segmentsCount', dataField: 'segmentsCount', doStats: true, default: true, width: 100, dataFunction: roundCommaString },
+        { id: 'rep', name: 'Replicas', sort: 'rep', dataField: 'rep', doStats: true, default: true, width: 100, dataFunction: roundCommaString },
+        { id: 'memoryTotal', name: 'Memory', sort: 'memoryTotal', dataField: 'memoryTotal', doStats: true, default: true, width: 100, dataFunction: (val) => { return this.$options.filters.humanReadableBytes(val); } },
+        { id: 'health', name: 'Health', sort: 'health', dataField: 'health', doStats: false, default: true, width: 100 },
+        { id: 'status', name: 'Status', sort: 'status', dataField: 'status', doStats: false, default: true, width: 100 },
+        // all the rest of the available stats
+        { id: 'cd', name: 'Created Date', sort: 'cd', dataField: 'cd', doStats: false, width: 150, dataFunction: (val) => { return this.$options.filters.timezoneDateString(Math.floor(val / 1000), this.user.settings.timezone, 'YYYY/MM/DD HH:mm:ss z'); } },
+        { id: 'pri.search.query_current', name: 'Current Query Phase Ops', sort: 'pri.search.query_current', dataField: 'pri.search.query_current', doStats: false, width: 100, dataFunction: roundCommaString },
+        { id: 'uuid', name: 'UUID', sort: 'uuid', dataField: 'uuid', doStats: false, width: 100 }
       ]
     };
+  },
+  computed: {
+    focusInput: {
+      get: function () {
+        return this.$store.state.focusSearch;
+      },
+      set: function (newValue) {
+        this.$store.commit('setFocusSearch', newValue);
+      }
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
+    }
   },
   watch: {
     dataInterval: function () {
@@ -174,10 +157,14 @@ export default {
         this.loadData();
         this.setRequestInterval();
       }
+    },
+    refreshData: function () {
+      if (this.refreshData) {
+        this.loadData();
+      }
     }
   },
   created: function () {
-    this.loadData();
     // set a recurring server req if necessary
     if (this.dataInterval !== '0') {
       this.setRequestInterval();
@@ -190,18 +177,33 @@ export default {
       // debounce the input so it only issues a request after keyups cease for 400ms
       searchInputTimeout = setTimeout(() => {
         searchInputTimeout = null;
+        this.loading = true;
         this.loadData();
       }, 400);
     },
-    columnClick (name) {
-      this.query.sortField = name;
-      this.query.desc = !this.query.desc;
+    clear () {
+      this.query.filter = undefined;
       this.loadData();
     },
-    deleteIndex (i, indexName) {
+    onOffFocus: function () {
+      this.focusInput = false;
+    },
+    deleteIndex (indexName) {
       this.$http.delete(`esindices/${indexName}`)
         .then((response) => {
-          this.stats.data.splice(i, 1);
+          for (let i = 0; i < this.stats.length; i++) {
+            if (this.stats[i].index === indexName) {
+              this.stats.splice(i, 1);
+              return;
+            }
+          }
+        }, (error) => {
+          this.$emit('errored', error.text || error);
+        });
+    },
+    optimizeIndex (indexName) {
+      this.$http.post(`esindices/${indexName}/optimize`)
+        .then((response) => {
         }, (error) => {
           this.$emit('errored', error.text || error);
         });
@@ -209,36 +211,25 @@ export default {
     /* helper functions ------------------------------------------ */
     setRequestInterval: function () {
       reqPromise = setInterval(() => {
-        this.loadData();
-      }, parseInt(this.dataInterval, 10));
+        if (respondedAt && Date.now() - respondedAt >= parseInt(this.dataInterval)) {
+          this.loadData();
+        }
+      }, 500);
     },
-    loadData: function () {
+    loadData: function (sortField, desc) {
+      respondedAt = undefined;
+
+      if (desc !== undefined) { this.query.desc = desc; }
+      if (sortField) { this.query.sortField = sortField; }
+
       this.$http.get('esindices/list', { params: this.query })
         .then((response) => {
+          respondedAt = Date.now();
           this.error = '';
           this.loading = false;
-          this.stats = response;
-
-          this.averageValues = {};
-          this.totalValues = {};
-          let stats = this.stats.data;
-
-          let columnNames = this.columns.map(function (item) {
-            if (!item.doStats) { return; }
-            return item.field || item.sort;
-          });
-
-          for (let i = 1; i < columnNames.length; i++) {
-            const columnName = columnNames[i];
-            if (columnName) {
-              this.totalValues[columnName] = 0;
-              for (let s = 0; s < stats.length; s++) {
-                this.totalValues[columnName] += parseInt(stats[s][columnName], 10);
-              }
-              this.averageValues[columnName] = this.totalValues[columnName] / stats.length;
-            }
-          }
+          this.stats = response.data;
         }, (error) => {
+          respondedAt = undefined;
           this.loading = false;
           this.error = error;
         });
@@ -253,7 +244,23 @@ export default {
 };
 </script>
 
+<style>
+/* remove any space between dropdown button and menu to make
+   sure the menu doesn't get hidden */
+.hover-menu .dropdown-menu {
+  margin-top: 0;
+}
+/* widen the button to make sure the user has enough space to
+   move their mouse to the menu so that it doesn't get hidden */
+.hover-menu .btn-sm {
+  padding: 1px 8px !important;
+}
+</style>
+
 <style scoped>
+td {
+  white-space: nowrap;
+}
 tr.bold {
   font-weight: bold;
 }
@@ -264,10 +271,10 @@ table.table tr.border-top-bold > td {
   border-top: 2px solid #dee2e6;
 }
 
-table.table td .btn {
-  visibility: hidden;
-}
-table.table td:hover .btn {
+.table .hover-menu:hover .btn-group {
   visibility: visible;
+}
+.table .hover-menu .btn-group {
+  visibility: hidden;
 }
 </style>

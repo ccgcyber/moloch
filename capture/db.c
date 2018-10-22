@@ -272,10 +272,13 @@ LOCAL struct {
 
 #define MAX_IPS 2000
 
+LOCAL MOLOCH_LOCK_DEFINE(outputed);
+
 void moloch_db_save_session(MolochSession_t *session, int final)
 {
     uint32_t               i;
     char                   id[100];
+    uint32_t               id_len;
     uuid_t                 uuid;
     MolochString_t        *hstring;
     MolochInt_t           *hint;
@@ -358,18 +361,24 @@ void moloch_db_save_session(MolochSession_t *session, int final)
             break;
         }
     }
-    uint32_t id_len = snprintf(id, sizeof(id), "%s-", dbInfo[thread].prefix);
 
-    uuid_generate(uuid);
-    gint state = 0, save = 0;
-    id_len += g_base64_encode_step((guchar*)&myPid, 2, FALSE, id + id_len, &state, &save);
-    id_len += g_base64_encode_step(uuid, sizeof(uuid_t), FALSE, id + id_len, &state, &save);
-    id_len += g_base64_encode_close(FALSE, id + id_len, &state, &save);
-    id[id_len] = 0;
+    if (!config.autoGenerateId || session->rootId == (void *)1L) {
+        id_len = snprintf(id, sizeof(id), "%s-", dbInfo[thread].prefix);
 
-    for (i = 0; i < id_len; i++) {
-        if (id[i] == '+') id[i] = '-';
-        else if (id[i] == '/') id[i] = '_';
+        uuid_generate(uuid);
+        gint state = 0, save = 0;
+        id_len += g_base64_encode_step((guchar*)&myPid, 2, FALSE, id + id_len, &state, &save);
+        id_len += g_base64_encode_step(uuid, sizeof(uuid_t), FALSE, id + id_len, &state, &save);
+        id_len += g_base64_encode_close(FALSE, id + id_len, &state, &save);
+        id[id_len] = 0;
+
+        for (i = 0; i < id_len; i++) {
+            if (id[i] == '+') id[i] = '-';
+            else if (id[i] == '/') id[i] = '_';
+        }
+
+        if (session->rootId == (void*)1L)
+            session->rootId = g_strdup(id);
     }
 
     struct timeval currentTime;
@@ -400,7 +409,12 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     BSB jbsb = dbInfo[thread].bsb;
 
     startPtr = BSB_WORK_PTR(jbsb);
-    BSB_EXPORT_sprintf(jbsb, "{\"index\": {\"_index\": \"%ssessions2-%s\", \"_type\": \"session\", \"_id\": \"%s\"}}\n", config.prefix, dbInfo[thread].prefix, id);
+
+    if (config.autoGenerateId) {
+        BSB_EXPORT_sprintf(jbsb, "{\"index\": {\"_index\": \"%ssessions2-%s\", \"_type\": \"session\"}}\n", config.prefix, dbInfo[thread].prefix);
+    } else {
+        BSB_EXPORT_sprintf(jbsb, "{\"index\": {\"_index\": \"%ssessions2-%s\", \"_type\": \"session\", \"_id\": \"%s\"}}\n", config.prefix, dbInfo[thread].prefix, id);
+    }
 
     dataPtr = BSB_WORK_PTR(jbsb);
 
@@ -540,8 +554,6 @@ void moloch_db_save_session(MolochSession_t *session, int final)
                       config.nodeName);
 
     if (session->rootId) {
-        if (session->rootId[0] == 'R')
-            session->rootId = g_strdup(id);
         BSB_EXPORT_sprintf(jbsb, "\"rootId\":\"%s\",", session->rootId);
     }
     BSB_EXPORT_cstr(jbsb, "\"packetPos\":[");
@@ -931,12 +943,12 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     if (config.dryRun) {
         if (config.tests) {
             static int outputed;
-            static MOLOCH_LOCK_DEFINE(outputed);
 
             MOLOCH_LOCK(outputed);
             outputed++;
             const int hlen = dataPtr - startPtr;
             fprintf(stderr, "  %s{\"header\":%.*s,\n  \"body\":%.*s}\n", (outputed==1 ? "":","), hlen-1, dbInfo[thread].json, (int)(BSB_LENGTH(jbsb)-hlen-1), dbInfo[thread].json+hlen);
+            fflush(stderr);
             MOLOCH_UNLOCK(outputed);
         } else if (config.debug) {
             LOG("%.*s\n", (int)BSB_LENGTH(jbsb), dbInfo[thread].json);
@@ -1041,7 +1053,7 @@ LOCAL uint64_t moloch_db_memory_size()
     buf[len] = 0;
 
     uint64_t size;
-    sscanf(buf, "%ld", &size);
+    sscanf(buf, "%lu", &size);
 
     if (size == 0) {
         LOG("/proc/self/statm size 0 - %d '%.*s'", len, len, buf);
@@ -1179,12 +1191,14 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
     double   memMax = moloch_db_memory_max();
     float    memUse = mem/memMax*100.0;
 
-    if (memUse > config.maxMemPercentage) {
+#ifndef __SANITIZE_ADDRESS__
+    if (config.maxMemPercentage != 100 && memUse > config.maxMemPercentage) {
         LOG("Aborting, max memory percentage reached: %.2f > %u", memUse, config.maxMemPercentage);
         fflush(stdout);
         fflush(stderr);
         kill(getpid(), SIGSEGV);
     }
+#endif
 
     int json_len = snprintf(json, MOLOCH_HTTP_BUFFER_SIZE,
         "{"
@@ -1293,7 +1307,8 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
                 free(data);
             moloch_http_free_buffer(json);
         } else {
-            moloch_http_send(esServer, "POST", stats_key, stats_key_len, json, json_len, NULL, TRUE, NULL, NULL);
+            // Dropable if the current time isn't first 2 seconds of each minute
+            moloch_http_send(esServer, "POST", stats_key, stats_key_len, json, json_len, NULL, (cursec % 60) >= 2, NULL, NULL);
         }
     } else {
         char key[200];
@@ -1359,7 +1374,9 @@ LOCAL void moloch_db_health_check_cb(int UNUSED(code), unsigned char *data, int 
     else
         status = moloch_js0n_get(data, data_len, "status", &status_len);
 
-    if ( esHealthMS > 20000) {
+    if (!status) {
+        LOG("WARNING - Couldn't find status in '%.*s'", data_len, data);
+    } else if ( esHealthMS > 20000) {
         LOG("WARNING - Elasticsearch health check took more then 20 seconds %" PRIu64 "ms", esHealthMS);
     } else if ((status[0] == 'y' && uw == (gpointer)1L) || (status[0] == 'r')) {
         LOG("WARNING - Elasticsearch is %.*s and took %" PRIu64 "ms to query health, this may cause issues.  See FAQ.", status_len, status, esHealthMS);
@@ -1711,7 +1728,7 @@ char *moloch_db_create_file_full(time_t firstPacket, const char *name, uint64_t 
 /******************************************************************************/
 char *moloch_db_create_file(time_t firstPacket, const char *name, uint64_t size, int locked, uint32_t *id)
 {
-    return moloch_db_create_file_full(firstPacket, name, size, locked, id, NULL);
+    return moloch_db_create_file_full(firstPacket, name, size, locked, id, (char *)NULL);
 }
 /******************************************************************************/
 LOCAL void moloch_db_check()
@@ -2095,7 +2112,7 @@ void moloch_db_update_filesize(uint32_t fileid, uint64_t filesize)
     moloch_http_send(esServer, "POST", key, key_len, json, json_len, NULL, TRUE, NULL, NULL);
 }
 /******************************************************************************/
-gboolean moloch_db_file_exists(char *filename)
+gboolean moloch_db_file_exists(const char *filename, uint32_t *outputId)
 {
     size_t                 data_len;
     char                   key[2000];
@@ -2121,25 +2138,53 @@ gboolean moloch_db_file_exists(char *filename)
         return FALSE;
     }
 
-    if (*total != '0') {
+    if (*total == '0') {
         free(data);
-        return TRUE;
+        return FALSE;
+    }
+
+    if (outputId) {
+        uint32_t           hits_len;
+        unsigned char     *hits = moloch_js0n_get(data, data_len, "hits", &hits_len);
+
+        uint32_t           hit_len;
+        unsigned char     *hit = moloch_js0n_get(hits, hits_len, "hits", &hit_len);
+
+        uint32_t           source_len;
+        unsigned char     *source = 0;
+
+        /* Remove array wrapper */
+        source = moloch_js0n_get(hit+1, hit_len-2, "_source", &source_len);
+
+        uint32_t           len;
+        unsigned char     *value;
+
+        if ((value = moloch_js0n_get(source, source_len, "num", &len))) {
+            *outputId = atoi((char*)value);
+        } else {
+            LOGEXIT("ERROR - No num field in %.*s", source_len, source);
+        }
     }
 
     free(data);
-    return FALSE;
+    return TRUE;
 }
 /******************************************************************************/
 int moloch_db_can_quit()
 {
     int thread;
     for (thread = 0; thread < config.packetThreads; thread++) {
+        // Make sure we can lock, that means a save isn't in progress
+        MOLOCH_LOCK(dbInfo[thread].lock);
         if (dbInfo[thread].json && BSB_LENGTH(dbInfo[thread].bsb) > 0) {
+            MOLOCH_UNLOCK(dbInfo[thread].lock);
+
             moloch_db_flush_gfunc((gpointer)1);
             if (config.debug)
                 LOG ("Can't quit, sJson[%d] %ld", thread, BSB_LENGTH(dbInfo[thread].bsb));
             return 1;
         }
+        MOLOCH_UNLOCK(dbInfo[thread].lock);
     }
 
     if (moloch_http_queue_length(esServer) > 0) {
@@ -2155,7 +2200,10 @@ LOCAL  guint timers[10];
 void moloch_db_init()
 {
     if (config.tests) {
+        MOLOCH_LOCK(outputed);
         fprintf(stderr, "{\"sessions2\": [\n");
+        fflush(stderr);
+        MOLOCH_UNLOCK(outputed);
     }
     if (!config.dryRun) {
         esServer = moloch_http_create_server(config.elasticsearch, config.maxESConns, config.maxESRequests, config.compressES);
@@ -2185,12 +2233,17 @@ void moloch_db_init()
         moloch_config_monitor_file("rir file", config.rirFile, moloch_db_load_rir);
 
     if (!config.dryRun) {
-        timers[0] = g_timeout_add_seconds(  2, moloch_db_update_stats_gfunc, 0);
-        timers[1] = g_timeout_add_seconds(  5, moloch_db_update_stats_gfunc, (gpointer)1);
-        timers[2] = g_timeout_add_seconds( 60, moloch_db_update_stats_gfunc, (gpointer)2);
-        timers[3] = g_timeout_add_seconds(600, moloch_db_update_stats_gfunc, (gpointer)3);
-        timers[4] = g_timeout_add_seconds(  1, moloch_db_flush_gfunc, 0);
-        timers[5] = g_timeout_add_seconds( 30, moloch_db_health_check, 0);
+        int t = 0;
+        if (!config.noStats) {
+            timers[t++] = g_timeout_add_seconds(  2, moloch_db_update_stats_gfunc, 0);
+            timers[t++] = g_timeout_add_seconds(  5, moloch_db_update_stats_gfunc, (gpointer)1);
+            timers[t++] = g_timeout_add_seconds( 60, moloch_db_update_stats_gfunc, (gpointer)2);
+            timers[t++] = g_timeout_add_seconds(600, moloch_db_update_stats_gfunc, (gpointer)3);
+        }
+        timers[t++] = g_timeout_add_seconds(  1, moloch_db_flush_gfunc, 0);
+        if (moloch_config_boolean(NULL, "dbEsHealthCheck", TRUE)) {
+            timers[t++] = g_timeout_add_seconds( 30, moloch_db_health_check, 0);
+        }
     }
     int thread;
     for (thread = 0; thread < config.packetThreads; thread++) {
@@ -2206,12 +2259,18 @@ void moloch_db_exit()
         }
 
         moloch_db_flush_gfunc((gpointer)1);
-        moloch_db_update_stats(0, 1);
+        if (!config.noStats) {
+            moloch_db_update_stats(0, 1);
+        }
         moloch_http_free_server(esServer);
     }
 
     if (config.tests) {
+        usleep(10000);
+        MOLOCH_LOCK(outputed);
         fprintf(stderr, "]}\n");
+        fflush(stderr);
+        MOLOCH_UNLOCK(outputed);
     }
 
     if (ipTree4) {

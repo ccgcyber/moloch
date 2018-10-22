@@ -13,15 +13,33 @@
 
       <div class="input-group input-group-sm node-search pull-right mt-1">
         <div class="input-group-prepend">
-          <span class="input-group-text">
-            <span class="fa fa-search"></span>
+          <span class="input-group-text input-group-text-fw">
+            <span v-if="!shiftKeyHold"
+              class="fa fa-search fa-fw">
+            </span>
+            <span v-else
+              class="query-shortcut">
+              Q
+            </span>
           </span>
         </div>
-        <input type="text"
+        <input type="search"
           class="form-control"
           v-model="query.filter"
-          @keyup="searchForNodes()"
-          placeholder="Begin typing to search for nodes by name">
+          v-focus-input="focusInput"
+          @blur="onOffFocus"
+          @input="searchForNodes"
+          placeholder="Begin typing to search for nodes by name"
+        />
+        <span class="input-group-append">
+          <button type="button"
+            @click="clear"
+            :disabled="!query.filter"
+            class="btn btn-outline-secondary btn-clear-input">
+            <span class="fa fa-close">
+            </span>
+          </button>
+        </span>
       </div>
 
       <moloch-paging v-if="stats"
@@ -50,6 +68,7 @@ import ToggleBtn from '../utils/ToggleBtn';
 import MolochPaging from '../utils/Pagination';
 import MolochError from '../utils/Error';
 import MolochLoading from '../utils/Loading';
+import FocusInput from '../utils/FocusInput';
 
 let reqPromise; // promise returned from setInterval for recurring requests
 let initialized; // whether the graph has been initialized
@@ -59,6 +78,7 @@ export default {
   name: 'NodeStats',
   props: ['user', 'graphType', 'graphInterval', 'graphHide', 'graphSort'],
   components: { ToggleBtn, MolochPaging, MolochError, MolochLoading },
+  directives: { FocusInput },
   data: function () {
     return {
       error: '',
@@ -73,6 +93,32 @@ export default {
         hide: this.graphHide || 'none'
       }
     };
+  },
+  computed: {
+    colors: function () {
+      // build colors array from css variables
+      let styles = window.getComputedStyle(document.body);
+      let primaryLighter = styles.getPropertyValue('--color-primary-light').trim();
+      let primaryLight = styles.getPropertyValue('--color-primary').trim();
+      let primary = styles.getPropertyValue('--color-primary-dark').trim();
+      let primaryDark = styles.getPropertyValue('--color-primary-darker').trim();
+      let secondaryLighter = styles.getPropertyValue('--color-tertiary-light').trim();
+      let secondaryLight = styles.getPropertyValue('--color-tertiary').trim();
+      let secondary = styles.getPropertyValue('--color-tertiary-dark').trim();
+      let secondaryDark = styles.getPropertyValue('--color-tertiary-darker').trim();
+      return [primaryDark, primary, primaryLight, primaryLighter, secondaryLighter, secondaryLight, secondary, secondaryDark];
+    },
+    focusInput: {
+      get: function () {
+        return this.$store.state.focusSearch;
+      },
+      set: function (newValue) {
+        this.$store.commit('setFocusSearch', newValue);
+      }
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
+    }
   },
   watch: {
     graphType: function () {
@@ -110,21 +156,6 @@ export default {
       document.addEventListener('visibilitychange', this.handleVisibilityChange);
     }
   },
-  computed: {
-    colors: function () {
-      // build colors array from css variables
-      let styles = window.getComputedStyle(document.body);
-      let primaryLighter = styles.getPropertyValue('--color-primary-light').trim();
-      let primaryLight = styles.getPropertyValue('--color-primary').trim();
-      let primary = styles.getPropertyValue('--color-primary-dark').trim();
-      let primaryDark = styles.getPropertyValue('--color-primary-darker').trim();
-      let secondaryLighter = styles.getPropertyValue('--color-tertiary-light').trim();
-      let secondaryLight = styles.getPropertyValue('--color-tertiary').trim();
-      let secondary = styles.getPropertyValue('--color-tertiary-dark').trim();
-      let secondaryDark = styles.getPropertyValue('--color-tertiary-darker').trim();
-      return [primaryDark, primary, primaryLight, primaryLighter, secondaryLighter, secondaryLight, secondary, secondaryDark];
-    }
-  },
   methods: {
     /* exposed page functions ------------------------------------ */
     toggleSection: function () {
@@ -148,6 +179,14 @@ export default {
         this.loadData();
       }, 400);
     },
+    clear () {
+      this.query.filter = undefined;
+      this.loadData();
+    },
+    onOffFocus: function () {
+      this.focusInput = false;
+    },
+    /* helper functions ---------------------------------------------------- */
     loadData: function () {
       this.$http.get('stats.json', { params: this.query })
         .then((response) => {
@@ -175,12 +214,12 @@ export default {
         .size(1440);
 
       var context = self.context;
-      var nodes = self.stats.data.map(function (item) {
+      var nodes = self.stats.data.map((item) => {
         return item.nodeName;
       });
 
       function metric (name) {
-        return context.metric(function (startV, stopV, stepV, callback) {
+        return context.metric((startV, stopV, stepV, callback) => {
           let config = {
             method: 'GET',
             url: 'dstats.json',
@@ -209,7 +248,7 @@ export default {
         }
       }
 
-      d3.select('#statsGraph').call(function (div) {
+      d3.select('#statsGraph').call((div) => {
         var metrics = [];
         for (var i = 0, ilen = nodes.length; i < ilen; i++) {
           metrics.push(metric(nodes[i]));
@@ -217,6 +256,7 @@ export default {
 
         if (div[0][0]) {
           let axis = context.axis();
+          let axisBottom = context.axis();
 
           let timeStr = self.graphInterval >= 600 ? '%m/%d %H:%M:%S' : '%H:%M:%S';
 
@@ -240,6 +280,15 @@ export default {
           div.append('div')
             .attr('class', 'rule')
             .call(context.rule());
+
+          div.append('div')
+            .attr('class', 'axis')
+            .attr('height', 28)
+            .call(
+              axisBottom.orient('bottom')
+                .tickFormat(timeFormat)
+                .focusFormat(timeFormat)
+            );
         }
       });
     },

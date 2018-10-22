@@ -18,7 +18,7 @@
           </div>
           <select class="form-control input-sm"
             v-model="statsType"
-            v-on:change="statsTypeChange()">
+            v-on:change="statsTypeChange">
             <option value="deltaPacketsPerSec">Packets/Sec</option>
             <option value="deltaBytesPerSec">Bytes/Sec</option>
             <option value="deltaBitsPerSec">Bits/Sec</option>
@@ -64,7 +64,7 @@
           </div>
           <select class="form-control input-sm"
             v-model="graphInterval"
-            v-on:change="graphIntervalChange()">
+            v-on:change="graphIntervalChange">
             <option value="5">Seconds</option>
             <option value="60">Minutes</option>
             <option value="600">10 Minutes</option>
@@ -83,7 +83,7 @@
          </div>
           <select class="form-control input-sm"
             v-model="graphHide"
-            v-on:change="graphHideChange()">
+            v-on:change="graphHideChange">
             <option value="none">None</option>
             <option value="old">Out of date</option>
             <option value="nosession">No sessions</option>
@@ -120,7 +120,7 @@
           </div>
           <select class="form-control input-sm"
             v-model="dataInterval"
-            v-on:change="dataIntervalChange()" >
+            v-on:change="dataIntervalChange" >
             <option value="5000">5 seconds</option>
             <option value="15000">15 seconds</option>
             <option value="30000">30 seconds</option>
@@ -129,6 +129,24 @@
             <option value="0">None</option>
           </select>
         </div> <!-- /table data interval select -->
+
+        <div class="input-group input-group-sm ml-1"
+          v-if="tabIndex !== 0">
+          <button type="button"
+            class="btn btn-theme-tertiary btn-sm refresh-btn"
+            @click="loadData">
+            <span v-if="!shiftKeyHold">
+              Refresh
+            </span>
+            <span v-else
+              class="enter-icon">
+              <span class="fa fa-long-arrow-left fa-lg">
+              </span>
+              <div class="enter-arm">
+              </div>
+            </span>
+          </button>
+        </div>
 
         <!-- error (from child component) -->
         <div v-if="childError"
@@ -148,13 +166,13 @@
     <!-- stats content -->
     <div class="pt-5">
       <span v-if="tabIndex === 0"
-        v-b-tooltip.hover
+        v-b-tooltip.hover.left
         class="fa fa-lg fa-question-circle-o cursor-help mt-2 stats-info"
         title="HINT: These graphs are 1440 pixels wide. Expand your browser window to at least 1500 pixels wide for best viewing.">
       </span>
       <b-tabs v-model="tabIndex">
         <b-tab title="Capture Graphs"
-          @click="tabIndexChange()">
+          @click="tabIndexChange">
           <capture-graphs v-if="user && tabIndex === 0"
             :graph-type="statsType"
             :graph-interval="graphInterval"
@@ -164,36 +182,42 @@
           </capture-graphs>
         </b-tab>
         <b-tab title="Capture Stats"
-          @click="tabIndexChange()">
+          @click="tabIndexChange">
           <capture-stats v-if="user && tabIndex === 1"
             :graph-hide="graphHide"
+            :refreshData="refreshData"
             :data-interval="dataInterval"
             :user="user">
           </capture-stats>
         </b-tab>
         <b-tab title="ES Nodes"
-          @click="tabIndexChange()">
+          @click="tabIndexChange">
           <es-nodes v-if="user && tabIndex === 2"
+            :refreshData="refreshData"
             :data-interval="dataInterval">
           </es-nodes>
         </b-tab>
         <b-tab title="ES Indices"
-          @click="tabIndexChange()">
+          @click="tabIndexChange">
           <es-indices v-if="user && tabIndex === 3"
+            :refreshData="refreshData"
             :data-interval="dataInterval"
-            @errored="onError">
+            @errored="onError"
+            :user="user">
           </es-indices>
         </b-tab>
         <b-tab title="ES Tasks"
-          @click="tabIndexChange()">
+          @click="tabIndexChange">
           <es-tasks v-if="user && tabIndex === 4"
             :data-interval="dataInterval"
+            :refreshData="refreshData"
             :user="user">
           </es-tasks>
         </b-tab>
         <b-tab title="ES Shards"
-          @click="tabIndexChange()">
+          @click="tabIndexChange">
           <es-shards v-if="user && tabIndex === 5"
+            :refreshData="refreshData"
             :data-interval="dataInterval">
           </es-shards>
         </b-tab>
@@ -211,40 +235,43 @@ import EsTasks from './EsTasks';
 import EsIndices from './EsIndices';
 import CaptureGraphs from './CaptureGraphs';
 import CaptureStats from './CaptureStats';
-import UserService from '../users/UserService';
+
 export default {
   name: 'Stats',
   data: function () {
     return {
-      user: null,
       tabIndex: parseInt(this.$route.query.statsTab, 10) || 0,
       statsType: this.$route.query.type || 'deltaPacketsPerSec',
       graphInterval: this.$route.query.gtime || '5',
       graphHide: this.$route.query.hide || 'none',
       graphSort: this.$route.query.sort || 'asc',
       dataInterval: this.$route.query.refreshInterval || '5000',
+      refreshData: false,
       childError: ''
     };
+  },
+  computed: {
+    user: function () {
+      return this.$store.state.user;
+    },
+    issueSearch: function () {
+      return this.$store.state.issueSearch;
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
+    }
   },
   components: {
     CaptureGraphs, CaptureStats, EsShards, EsNodes, EsIndices, EsTasks
   },
-  created: function () {
-    this.loadUser();
-  },
   watch: {
     // watch for the route to change, then update the view
-    '$route': 'updateParams'
+    '$route': 'updateParams',
+    issueSearch: function (newVal, oldVal) {
+      if (newVal) { this.loadData(); }
+    }
   },
   methods: {
-    loadUser: function () {
-      UserService.getCurrent()
-        .then((response) => {
-          this.user = response;
-        }, (error) => {
-          this.user = { settings: { timezone: 'local' } };
-        });
-    },
     statsTypeChange: function () {
       this.$router.push({ query: { ...this.$route.query, type: this.statsType } });
     },
@@ -282,12 +309,25 @@ export default {
         this.dataInterval = queryParams.refreshInterval;
       }
     },
+    loadData: function () {
+      this.refreshData = true;
+      setTimeout(() => { this.refreshData = false; });
+    },
     onError: function (message) {
       this.childError = message;
     }
   }
 };
 </script>
+
+<style>
+table .btn-group.row-actions-btn > .btn-sm {
+  padding: 1px 4px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+</style>
+
 <style scoped>
 .stats-content {
   padding-top: 36px;

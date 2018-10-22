@@ -4,33 +4,35 @@
     <div class="mr-1 ml-1 mt-1 mb-1">
 
       <!-- actions dropdown menu -->
-      <b-dropdown right
+      <b-dropdown v-if="!hideActions"
+        right
         size="sm"
         class="pull-right ml-1 action-menu-dropdown"
+        boundary="body"
         variant="theme-primary">
-        <b-dropdown-item @click="exportPCAP()">
+        <b-dropdown-item @click="exportPCAP">
           <span class="fa fa-fw fa-file-o"></span>&nbsp;
           Export PCAP
         </b-dropdown-item>
-        <b-dropdown-item @click="exportCSV()">
+        <b-dropdown-item @click="exportCSV">
           <span class="fa fa-fw fa-file-excel-o"></span>&nbsp;
           Export CSV
         </b-dropdown-item>
-        <b-dropdown-item @click="addTags()">
+        <b-dropdown-item @click="addTags">
           <span class="fa fa-fw fa-tags"></span>&nbsp;
           Add Tags
         </b-dropdown-item>
-        <b-dropdown-item @click="removeTags()"
+        <b-dropdown-item @click="removeTags"
           v-has-permission="'removeEnabled'">
           <span class="fa fa-fw fa-trash-o"></span>&nbsp;
           Remove Tags
         </b-dropdown-item>
-        <b-dropdown-item @click="scrubPCAP()"
+        <b-dropdown-item @click="scrubPCAP"
           v-has-permission="'removeEnabled'">
           <span class="fa fa-fw fa-trash-o"></span>&nbsp;
           Scrub PCAP Storage
         </b-dropdown-item>
-        <b-dropdown-item @click="deleteSession()"
+        <b-dropdown-item @click="deleteSession"
           v-has-permission="'removeEnabled'">
           <span class="fa fa-fw fa-trash-o"></span>&nbsp;
           Delete SPI & PCAP
@@ -51,11 +53,19 @@
         toggle-class="rounded"
         variant="theme-secondary">
         <template slot="button-content">
-          <span class="fa fa-eye"></span>
-          <span v-if="view">{{ view }}</span>
-          <span class="sr-only">Views</span>
+          <div v-if="view"
+            v-b-tooltip.hover.left
+            :title="views[view].expression">
+            <span class="fa fa-eye"></span>
+            <span v-if="view">{{ view }}</span>
+            <span class="sr-only">Views</span>
+          </div>
+          <div v-else>
+            <span class="fa fa-eye"></span>
+            <span class="sr-only">Views</span>
+          </div>
         </template>
-        <b-dropdown-item @click="createView()">
+        <b-dropdown-item @click="createView">
           <span class="fa fa-plus-circle"></span>&nbsp;
           New View
         </b-dropdown-item>
@@ -67,21 +77,37 @@
         <b-dropdown-item v-for="(value, key) in views"
           :key="key"
           :class="{'active':view === key}"
-          @click.self="setView(key)">
+          @click.self="setView(key)"
+          v-b-tooltip.hover.left
+          :title="value.expression">
           <button class="btn btn-xs btn-default pull-right"
             type="button"
             @click="deleteView(key)">
             <span class="fa fa-trash-o"></span>
           </button>
-          {{ key }}
+          {{ key }}&nbsp;
+          <span v-if="value.sessionsColConfig"
+            class="fa fa-columns cursor-help"
+            v-b-tooltip.hover
+            title="This view has a sessions table column configuration and sort order associated with it. Applying this view will also update the sessions table.">
+          </span>
         </b-dropdown-item>
       </b-dropdown> <!-- /views dropdown menu -->
 
       <!-- search button -->
-      <a class="btn btn-sm btn-theme-tertiary pull-right ml-1"
-        @click="applyParams()"
+      <a class="btn btn-sm btn-theme-tertiary pull-right ml-1 search-btn"
+        @click="applyParams"
         tabindex="2">
-        Search
+        <span v-if="!shiftKeyHold">
+          Search
+        </span>
+        <span v-else
+          class="enter-icon">
+          <span class="fa fa-long-arrow-left fa-lg">
+          </span>
+          <div class="enter-arm">
+          </div>
+        </span>
       </a> <!-- /search button -->
 
       <!-- search box typeahead -->
@@ -93,6 +119,7 @@
       <!-- time inputs -->
       <moloch-time :timezone="timezone"
         @timeChange="timeChange"
+        :hide-interval="hideInterval"
         :updateTime="updateTime">
       </moloch-time> <!-- /time inputs -->
 
@@ -234,7 +261,9 @@ export default {
     'numMatchingSessions',
     'start',
     'timezone',
-    'fields'
+    'fields',
+    'hideActions',
+    'hideInterval'
   ],
   data: function () {
     return {
@@ -263,6 +292,12 @@ export default {
       set: function (newValue) {
         this.$store.commit('setExpression', newValue);
       }
+    },
+    issueSearch: function () {
+      return this.$store.state.issueSearch;
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
     }
   },
   watch: {
@@ -275,6 +310,9 @@ export default {
         expression: this.expression,
         view: this.view
       });
+    },
+    issueSearch: function (newVal, oldVal) {
+      if (newVal) { this.applyParams(); }
     }
   },
   created: function () {

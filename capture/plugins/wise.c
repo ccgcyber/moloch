@@ -33,6 +33,7 @@ LOCAL uint32_t              maxCache;
 LOCAL uint32_t              cacheSecs;
 LOCAL char                  tcpTuple;
 LOCAL char                  udpTuple;
+LOCAL uint32_t              logEvery;
 
 
 LOCAL int                   protocolField;
@@ -226,7 +227,14 @@ LOCAL void wise_session_cmd_cb(MolochSession_t *session, gpointer uw1, gpointer 
     moloch_session_decr_outstanding(session);
 }
 /******************************************************************************/
-LOCAL void wise_free_item_unlocked(WiseItem_t *wi)
+LOCAL void wise_free_item(WiseItem_t *wi)
+{
+    g_free(wi->key);
+    moloch_field_ops_free(&wi->ops);
+    MOLOCH_TYPE_FREE(WiseItem_t, wi);
+}
+/******************************************************************************/
+LOCAL void wise_remove_item_locked(WiseItem_t *wi)
 {
     HASH_REMOVE(wih_, types[(int)wi->type].itemHash, wi);
     if (wi->sessions) {
@@ -236,9 +244,7 @@ LOCAL void wise_free_item_unlocked(WiseItem_t *wi)
         g_free(wi->sessions);
         wi->sessions = 0;
     }
-    g_free(wi->key);
-    moloch_field_ops_free(&wi->ops);
-    MOLOCH_TYPE_FREE(WiseItem_t, wi);
+    moloch_free_later(wi, (GDestroyNotify) wise_free_item);
 }
 /******************************************************************************/
 LOCAL void wise_cb(int UNUSED(code), unsigned char *data, int data_len, gpointer uw)
@@ -259,7 +265,7 @@ LOCAL void wise_cb(int UNUSED(code), unsigned char *data, int data_len, gpointer
     if (BSB_IS_ERROR(bsb) || (ver != 0 && ver != 2)) {
         MOLOCH_LOCK(item);
         for (i = 0; i < request->numItems; i++) {
-            wise_free_item_unlocked(request->items[i]);
+            wise_remove_item_locked(request->items[i]);
         }
         MOLOCH_UNLOCK(item);
         MOLOCH_TYPE_FREE(WiseRequest_t, request);
@@ -274,7 +280,7 @@ LOCAL void wise_cb(int UNUSED(code), unsigned char *data, int data_len, gpointer
         unsigned char *hash;
         BSB_IMPORT_ptr(bsb, hash, 32);
 
-        int cnt;
+        int cnt = 0;
         BSB_IMPORT_u16(bsb, cnt);
 
         MOLOCH_LOCK(item);
@@ -324,6 +330,7 @@ LOCAL void wise_cb(int UNUSED(code), unsigned char *data, int data_len, gpointer
     gettimeofday(&currentTime, NULL);
 
     for (i = 0; i < request->numItems; i++) {
+        MOLOCH_LOCK(item);
         WiseItem_t    *wi = request->items[i];
         int numOps = 0;
         BSB_IMPORT_u08(bsb, numOps);
@@ -362,12 +369,11 @@ LOCAL void wise_cb(int UNUSED(code), unsigned char *data, int data_len, gpointer
         wi->sessions = 0;
         wi->numSessions = 0;
 
-        MOLOCH_LOCK(item);
         DLL_PUSH_HEAD(wil_, &types[(int)wi->type].itemList, wi);
         // Cache needs to be reduced
         if (types[(int)wi->type].itemList.wil_count > maxCache) {
             DLL_POP_TAIL(wil_, &types[(int)wi->type].itemList, wi);
-            wise_free_item_unlocked(wi);
+            wise_remove_item_locked(wi);
         }
         MOLOCH_UNLOCK(item);
     }
@@ -384,10 +390,9 @@ LOCAL void wise_lookup(MolochSession_t *session, WiseRequest_t *request, char *v
         return;
 
     static int lookups = 0;
-    WiseItem_t *wi;
 
     lookups++;
-    if ((lookups % 10000) == 0)
+    if (logEvery != 0 && (lookups % logEvery) == 0)
         wise_print_stats();
 
     stats[type][INTEL_STAT_LOOKUP]++;
@@ -396,6 +401,7 @@ LOCAL void wise_lookup(MolochSession_t *session, WiseRequest_t *request, char *v
     gettimeofday(&currentTime, NULL);
 
     MOLOCH_LOCK(item);
+    WiseItem_t *wi;
     HASH_FIND(wih_, types[type].itemHash, value, wi);
 
     if (wi) {
@@ -460,9 +466,9 @@ LOCAL void wise_lookup_domain(MolochSession_t *session, WiseRequest_t *request, 
 {
     // Skip leading http
     if (*domain == 'h') {
-        if (memcmp(domain, "http://", 7) == 0)
+        if (strncmp(domain, "http://", 7) == 0)
             domain += 7;
-        else if (memcmp(domain, "https://", 8) == 0)
+        else if (strncmp(domain, "https://", 8) == 0)
             domain += 8;
     }
 
@@ -724,7 +730,7 @@ LOCAL void wise_plugin_exit()
     for (int type = 0; type < INTEL_TYPE_SIZE; type++) {
         WiseItem_t *wi;
         while (DLL_POP_TAIL(wil_, &types[type].itemList, wi)) {
-            wise_free_item_unlocked(wi);
+            wise_remove_item_locked(wi);
         }
     }
 
@@ -768,7 +774,14 @@ LOCAL void wise_load_config()
 
     types[INTEL_TYPE_DOMAIN].fields[0] = moloch_field_by_db("http.host");
     types[INTEL_TYPE_DOMAIN].fields[1] = moloch_field_by_db("dns.host");
-    types[INTEL_TYPE_DOMAIN].fieldsLen = 2;
+
+    if (config.parseDNSRecordAll) {
+        types[INTEL_TYPE_DOMAIN].fields[2] = moloch_field_by_db("dns.mailserverHost");
+        // Not sending nameserver for now
+        types[INTEL_TYPE_DOMAIN].fieldsLen = 3;
+    } else {
+        types[INTEL_TYPE_DOMAIN].fieldsLen = 2;
+    }
 
     types[INTEL_TYPE_MD5].fields[0] = moloch_field_by_db("http.md5");
     types[INTEL_TYPE_MD5].fields[1] = moloch_field_by_db("email.md5");
@@ -859,6 +872,7 @@ void moloch_plugin_init()
     cacheSecs = moloch_config_int(NULL, "wiseCacheSecs", 600, 1, 5000);
     tcpTuple = moloch_config_boolean(NULL, "wiseTcpTupleLookups", FALSE);
     udpTuple = moloch_config_boolean(NULL, "wiseUdpTupleLookups", FALSE);
+    logEvery = moloch_config_int(NULL, "wiseLogEvery", 10000, 0, 10000000);
 
     wiseURL  = moloch_config_str(NULL, "wiseURL", NULL);
     wisePort = moloch_config_int(NULL, "wisePort", 8081, 1, 0xffff);

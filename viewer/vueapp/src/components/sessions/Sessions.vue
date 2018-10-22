@@ -8,7 +8,7 @@
       :num-visible-sessions="query.length"
       :num-matching-sessions="sessions.recordsFiltered"
       :start="query.start"
-      :timezone="settings.timezone"
+      :timezone="user.settings.timezone"
       @changeSearch="loadData">
     </moloch-search> <!-- /search navbar -->
 
@@ -32,7 +32,7 @@
         :graph-data="graphData"
         :map-data="mapData"
         :primary="true"
-        :timezone="settings.timezone">
+        :timezone="user.settings.timezone">
       </moloch-visualizations> <!-- /session visualizations -->
 
       <!-- sticky (opened) sessions -->
@@ -41,7 +41,7 @@
           class="sticky-sessions"
           v-if="stickySessions.length"
           :sessions="stickySessions"
-          :timezone="settings.timezone"
+          :timezone="user.settings.timezone"
           @closeSession="closeSession"
           @closeAllSessions="closeAllSessions">
         </moloch-sticky-sessions>
@@ -88,13 +88,13 @@
                     {{ key }}
                   </b-dropdown-header>
                   <!-- TODO fix tooltip placement -->
+                  <!-- https://github.com/bootstrap-vue/bootstrap-vue/issues/1352 -->
                   <b-dropdown-item
                     v-for="(field, k) in group"
                     :key="key + k"
                     :class="{'active':isVisible(field.dbField) >= 0}"
                     @click.stop.prevent="toggleVisibility(field.dbField)"
-                    v-b-tooltip.hover
-                    placement="right"
+                    v-b-tooltip.hover.top
                     :title="field.help">
                     {{ field.friendlyName }}
                     <small>({{ field.exp }})</small>
@@ -121,13 +121,13 @@
                       class="form-control"
                       v-model="newColConfigName"
                       placeholder="Enter new column configuration name"
-                      @keydown.enter="saveColumnConfiguration()"
+                      @keydown.enter="saveColumnConfiguration"
                     />
                     <div class="input-group-append">
                       <button type="button"
                         class="btn btn-theme-secondary"
                         :disabled="!newColConfigName"
-                        @click="saveColumnConfiguration()"
+                        @click="saveColumnConfiguration"
                         v-b-tooltip.hover
                         title="Save this custom column configuration">
                         <span class="fa fa-save">
@@ -144,8 +144,13 @@
                   {{ colConfigError }}
                 </b-dropdown-item>
                 <b-dropdown-item
+                  v-if="colConfigSuccess"
+                  class="text-success">
+                  {{ colConfigSuccess }}
+                </b-dropdown-item>
+                <b-dropdown-item
                   v-b-tooltip.hover
-                  @click.stop.prevent="loadColumnConfiguration()"
+                  @click.stop.prevent="loadColumnConfiguration(-1)"
                   title="Reset table to default columns">
                   Moloch Default
                 </b-dropdown-item>
@@ -153,10 +158,18 @@
                   v-for="(config, key) in colConfigs"
                   :key="key"
                   @click.self.stop.prevent="loadColumnConfiguration(key)">
-                  <button class="btn btn-xs btn-danger pull-right"
+                  <button class="btn btn-xs btn-danger pull-right ml-1"
                     type="button"
                     @click.stop.prevent="deleteColumnConfiguration(config.name, key)">
                     <span class="fa fa-trash-o">
+                    </span>
+                  </button>
+                  <button class="btn btn-xs btn-warning pull-right"
+                    type="button"
+                    v-b-tooltip.hover
+                    title="Update this column configuration with the currently visible columns"
+                    @click.stop.prevent="updateColumnConfiguration(config.name, key)">
+                    <span class="fa fa-save">
                     </span>
                   </button>
                   {{ config.name }}
@@ -240,8 +253,8 @@
               </b-dropdown> <!-- /column dropdown menu -->
               <!-- sortable column -->
               <span v-if="(header.exp || header.sortBy) && !header.unsortable"
-                @mousedown="mouseDown()"
-                @mouseup="mouseUp()"
+                @mousedown="mouseDown"
+                @mouseup="mouseUp"
                 @click="sortBy($event, header.sortBy || header.dbField)"
                 class="cursor-pointer">
                 <div class="header-sort">
@@ -268,7 +281,7 @@
             <button type="button"
               v-if="showFitButton && !loading"
               class="btn btn-xs btn-theme-quaternary fit-btn"
-              @click="fitTable()"
+              @click="fitTable"
               v-b-tooltip.hover
               title="Fit the table to the current window size">
               <span class="fa fa-arrows-h">
@@ -311,7 +324,7 @@
                       :expr="col.exp"
                       :value="value"
                       :parse="true"
-                      :timezone="settings.timezone">
+                      :timezone="user.settings.timezone">
                     </moloch-session-field>
                   </span>
                 </span> <!-- /field value is an array -->
@@ -323,7 +336,7 @@
                     :expr="col.exp"
                     :value="session[col.dbField]"
                     :parse="true"
-                    :timezone="settings.timezone">
+                    :timezone="user.settings.timezone">
                   </moloch-session-field>
                 </span> <!-- /field value a single value -->
               </td> <!-- /field values -->
@@ -398,6 +411,7 @@ let timeout;
 let colResizeInitialized;
 let colDragDropInitialized;
 let draggableColumns;
+let tableDestroyed;
 
 // window/table resize variables
 let resizeTimeout;
@@ -419,26 +433,28 @@ export default {
   },
   data: function () {
     return {
-      user: null,
       loading: true,
       error: '',
       sessions: {}, // page data
       stickySessions: [],
-      settings: {}, // user settings
       colWidths: {},
       colConfigs: [],
       colConfigError: '',
+      colConfigSuccess: '',
       headers: [],
       graphData: undefined,
       mapData: undefined,
       colQuery: '', // query for columns to toggle visibility
-      newColConfigName: '' // name of new custom column config
+      newColConfigName: '', // name of new custom column config
+      viewChanged: false,
+      views: undefined
     };
   },
   created: function () {
     this.getColumnWidths();
     this.getTableState(); // IMPORTANT: kicks off the initial search query!
     this.getCustomColumnConfigurations();
+    this.getViews();
 
     // watch for window resizing and update the info column width
     // this is only registered when the user has not set widths for any
@@ -455,7 +471,7 @@ export default {
   computed: {
     query: function () {
       return { // query defaults
-        length: this.$route.query.length || 50, // page length
+        length: parseInt(this.$route.query.length || 50), // page length
         start: 0, // first item index
         facets: 1,
         date: this.$store.state.timeRange,
@@ -466,6 +482,9 @@ export default {
         view: this.$route.query.view || undefined,
         expression: this.$store.state.expression || undefined
       };
+    },
+    user: function () {
+      return this.$store.state.user;
     },
     filteredFields: function () {
       let filteredGroupedFields = {};
@@ -479,6 +498,11 @@ export default {
       }
 
       return filteredGroupedFields;
+    }
+  },
+  watch: {
+    'query.view': function (newView, oldView) {
+      this.viewChanged = true;
     }
   },
   methods: {
@@ -750,7 +774,7 @@ export default {
     loadColumnConfiguration: function (index) {
       this.loading = true;
 
-      if (!index && index !== 0) {
+      if (index === -1) {
         this.tableState.visibleHeaders = defaultTableState.visibleHeaders.slice();
         this.tableState.order = defaultTableState.order.slice();
       } else {
@@ -776,6 +800,29 @@ export default {
         .then((response) => {
           this.colConfigs.splice(index, 1);
           this.colConfigError = false;
+        })
+        .catch((error) => {
+          this.colConfigError = error.text;
+        });
+    },
+    /**
+     * Updates a previously saved custom column configuration
+     * @param {string} name The name of the column config to udpate
+     * @param {int} index   The index in the array of the column config to udpate
+     */
+    updateColumnConfiguration: function (name, index) {
+      let data = {
+        name: name,
+        columns: this.tableState.visibleHeaders.slice(),
+        order: this.tableState.order.slice()
+      };
+
+      UserService.updateColumnConfig(data)
+        .then((response) => {
+          this.colConfigs[index] = data;
+          this.colConfigError = false;
+          this.colConfigSuccess = response.text;
+          setTimeout(() => { this.colConfigSuccess = ''; }, 5000);
         })
         .catch((error) => {
           this.colConfigError = error.text;
@@ -833,16 +880,17 @@ export default {
     },
     /* Gets the column widths of the table if they exist */
     getColumnWidths: function () {
-      SessionsService.getState('sessionsColWidths')
+      UserService.getState('sessionsColWidths')
         .then((response) => {
           this.colWidths = response.data || {};
         });
     },
     /* Gets the state of the table (sort order and column order/visibility) */
     getTableState: function () {
-      SessionsService.getState('sessionsNew')
+      UserService.getState('sessionsNew')
         .then((response) => {
           this.tableState = response.data;
+          this.$store.commit('setSessionsTableState', this.tableState);
           if (Object.keys(this.tableState).length === 0 ||
             !this.tableState.visibleHeaders || !this.tableState.order) {
             this.tableState = defaultTableState;
@@ -857,7 +905,7 @@ export default {
             .then((result) => {
               this.fields = result;
               this.setupFields();
-              this.getUserSettings(); // IMPORTANT: kicks off the initial search query!
+              this.setupUserSettings(); // IMPORTANT: kicks off the initial search query!
             }).catch((error) => {
               this.loading = false;
               this.error = error;
@@ -877,34 +925,26 @@ export default {
           this.colConfigError = error.text;
         });
     },
-    getUserSettings: function () {
-      UserService.getCurrent()
-        .then((response) => {
-          this.settings = response.settings;
+    setupUserSettings: function () {
+      // if settings has custom sort field and the custom sort field
+      // exists in the table headers, apply it
+      if (this.user.settings && this.user.settings.sortColumn !== 'last' &&
+         this.tableState.visibleHeaders.indexOf(this.user.settings.sortColumn) > -1) {
+        this.query.sorts = [[this.user.settings.sortColumn, this.user.settings.sortDirection]];
+        this.tableState.order = this.query.sorts;
+      }
 
-          // if settings has custom sort field and the custom sort field
-          // exists in the table headers, apply it
-          if (this.settings && this.settings.sortColumn !== 'last' &&
-             this.tableState.visibleHeaders.indexOf(this.settings.sortColumn) > -1) {
-            this.query.sorts = [[this.settings.sortColumn, this.settings.sortDirection]];
-            this.tableState.order = this.query.sorts;
-          }
+      // IMPORTANT: kicks off the initial search query
+      if (!this.user.settings.manualQuery ||
+        !JSON.parse(this.user.settings.manualQuery) ||
+        componentInitialized) {
+        this.loadData();
+      } else {
+        this.loading = false;
+        this.error = 'Now, issue a query!';
+      }
 
-          // IMPORTANT: kicks off the initial search query
-          if (!this.settings.manualQuery ||
-            !JSON.parse(this.settings.manualQuery) ||
-            componentInitialized) {
-            this.loadData();
-          } else {
-            this.loading = false;
-            this.error = 'Now, issue a query!';
-          }
-
-          componentInitialized = true;
-        }, (error) => {
-          this.settings = { timezone: 'local' };
-          this.error = error;
-        });
+      componentInitialized = true;
     },
     /**
      * Makes a request to the Session Service to get the list of sessions
@@ -938,6 +978,18 @@ export default {
 
       this.query.sorts = this.tableState.order || defaultTableState.order;
 
+      if (this.viewChanged) {
+        for (let view in this.views) {
+          if (view === this.query.view && this.views[view].sessionsColConfig) {
+            this.tableState = this.views[view].sessionsColConfig;
+            this.mapHeadersToFields();
+            this.query.sorts = this.tableState.order;
+            this.saveTableState();
+          }
+        }
+        this.viewChanged = false;
+      }
+
       SessionsService.get(this.query)
         .then((response) => {
           this.error = '';
@@ -969,7 +1021,8 @@ export default {
      * @param {bool} stopLoading Whether to stop the loading state when promise returns
      */
     saveTableState: function (stopLoading) {
-      SessionsService.saveState(this.tableState, 'sessionsNew')
+      this.$store.commit('setSessionsTableState', this.tableState);
+      UserService.saveState(this.tableState, 'sessionsNew')
         .then(() => {
           if (stopLoading) { this.loading = false; }
         })
@@ -1091,6 +1144,9 @@ export default {
           return !event.related.classList.contains('ignore-element');
         },
         onEnd: (event) => { // dragged col header was dropped
+          // nothing has changed, so don't do stuff
+          if (event.oldIndex === event.newIndex) { return; }
+
           this.loading = true;
 
           // update the headers to the new order
@@ -1112,34 +1168,40 @@ export default {
     },
     /* Initializes resizable columns */
     initializeColResizable: function () {
-      colResizeInitialized = true;
-      $('#sessionsTable').colResizable({
-        minWidth: 50,
-        headerOnly: true,
-        resizeMode: 'overflow',
-        disabledColumns: [0],
-        hoverCursor: 'col-resize',
-        onResize: (event, column, colIdx) => {
-          this.loading = true;
+      if (tableDestroyed) {
+        $('#sessionsTable').colResizable({ disable: true });
+        colResizeInitialized = false;
+        tableDestroyed = false;
+      }
 
-          let header = this.headers[colIdx - 1];
-          if (header) {
-            header.width = column.w;
-            this.colWidths[header.dbField] = column.w;
+      setTimeout(() => {
+        colResizeInitialized = true;
+        $('#sessionsTable').colResizable({
+          minWidth: 50,
+          headerOnly: true,
+          resizeMode: 'overflow',
+          disabledColumns: [0],
+          hoverCursor: 'col-resize',
+          onResize: (event, column, colIdx) => {
+            this.loading = true;
 
-            this.saveColumnWidths();
-            this.mapHeadersToFields();
-          }
+            let header = this.headers[colIdx - 1];
+            if (header) {
+              header.width = column.w;
+              this.colWidths[header.dbField] = column.w;
 
-          setTimeout(() => {
+              this.saveColumnWidths();
+              this.mapHeadersToFields();
+            }
+
             this.loading = false;
-          });
-        }
+          }
+        });
       });
     },
     /* Saves the column widths */
     saveColumnWidths: function () {
-      SessionsService.saveState(this.colWidths, 'sessionsColWidths')
+      UserService.saveState(this.colWidths, 'sessionsColWidths')
         .catch((error) => { this.error = error; });
     },
     /**
@@ -1172,6 +1234,12 @@ export default {
         }
       }
     },
+    getViews: function () {
+      UserService.getViews()
+        .then((response) => {
+          this.views = response;
+        });
+    },
 
     /* event handlers ------------------------------------------------------ */
     /**
@@ -1185,6 +1253,7 @@ export default {
     }
   },
   beforeDestroy: function () {
+    tableDestroyed = true;
     holdingClick = false;
     componentInitialized = false;
     colResizeInitialized = false;
@@ -1202,6 +1271,10 @@ export default {
 </script>
 
 <style>
+.col-config-menu .dropdown-menu {
+  min-width: 250px;
+  max-width: 350px;
+}
 .col-config-menu > button.btn {
   border-top-right-radius: 4px !important;
   border-bottom-right-radius: 4px !important;;
@@ -1337,14 +1410,8 @@ table.sessions-table tbody tr td {
   font-size: 120%;
   font-weight: bold;
 }
-.col-vis-menu .dropdown-typeahead {
-  width: 200px;
-}
 
 /* custom column configurations menu --------- */
-.col-config-menu {
-  max-width: 280px;
-}
 .col-config-menu .dropdown-header {
   padding: .25rem .5rem 0;
 }

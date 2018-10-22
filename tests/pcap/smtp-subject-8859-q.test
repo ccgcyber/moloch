@@ -13,10 +13,9 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "Cisco",
                "Cisco Systems, Inc"
             ],
-            "dstOuiCnt" : 2,
+            "dstOuiCnt" : 1,
             "dstPackets" : 14,
             "dstPayload8" : "3232302078787878",
             "dstPort" : 25,
@@ -52,6 +51,15 @@
                   "subject"
                ],
                "headerCnt" : 10,
+               "headerField" : [
+                  "date",
+                  "content-disposition"
+               ],
+               "headerValue" : [
+                  "Wed, 11 Dec 2013 22:08:45 -0500",
+                  "inline"
+               ],
+               "headerValueCnt" : 2,
                "host" : [
                   "localhost",
                   "xxxxxxxxxxxxx.xxx.com"

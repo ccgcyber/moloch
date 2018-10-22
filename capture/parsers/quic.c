@@ -39,6 +39,10 @@ LOCAL int quic_chlo_parser(MolochSession_t *session, BSB dbsb) {
     BSB_LIMPORT_u16(dbsb, tagLen);
     BSB_LIMPORT_skip(dbsb, 2);
 
+    if (BSB_IS_ERROR(dbsb)) {
+        return 0;
+    }
+
     moloch_session_add_protocol(session, "quic");
 
     if (!tag || memcmp(tag, "CHLO", 4) != 0) {
@@ -232,20 +236,21 @@ void moloch_parser_init()
     moloch_parsers_classifier_register_udp("quic", NULL, 9, (const unsigned char *)"PRST", 4, quic_add);
 
     hostField = moloch_field_define("quic", "lotermfield",
-        "host.quic", "Hostname", "quic.host", 
-        "QUIC host header field", 
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT, 
-        "aliases", "[\"quic.host\"]", NULL);
+        "host.quic", "Hostname", "quic.host",
+        "QUIC host header field",
+        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        "aliases", "[\"quic.host\"]",
+        (char *)NULL);
 
     uaField = moloch_field_define("quic", "termfield",
         "quic.user-agent", "User-Agent", "quic.useragent",
         "User-Agent",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
-        NULL);
+        (char *)NULL);
 
     versionField = moloch_field_define("quic", "termfield",
         "quic.version", "Version", "quic.version",
         "QUIC Version",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
-        NULL);
+        (char *)NULL);
 }

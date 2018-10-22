@@ -39,7 +39,7 @@
               <select class="form-control"
                 style="-webkit-appearance:none;"
                 v-model="params.packets"
-                @change="getPackets()">
+                @change="getPackets">
                 <option value="50">50</option>
                 <option value="200">200</option>
                 <option value="500">500</option>
@@ -192,7 +192,7 @@
       </span>&nbsp;
       Loading session packets&nbsp;
       <button type="button"
-        @click="cancelPacketLoad()"
+        @click="cancelPacketLoad"
         class="btn btn-warning btn-xs">
         <span class="fa fa-ban">
         </span>&nbsp;
@@ -217,7 +217,7 @@
         {{ errorPackets }}&nbsp;
       </span>
       <button type="button"
-        @click="getPackets()"
+        @click="getPackets"
         class="btn btn-success btn-xs">
         <span class="fa fa-refresh">
         </span>&nbsp;
@@ -250,7 +250,7 @@
               <select class="form-control"
                 style="-webkit-appearance:none;"
                 v-model="params.packets"
-                @change="getPackets()">
+                @change="getPackets">
                 <option value="50">50</option>
                 <option value="200">200</option>
                 <option value="500">500</option>
@@ -404,7 +404,6 @@
 import Vue from 'vue';
 import qs from 'qs';
 import sanitizeHtml from 'sanitize-html';
-import UserService from '../users/UserService';
 import ConfigService from '../utils/ConfigService';
 import SessionsService from './SessionsService';
 import FieldService from '../search/FieldService';
@@ -431,7 +430,6 @@ export default {
       hidePackets: true,
       errorPackets: '',
       loadingPackets: false,
-      userSettings: {},
       packetPromise: undefined,
       detailHtml: undefined,
       molochclusters: {},
@@ -451,6 +449,9 @@ export default {
     };
   },
   computed: {
+    user: function () {
+      return this.$store.state.user;
+    },
     cyberChefSrcUrl: function () {
       return `${this.session.node}/session/${this.session.id}/cyberchef?type=src&recipe=[{"op":"From Hex","args":["None"]}]`;
     },
@@ -459,7 +460,7 @@ export default {
     }
   },
   created: function () {
-    this.getUserSettings();
+    this.setUserParams();
     this.getDetailData();
   },
   methods: {
@@ -489,7 +490,7 @@ export default {
     },
     toggleTimestamps: function () {
       this.params.ts = !this.params.ts;
-      if (localStorage && this.userSettings.showTimestamps === 'last') {
+      if (localStorage && this.user.settings.showTimestamps === 'last') {
         // update browser saved ts if the user settings is set to last
         localStorage['moloch-ts'] = this.params.ts;
       }
@@ -732,38 +733,28 @@ export default {
           this.molochclusters = clusters;
         });
     },
-    getUserSettings: function () {
-      UserService.getSettings()
-        .then((response) => {
-          this.userSettings = response;
-
-          this.setUserParams();
-        })
-        .catch((error) => {
-          // can't get user, so use defaults
-          this.userSettings = defaultUserSettings;
-        });
-    },
     /* sets some of the session detail query parameters based on user settings */
     setUserParams: function () {
-      if (localStorage && this.userSettings) { // display user saved options
-        if (this.userSettings.detailFormat === 'last' && localStorage['moloch-base']) {
+      if (localStorage && this.user.settings) { // display user saved options
+        if (this.user.settings.detailFormat === 'last' && localStorage['moloch-base']) {
           this.params.base = localStorage['moloch-base'];
-        } else if (this.userSettings.detailFormat) {
-          this.params.base = this.userSettings.detailFormat;
+        } else if (this.user.settings.detailFormat) {
+          this.params.base = this.user.settings.detailFormat;
         }
 
-        if (this.userSettings.numPackets === 'last') {
+        if (this.user.settings.numPackets === 'last') {
           this.params.packets = localStorage['moloch-packets'] || 200;
         } else {
-          this.params.packets = this.userSettings.numPackets || 200;
+          this.params.packets = this.user.settings.numPackets || 200;
         }
 
-        if (this.userSettings.showTimestamps === 'last' && localStorage['moloch-ts']) {
+        if (this.user.settings.showTimestamps === 'last' && localStorage['moloch-ts']) {
           this.params.ts = localStorage['moloch-ts'] === 'true';
-        } else if (this.userSettings.showTimestamps) {
-          this.params.ts = this.userSettings.showTimestamps === 'on';
+        } else if (this.user.settings.showTimestamps) {
+          this.params.ts = this.user.settings.showTimestamps === 'on';
         }
+      } else if (!this.user.settings) {
+        this.user.settings = defaultUserSettings;
       }
     },
     /**
@@ -823,10 +814,10 @@ export default {
       this.errorPackets = false;
 
       if (localStorage) { // update browser saved options
-        if (this.userSettings.detailFormat === 'last') {
+        if (this.user.settings.detailFormat === 'last') {
           localStorage['moloch-base'] = this.params.base;
         }
-        if (this.userSettings.numPackets === 'last') {
+        if (this.user.settings.numPackets === 'last') {
           localStorage['moloch-packets'] = this.params.packets || 200;
         }
         localStorage['moloch-line'] = this.params.line;
@@ -873,7 +864,7 @@ export default {
               if (!isNaN(value)) { // only parse value if it's a number (ms from 1970)
                 let time = this.$options.filters.timezoneDateString(
                   Math.floor(value / 1000),
-                  this.userSettings.timezone,
+                  this.user.settings.timezone,
                   'YYYY/MM/DD HH:mm:ss.sss z'
                 );
                 timeEl[0].innerHTML = time;
@@ -1051,9 +1042,13 @@ export default {
 /* src/dst packet text colors */
 .packet-container .sessiondst {
   color: var(--color-dst, #0000FF) !important;
+  max-width: 50vw !important;
+  word-wrap: break-word;
 }
 .packet-container .sessionsrc {
   color: var(--color-src, #CA0404) !important;
+  max-width: 50vw !important;
+  word-wrap: break-word;
 }
 
 /* list values */
@@ -1114,6 +1109,10 @@ export default {
   font-weight: 600;
   line-height: 21px;
   padding: 0 5px 1px 5px;
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-detail .clickable-label button.btn:hover {

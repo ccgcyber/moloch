@@ -186,10 +186,10 @@ Pcap.prototype.readPacket = function(pos, cb) {
 
   if (this.encoding === "aes-256-ctr") {
     posoffset = pos%16;
-    pos = pos & ~0xf;
+    pos = pos - posoffset; // Can't use & ~0xf because javascript is 32bit
   } else if (this.encoding === "xor-2048") {
     posoffset = pos%256;
-    pos = pos & ~0xff;
+    pos = pos - posoffset; // Can't use & ~0xff because javascript is 32bit
   }
 
   try {
@@ -633,6 +633,28 @@ Pcap.prototype.radiotap = function (buffer, obj, pos) {
   }
 };
 
+Pcap.prototype.nflog = function (buffer, obj, pos) {
+  var offset = 4;
+  while (offset + 4 < buffer.length) {
+    var length = buffer.readUInt16LE(offset);
+    if (buffer[offset+3] === 0 && buffer[offset+2] == 9) {
+      if (buffer[0] === 2)
+        return this.ip4(buffer.slice(offset+4), obj, pos + offset + 4);
+      else
+        return this.ip6(buffer.slice(offset+4), obj, pos + offset + 4);
+    } else {
+      offset += (length + 3) & 0xfffc;
+    }
+  }
+
+  var l = buffer[2] + 24;
+  if (buffer[l+6] === 0x08 && buffer[l+7] === 0x00) {
+    this.ip4(buffer.slice(l+8), obj, pos + l+8);
+  } else if (buffer[l+6] === 0x86 && buffer[l+7] === 0xdd) {
+    this.ip6(buffer.slice(l+8), obj, pos + l+8);
+  }
+};
+
 Pcap.prototype.framerelay = function (buffer, obj, pos) {
   if (buffer[2] == 0x03 || buffer[3] == 0xcc) {
     this.ip4(buffer.slice(4), obj, pos + 4);
@@ -680,6 +702,9 @@ Pcap.prototype.pcap = function (buffer, obj) {
     break;
   case 127: // radiotap
     this.radiotap(buffer.slice(16, obj.pcap.incl_len + 16), obj, 16);
+    break;
+  case 239: // NFLOG
+    this.nflog(buffer.slice(16, obj.pcap.incl_len + 16), obj, 16);
     break;
   default:
     console.log("Unsupported pcap file", this.filename, "link type", this.linkType);
@@ -954,5 +979,29 @@ exports.reassemble_tcp = function (packets, numPackets, skey, cb) {
     cb(null, results);
   } catch (e) {
     cb(e, null);
+  }
+};
+
+exports.key = function(packet) {
+  switch(packet.ip.p) {
+  case 6: // tcp
+    return packet.ip.addr1 + ':' + packet.tcp.sport;
+  case 17: // udp
+    return packet.ip.addr1 + ':' + packet.udp.sport;
+  case 132: // sctp
+    return packet.ip.addr1 + ':' + packet.sctp.sport;
+  default:
+    return packet.ip.addr1;
+  }
+};
+
+exports.keyFromSession = function(session) {
+  switch(session.ipProtocol) {
+  case 6: // tcp
+  case 17: // udp
+  case 132: // sctp
+    return session.srcIp + ':' + session.srcPort;
+  default:
+    return session.srcIp;
   }
 };

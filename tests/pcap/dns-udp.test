@@ -21,6 +21,26 @@
                   "192.30.252.128"
                ],
                "ipCnt" : 1,
+               "nameserverASN" : [
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "ns3.p16.dynect.net",
+                  "ns4.p16.dynect.net",
+                  "ns1.p16.dynect.net",
+                  "ns2.p16.dynect.net"
+               ],
+               "nameserverHostCnt" : 4,
+               "nameserverIp" : [
+                  "10.2.95.12"
+               ],
+               "nameserverIpCnt" : 1,
+               "nameserverRIR" : [
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -47,7 +67,7 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "Cisco",
+               "Cisco Systems, Inc",
                "Jetcell, Inc."
             ],
             "dstOuiCnt" : 2,
@@ -122,6 +142,26 @@
                   "192.30.252.130"
                ],
                "ipCnt" : 1,
+               "nameserverASN" : [
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "ns3.p16.dynect.net",
+                  "ns4.p16.dynect.net",
+                  "ns1.p16.dynect.net",
+                  "ns2.p16.dynect.net"
+               ],
+               "nameserverHostCnt" : 4,
+               "nameserverIp" : [
+                  "10.2.95.12"
+               ],
+               "nameserverIpCnt" : 1,
+               "nameserverRIR" : [
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -148,10 +188,9 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "Cisco",
                "Cisco Systems, Inc"
             ],
-            "dstOuiCnt" : 2,
+            "dstOuiCnt" : 1,
             "dstPackets" : 1,
             "dstPayload8" : "e039818000010002",
             "dstPort" : 53,

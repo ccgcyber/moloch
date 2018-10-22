@@ -119,6 +119,7 @@ char *moloch_session_id_string (char *sessionId, char *buf)
 /* https://github.com/aappleby/smhasher/blob/master/src/MurmurHash1.cpp
  * MurmurHash based
  */
+SUPPRESS_UNSIGNED_INTEGER_OVERFLOW
 uint32_t moloch_session_hash(const void *key)
 {
     uint32_t *p = (uint32_t *)key;
@@ -137,6 +138,7 @@ uint32_t moloch_session_hash(const void *key)
 /* http://academic-pub.org/ojs/index.php/ijecs/article/viewFile/1346/297
  * XOR32
  */
+SUPPRESS_UNSIGNED_INTEGER_OVERFLOW
 uint32_t moloch_session_hash(const void *key)
 {
     uint32_t *p = (uint32_t *)key;
@@ -233,7 +235,7 @@ LOCAL void moloch_session_free (MolochSession_t *session)
     g_array_free(session->fileLenArray, TRUE);
     g_array_free(session->fileNumArray, TRUE);
 
-    if (session->rootId && session->rootId[0] != 'R')
+    if (session->rootId && session->rootId != (void *)1L)
         g_free(session->rootId);
 
     if (session->parserInfo) {
@@ -310,7 +312,7 @@ void moloch_session_mid_save(MolochSession_t *session, uint32_t tv_sec)
     moloch_rules_run_before_save(session, 0);
 
     if (!session->rootId) {
-        session->rootId = "ROOT";
+        session->rootId = (void *)1L;
     }
 
     moloch_db_save_session(session, FALSE);
@@ -382,11 +384,6 @@ int moloch_session_need_save_outstanding()
         count += needSave[t];
     }
     return count;
-}
-/******************************************************************************/
-int moloch_session_thread_outstanding(int thread)
-{
-    return DLL_COUNT(q_, &closingQ[thread]) + DLL_COUNT(cmd_, &sessionCmds[thread]);
 }
 /******************************************************************************/
 MolochSession_t *moloch_session_find(int ses, char *sessionId)
@@ -572,7 +569,7 @@ void moloch_session_init()
         "protocols", "Protocols", "protocol",
         "Protocols set for session",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
-        NULL);
+        (char *)NULL);
 
     int primes[SESSION_MAX];
     int s;

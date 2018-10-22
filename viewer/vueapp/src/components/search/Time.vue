@@ -5,18 +5,24 @@
     <!-- time range select -->
     <div class="form-group">
       <div class="input-group input-group-sm">
-        <span class="input-group-prepend cursor-help"
+        <span class="input-group-prepend input-group-prepend-fw cursor-help"
           placement="topright"
           v-b-tooltip.hover
           title="Time Range">
-          <span class="input-group-text">
-            <span class="fa fa-clock-o"></span>
+          <span class="input-group-text input-group-text-fw">
+            <span v-if="!shiftKeyHold"
+              class="fa fa-clock-o fa-fw">
+            </span>
+            <span v-else
+              class="time-shortcut">
+              T
+            </span>
           </span>
         </span>
         <select class="form-control time-range-control"
           tabindex="3"
           v-model="timeRange"
-          @change="changeTimeRange()"
+          @change="changeTimeRange"
           @blur="onOffTimeRangeFocus"
           v-focus-input="focusTimeRange">
           <option value="1">Last hour</option>
@@ -110,7 +116,7 @@
         <select class="form-control time-range-control"
           v-model="timeBounding"
           tabindex="6"
-          @change="changeTimeBounding()">
+          @change="changeTimeBounding">
           <option value="first">First Packet</option>
           <option value="last">Last Packet</option>
           <option value="both">Bounded</option>
@@ -135,7 +141,7 @@
         <select class="form-control time-range-control"
           v-model="timeInterval"
           tabindex="6"
-          @change="changeTimeInterval()">
+          @change="changeTimeInterval">
           <option value="auto">Auto</option>
           <option value="second">Seconds</option>
           <option value="minute">Minutes</option>
@@ -279,6 +285,9 @@ export default {
       set: function (newValue) {
         this.$store.commit('setFocusTimeRange', newValue);
       }
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
     }
   },
   methods: {

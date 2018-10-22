@@ -19,8 +19,6 @@ const glob    = require('glob');
 const app     = express();
 const router  = express.Router();
 
-const version = 1;
-
 const saltrounds = 13;
 
 const issueTypes = {
@@ -44,10 +42,11 @@ const settingsDefault = {
 (function () { // parse arguments
   let appArgs = process.argv.slice(2);
   let file, port;
+  let debug = 0;
 
   function setPasswordHash (err, hash) {
     if (err) {
-      console.error(`Error hashing password: ${err}`);
+      console.log(`Error hashing password: ${err}`);
       return;
     }
 
@@ -62,6 +61,7 @@ const settingsDefault = {
     console.log('  --port         Port for the web app to listen on');
     console.log('  --cert         Public certificate to use for https');
     console.log('  --key          Private certificate to use for https');
+    console.log('  --debug        Increase debug level, multiple are supported');
 
     process.exit(0);
   }
@@ -94,12 +94,16 @@ const settingsDefault = {
         i++;
         break;
 
+      case '--dashboardOnly':
+        app.set('dashboardOnly', true);
+        break;
+
       case '--regressionTests':
         app.set('regressionTests', 1);
         break;
 
       case '--debug':
-        // Someday support debug :)
+        debug++;
         break;
 
       case '-h':
@@ -117,6 +121,8 @@ const settingsDefault = {
   if (!appArgs.length) {
     console.log('WARNING: No config options were set, starting Parliament in view only mode with defaults.\n');
   }
+
+  app.set('debug', debug);
 
   // set optional config options that reqiure defaults
   app.set('port', port || 8008);
@@ -143,11 +149,9 @@ try {
     app.set('password', parliament.password);
   }
 } catch (err) {
-  parliament = {
-    version: version,
-    groups: [],
-    settings: settingsDefault
-  };
+  console.log(`Error reading ${app.get('file') || 'your parliament file'}:\n\n`, err.stack);
+  console.log('\nYou must fix this before you can run Parliament\nTry using parliament.example.json as a starting point');
+  process.exit(1);
 }
 
 // construct the issues file name
@@ -180,7 +184,7 @@ app.use(['/app.js', '/vueapp/app.js'], express.static(`${__dirname}/vueapp/dist/
 app.use('/parliament/font-awesome', express.static(`${__dirname}/../node_modules/font-awesome`, { maxAge: 600 * 1000 }));
 
 // log requests
-app.use(logger('dev'));
+app.use(logger(':date \x1b[1m:method\x1b[0m \x1b[33m:url\x1b[0m :status :res[content-length] bytes :response-time ms', { stream: process.stdout }));
 
 app.use(favicon(`${__dirname}/favicon.ico`));
 
@@ -225,7 +229,7 @@ router.use((req, res, next) => {
 
 // Handle errors
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.log(err.stack);
   res.status(err.httpStatusCode || 500).json({
     success : false,
     text    : err.message || 'Error'
@@ -279,6 +283,9 @@ async function sendAlerts () {
         setTimeout(() => {
           let alert = alerts[i];
           alert.notifier.sendAlert(alert.config, alert.message);
+          if (app.get('debug')) {
+            console.log('Sending alert:', alert.message, JSON.stringify(alert.config, null, 2));
+          }
           if (i === len - 1) { resolve(); }
         }, 250 * i);
       })(i);
@@ -350,7 +357,7 @@ function buildAlert (cluster, issue) {
       let field = parliament.settings.notifiers[n].fields[f.name];
       if (!field || (field.required && !field.value)) {
         // field doesn't exist, or field is required and doesn't have a value
-        console.error(`Missing the ${field.name} field for ${n} alerting. Add it on the settings page.`);
+        console.log(`Missing the ${field.name} field for ${n} alerting. Add it on the settings page.`);
         continue;
       }
       config[f.name] = field.value;
@@ -422,10 +429,14 @@ function setIssue (cluster, newIssue) {
     issues.push(newIssue);
   }
 
+  if (app.get('debug') > 1) {
+    console.log('Setting issue:', JSON.stringify(newIssue, null, 2));
+  }
+
   fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
     (err) => {
       if (err) {
-        console.error('Unable to write issue:', err.message || err);
+        console.log('Unable to write issue:', err.message || err);
       }
     }
   );
@@ -452,7 +463,7 @@ function getHealth (cluster) {
           health = JSON.parse(response);
         } catch (e) {
           cluster.healthError = 'ES health parse failure';
-          console.error('Bad response for es health', cluster.localUrl || cluster.url);
+          console.log('Bad response for es health', cluster.localUrl || cluster.url);
           return resolve();
         }
 
@@ -475,7 +486,10 @@ function getHealth (cluster) {
 
         cluster.healthError = message;
 
-        console.error('HEALTH ERROR:', options.url, message);
+        if (app.get('debug')) {
+          console.log('HEALTH ERROR:', options.url, message);
+        }
+
         return resolve();
       });
   });
@@ -501,7 +515,7 @@ function getStats (cluster) {
 
         if (response.bsqErr) {
           cluster.statsError = response.bsqErr;
-          console.error('Get stats error', response.bsqErr);
+          console.log('Get stats error', response.bsqErr);
           return resolve();
         }
 
@@ -510,31 +524,39 @@ function getStats (cluster) {
           stats = JSON.parse(response);
         } catch (e) {
           cluster.statsError = 'ES stats parse failure';
-          console.error('Bad response for stats', cluster.localUrl || cluster.url);
+          console.log('Bad response for stats', cluster.localUrl || cluster.url);
           return resolve();
         }
 
         if (!stats || !stats.data) { return resolve(); }
 
         cluster.deltaBPS = 0;
-        // sum delta bytes per second
+        cluster.deltaTDPS = 0;
+        cluster.molochNodes = 0;
+        cluster.monitoring = 0;
+
+        let outOfDate = getGeneralSetting('outOfDate');
+
         for (let stat of stats.data) {
+          // sum delta bytes per second
           if (stat.deltaBytesPerSec) {
             cluster.deltaBPS += stat.deltaBytesPerSec;
           }
-        }
 
-        cluster.deltaTDPS = 0;
-        // sum delta total dropped per second
-        for (let stat of stats.data) {
+          // sum delta total dropped per second
           if (stat.deltaTotalDroppedPerSec) {
             cluster.deltaTDPS += stat.deltaTotalDroppedPerSec;
           }
-        }
 
-        // Look for issues
-        for (let stat of stats.data) {
-          let outOfDate = getGeneralSetting('outOfDate') * 1000;
+          if (stat.monitoring) {
+            cluster.monitoring += stat.monitoring;
+          }
+
+          if ((now - stat.currentTime) <= outOfDate && stat.deltaPacketsPerSec > 0) {
+            cluster.molochNodes++;
+          }
+
+          // Look for issues
 
           if ((now - stat.currentTime) > outOfDate) {
             setIssue(cluster, {
@@ -564,39 +586,60 @@ function getStats (cluster) {
       })
       .catch((error) => {
         let message = error.message || error;
-        console.error('STATS ERROR:', options.url, message);
 
         setIssue(cluster, { type: 'esDown', value: message });
 
         cluster.statsError = message;
+
+        if (app.get('debug')) {
+          console.log('STATS ERROR:', options.url, message);
+        }
+
         return resolve();
       });
   });
 }
 
 function buildNotifiers () {
-  // build notifiers
+  // build/update notifiers
   for (let n in internals.notifiers) {
     // if the notifier is not in settings, add it
-    if (!parliament.settings.notifiers[n]) {
-      const notifier = internals.notifiers[n];
+    const notifier = internals.notifiers[n];
 
-      let notifierData = { name: n, fields: {}, alerts: {} };
+    let notifierData = { name: n, fields: {}, alerts: {} };
 
-      // add fields to notifier
-      for (let field of notifier.fields) {
-        let fieldData = field;
-        fieldData.value = ''; // has empty value to start
-        notifierData.fields[field.name] = fieldData;
+    // add fields (and existing values) to notifier
+    for (let field of notifier.fields) {
+      let fieldData = field;
+      let value = '';  // has empty value to start
+      if (parliament.settings.notifiers[n] &&
+        parliament.settings.notifiers[n].fields[field.name]) {
+        value = parliament.settings.notifiers[n].fields[field.name].value;
       }
-
-      // build alerts
-      for (let a in issueTypes) {
-        notifierData.alerts[a] = true;
-      }
-
-      parliament.settings.notifiers[n] = notifierData;
+      fieldData.value = value;
+      notifierData.fields[field.name] = fieldData;
     }
+
+    // build alerts
+    for (let a in issueTypes) {
+      let value = true;
+      if (parliament.settings.notifiers[n] &&
+        parliament.settings.notifiers[n].alerts.hasOwnProperty(a)) {
+        value = parliament.settings.notifiers[n].alerts[a];
+      }
+      notifierData.alerts[a] = value;
+    }
+
+    if (parliament.settings.notifiers[n] &&
+      parliament.settings.notifiers[n].on) {
+      notifierData.on = true;
+    }
+
+    parliament.settings.notifiers[n] = notifierData;
+  }
+
+  if (app.get('debug')) {
+    console.log('Built notifiers:', JSON.stringify(parliament.settings.notifiers, null, 2));
   }
 }
 
@@ -654,34 +697,18 @@ function initializeParliament () {
       parliament.settings.general.removeAcknowledgedAfter = settingsDefault.general.removeAcknowledgedAfter;
     }
 
-    // build notifiers
-    for (let n in internals.notifiers) {
-      // if the notifier is not in settings, add it
-      if (!parliament.settings.notifiers[n]) {
-        const notifier = internals.notifiers[n];
-
-        let notifierData = { name: n, fields: {}, alerts: {} };
-
-        // add fields to notifier
-        for (let field of notifier.fields) {
-          let fieldData = field;
-          fieldData.value = ''; // has empty value to start
-          notifierData.fields[field.name] = fieldData;
-        }
-
-        // build alerts
-        for (let a in issueTypes) {
-          notifierData.alerts[a] = true;
-        }
-
-        parliament.settings.notifiers[n] = notifierData;
-      }
+    if (app.get('debug')) {
+      console.log('Parliament initialized!');
+      console.log('Parliament groups:', JSON.stringify(parliament.groups, null, 2));
+      console.log('Parliament general settings:', JSON.stringify(parliament.settings.general, null, 2));
     }
+
+    buildNotifiers();
 
     fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
       (err) => {
         if (err) {
-          console.error('Parliament initialization error:', err.message || err);
+          console.log('Parliament initialization error:', err.message || err);
           return reject(new Error('Parliament initialization error'));
         }
 
@@ -719,7 +746,7 @@ function updateParliament () {
           fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
             (err) => {
               if (err) {
-                console.error('Unable to write issue:', err.message || err);
+                console.log('Unable to write issue:', err.message || err);
               }
             }
           );
@@ -728,16 +755,24 @@ function updateParliament () {
         fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
           (err) => {
             if (err) {
-              console.error('Parliament update error:', err.message || err);
+              console.log('Parliament update error:', err.message || err);
               return reject(new Error('Parliament update error'));
             }
 
             return resolve();
           });
+
+        if (app.get('debug')) {
+          console.log('Parliament updated!');
+          if (issuesRemoved) {
+            console.log('Issues updated!');
+          }
+        }
+
         return resolve();
       })
       .catch((error) => {
-        console.error('Parliament update error:', error.messge || error);
+        console.log('Parliament update error:', error.messge || error);
         return resolve();
       });
   });
@@ -790,9 +825,13 @@ function getGeneralSetting (type) {
 function writeParliament (req, res, next, successObj, errorText, sendParliament) {
   fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
     (err) => {
+      if (app.get('debug')) {
+        console.log('Wrote parliament file', err || '');
+      }
+
       if (err) {
         const errorMsg = `Unable to write parliament data: ${err.message || err}`;
-        console.error(errorMsg);
+        console.log(errorMsg);
         const error = new Error(errorMsg);
         error.httpStatusCode = 500;
         return next(error);
@@ -819,9 +858,13 @@ function writeParliament (req, res, next, successObj, errorText, sendParliament)
 function writeIssues (req, res, next, successObj, errorText, sendIssues) {
   fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
     (err) => {
+      if (app.get('debug')) {
+        console.log('Wrote issues file', err || '');
+      }
+
       if (err) {
         const errorMsg = `Unable to write issue data: ${err.message || err}`;
-        console.error(errorMsg);
+        console.log(errorMsg);
         const error = new Error(errorMsg);
         error.httpStatusCode = 500;
         return next(error);
@@ -840,6 +883,12 @@ function writeIssues (req, res, next, successObj, errorText, sendIssues) {
 /* APIs -------------------------------------------------------------------- */
 // Authenticate user
 router.post('/auth', (req, res, next) => {
+  if (app.get('dashboardOnly')) {
+    const error = new Error('Your Parliament is in dasboard only mode. You cannot login.');
+    error.httpStatusCode = 403;
+    return next(error);
+  }
+
   let hasAuth = !!app.get('password');
   if (!hasAuth) {
     const error = new Error('No password set.');
@@ -867,10 +916,14 @@ router.post('/auth', (req, res, next) => {
   });
 });
 
-// Get whether authentication is set
+// Get whether authentication or dashboardOnly mode is set
 router.get('/auth', (req, res, next) => {
   let hasAuth = !!app.get('password');
-  return res.json({ hasAuth:hasAuth });
+  let dashboardOnly = !!app.get('dashboardOnly');
+  return res.json({
+    hasAuth: hasAuth,
+    dashboardOnly: dashboardOnly
+  });
 });
 
 // Get whether the user is logged in
@@ -881,6 +934,12 @@ router.get('/auth/loggedin', verifyToken, (req, res, next) => {
 
 // Update (or create) a password for the parliament
 router.put('/auth/update', (req, res, next) => {
+  if (app.get('dashboardOnly')) {
+    const error = new Error('Your Parliament is in dasboard only mode. You cannot create a password.');
+    error.httpStatusCode = 403;
+    return next(error);
+  }
+
   if (!req.body.newPassword) {
     const error = new Error('You must provide a new password');
     error.httpStatusCode = 422;
@@ -905,7 +964,7 @@ router.put('/auth/update', (req, res, next) => {
 
   bcrypt.hash(req.body.newPassword, saltrounds, (err, hash) => {
     if (err) {
-      console.error(`Error hashing password: ${err}`);
+      console.log(`Error hashing password: ${err}`);
       const error = new Error('Hashing password failed.');
       error.httpStatusCode = 401;
       return next(error);
@@ -1026,7 +1085,7 @@ router.put('/settings/restoreDefaults', verifyToken, (req, res, next) => {
     (err) => {
       if (err) {
         const errorMsg = `Unable to write parliament data: ${err.message || err}`;
-        console.error(errorMsg);
+        console.log(errorMsg);
         const error = new Error(errorMsg);
         error.httpStatusCode = 500;
         return next(error);
@@ -1269,6 +1328,8 @@ router.put('/groups/:groupId/clusters/:clusterId', verifyToken, (req, res, next)
           cluster.hideDataNodes   = req.body.hideDataNodes;
           cluster.hideDeltaTDPS   = req.body.hideDeltaTDPS;
           cluster.hideTotalNodes  = req.body.hideTotalNodes;
+          cluster.hideMonitoring  = req.body.hideMonitoring;
+          cluster.hideMolochNodes = req.body.hideMolochNodes;
           foundCluster = true;
           break;
         }
@@ -1525,7 +1586,7 @@ router.post('/testAlert', (req, res, next) => {
       if (!field || (field.required && !field.value)) {
         // field doesn't exist, or field is required and doesn't have a value
         let message = `Missing the ${field.name} field for ${n} alerting. Add it on the settings page.`;
-        console.error(message);
+        console.log(message);
 
         const error = new Error(message);
         error.httpStatusCode = 422;
@@ -1568,11 +1629,19 @@ if (app.get('keyFile') && app.get('certFile')) {
 
 server
   .on('error', function (e) {
-    console.error(`ERROR - couldn't listen on port ${app.get('port')}, is Parliament already running?`);
+    console.log(`ERROR - couldn't listen on port ${app.get('port')}, is Parliament already running?`);
     process.exit(1);
   })
   .on('listening', function (e) {
     console.log(`Express server listening on port ${server.address().port} in ${app.settings.env} mode`);
+    if (app.get('debug')) {
+      console.log('Debug Level', app.get('debug'));
+      console.log('Parliament file:', app.get('file'));
+      console.log('Issues file:', issuesFilename);
+      if (app.get('dashboardOnly')) {
+        console.log('Opening in dashboard only mode');
+      }
+    }
   })
   .listen(app.get('port'), () => {
     initializeParliament()
@@ -1580,7 +1649,7 @@ server
         updateParliament();
       })
       .catch(() => {
-        console.error(`ERROR - couldn't initialize Parliament`);
+        console.log(`ERROR - never mind, couldn't initialize Parliament`);
         process.exit(1);
       });
 

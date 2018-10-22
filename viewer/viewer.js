@@ -17,7 +17,7 @@
  */
 'use strict';
 
-var MIN_DB_VERSION = 50;
+var MIN_DB_VERSION = 53;
 
 //// Modules
 //////////////////////////////////////////////////////////////////////////////////
@@ -45,7 +45,8 @@ var Config         = require('./config.js'),
     https          = require('https'),
     EventEmitter   = require('events').EventEmitter,
     PNG            = require('pngjs').PNG,
-    decode         = require('./decode.js');
+    decode         = require('./decode.js'),
+    onHeaders      = require('on-headers');
 } catch (e) {
   console.log ("ERROR - Couldn't load some dependancies, maybe need to 'npm update' inside viewer directory", e);
   process.exit(1);
@@ -82,6 +83,8 @@ var internals = {
 //http://garethrees.org/2007/11/14/pngcrush/
   emptyPNG: new Buffer("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==", 'base64'),
   PNG_LINE_WIDTH: 256,
+  runningHuntJob: undefined,
+  proccessHuntJobsInitialized: false
 };
 
 if (internals.elasticBase[0].lastIndexOf('http', 0) !== 0) {
@@ -253,7 +256,7 @@ if (Config.get("passwordSecret")) {
   app.locals.noPasswordSecret   = true;
   app.use(function(req, res, next) {
     var username = req.query.molochRegressionUser || "anonymous";
-    req.user = {userId: username, enabled: true, createEnabled: username === "anonymous", webEnabled: true, headerAuthEnabled: false, emailSearch: true, removeEnabled: true, settings: {}};
+    req.user = {userId: username, enabled: true, createEnabled: username === "anonymous", webEnabled: true, headerAuthEnabled: false, emailSearch: true, removeEnabled: true, packetSearch: true, settings: {}};
     Db.getUserCache(username, function(err, suser) {
         if (!err && suser && suser.found) {
           userCleanup(suser._source);
@@ -267,7 +270,7 @@ if (Config.get("passwordSecret")) {
   app.locals.alwaysShowESStatus = true;
   app.locals.noPasswordSecret   = true;
   app.use(function(req, res, next) {
-    req.user = {userId: "anonymous", enabled: true, createEnabled: false, webEnabled: true, headerAuthEnabled: false, emailSearch: true, removeEnabled: true, settings: {}};
+    req.user = {userId: "anonymous", enabled: true, createEnabled: false, webEnabled: true, headerAuthEnabled: false, emailSearch: true, removeEnabled: true, packetSearch: true, settings: {}};
     Db.getUserCache("anonymous", function(err, suser) {
         if (!err && suser && suser.found) {
           req.user.settings = suser._source.settings || {};
@@ -290,6 +293,8 @@ app.use(function(req, res, next) {
       return {name: "Decoded:", value: atob(value.substring(6))};
     return undefined;
   }`};
+  mrc.bodyHashMd5 = {category: "md5", url: "/%NODE%/%ID%/bodyHash/%TEXT%", name: "Download File"};
+  mrc.bodyHashSha256 = {category: "sha256", url: "/%NODE%/%ID%/bodyHash/%TEXT%", name: "Download File"};
 
   for (var key in internals.rightClicks) {
     var rc = internals.rightClicks[key];
@@ -675,6 +680,9 @@ function proxyRequest (req, res, errCb) {
       if (pres.headers['content-type']) {
         res.setHeader('content-type', pres.headers['content-type']);
       }
+      if (pres.headers['content-disposition']) {
+        res.setHeader('content-disposition', pres.headers['content-disposition']);
+      }
       pres.on('data', function (chunk) {
         res.write(chunk);
       });
@@ -689,6 +697,30 @@ function proxyRequest (req, res, errCb) {
       }
       console.log("ERROR - Couldn't proxy request=", info, "\nerror=", e);
       res.send(`Error talking to node '${req.params.nodeName}' using host '${info.host}' check viewer logs on '${Config.hostName()}'`);
+    });
+    preq.end();
+  });
+}
+
+function makeRequest (node, path, user, cb) {
+  getViewUrl(node, function (err, viewUrl, client) {
+    let info = url.parse(viewUrl);
+    info.path = encodeURI(`${Config.basePath(node)}${path}`);
+    info.agent = (client === http ? internals.httpAgent : internals.httpsAgent);
+    addAuth(info, user, node);
+    addCaTrust(info, node);
+    let preq = client.request(info, function (pres) {
+      let response = '';
+      pres.on('data', function (chunk) {
+        response += chunk;
+      });
+      pres.on('end', function () {
+        cb(null, response);
+      });
+    });
+    preq.on('error', function (err) {
+      console.log(`Error with ${info.path} on remote viewer: ${err}`);
+      cb(err);
     });
     preq.end();
   });
@@ -724,6 +756,7 @@ function checkCookieToken(req, res, next) {
   var diff = Math.abs(Date.now() - req.token.date);
   if (diff > 2400000 || req.token.pid !== process.pid ||
       req.token.userId !== req.user.userId) {
+
     console.trace('bad token', req.token);
     return res.molochError(500, 'Timeout - Please try reloading page and repeating the action');
   }
@@ -739,6 +772,26 @@ function checkWebEnabled(req, res, next) {
   return next();
 }
 
+function checkHuntAccess (req, res, next) {
+  if (req.user.createEnabled) {
+    // an admin can do anything to any hunt
+    return next();
+  } else {
+    Db.get('hunts', 'hunt', req.params.id, (err, huntHit) => {
+      if (err) {
+        console.log('error', err);
+        return res.molochError(500, err);
+      }
+      if (!huntHit || !huntHit.found) { throw 'Hunt not found'; }
+
+      if (huntHit._source.userId === req.user.userId) {
+        return next();
+      }
+      return res.molochError(403, 'You cannot change another user\'s hunt unless you have admin privileges');
+    });
+  }
+}
+
 function logAction(uiPage) {
   return function(req, res, next) {
     var log = {
@@ -749,6 +802,10 @@ function logAction(uiPage) {
       query     : req._parsedUrl.query,
       expression: req.query.expression
     };
+
+    if (req.user.expression) {
+      log.forcedExpression = req.user.expression;
+    }
 
     if (uiPage) { log.uiPage = uiPage; }
 
@@ -801,6 +858,29 @@ function logAction(uiPage) {
 
     return next();
   };
+}
+
+function fieldToExp (req, res, next) {
+  if (req.query.exp && !req.query.field) {
+    var field = Config.getFieldsMap()[req.query.exp];
+    if (field) { req.query.field = field.dbField; }
+    else { req.query.field = req.query.exp; }
+  }
+
+  return next();
+}
+
+// record the time it took from the request to start
+// until the headers are set to send the response
+function recordResponseTime (req, res, next) {
+  onHeaders(res, () => {
+    let now = process.hrtime();
+    let ms = ((now[0] - req._startAt[0]) * 1000) + ((now[1] - req._startAt[1]) / 1000000);
+    ms = Math.ceil(ms);
+    res.setHeader('X-Moloch-Response-Time', ms);
+  });
+
+  next();
 }
 
 
@@ -959,7 +1039,7 @@ var settingDefaults = {
 app.get('/user/current', function(req, res) {
 
   var userProps = ['createEnabled', 'emailSearch', 'enabled', 'removeEnabled',
-    'headerAuthEnabled', 'settings', 'userId', 'webEnabled'];
+    'headerAuthEnabled', 'settings', 'userId', 'webEnabled', 'packetSearch'];
 
   var clone     = {};
 
@@ -1039,7 +1119,7 @@ function postSettingUser (req, res, next) {
 
 
 // gets a user's settings
-app.get('/user/settings', getSettingUser, function(req, res) {
+app.get('/user/settings', getSettingUser, recordResponseTime, function(req, res) {
   if (!req.settingUser) {
     res.status(404);
     return res.send(JSON.stringify({success:false, text:'User not found'}));
@@ -1108,11 +1188,18 @@ app.post('/user/views/create', [checkCookieToken, logAction(), postSettingUser],
     }
     container = user.views._groups[req.body.groupName];
   }
+
   req.body.viewName = req.body.viewName.replace(/[^-a-zA-Z0-9_: ]/g, '');
   if (container[req.body.viewName]) {
     container[req.body.viewName].expression = req.body.expression;
   } else {
     container[req.body.viewName] = {expression: req.body.expression};
+  }
+
+  if (req.body.sessionsColConfig) {
+    container[req.body.viewName].sessionsColConfig = req.body.sessionsColConfig;
+  } else if (container[req.body.viewName].sessionsColConfig && !req.body.sessionsColConfig) {
+    container[req.body.viewName].sessionsColConfig = undefined;
   }
 
   Db.setUser(user.userId, user, function(err, info) {
@@ -1391,6 +1478,41 @@ app.get('/user/columns', getSettingUser, function(req, res) {
   return res.send(req.settingUser.columnConfigs || []);
 });
 
+// udpates custom column configurations for a user
+app.put('/user/columns/:name', checkCookieToken, logAction(), postSettingUser, function(req, res) {
+  if (!req.settingUser)   { return res.molochError(403, 'Unknown user'); }
+
+  if (!req.body.name)     { return res.molochError(403, 'Missing custom column configuration name'); }
+  if (!req.body.columns)  { return res.molochError(403, 'Missing columns'); }
+  if (!req.body.order)    { return res.molochError(403, 'Missing sort order'); }
+
+  let user = req.settingUser;
+  user.columnConfigs = user.columnConfigs || [];
+
+  // find the custom column configuration to update
+  let found = false;
+  for (let i = 0, ilen = user.columnConfigs.length; i < ilen; ++i) {
+    if (req.body.name === user.columnConfigs[i].name) {
+      found = true;
+      user.columnConfigs[i] = req.body;
+    }
+  }
+
+  if (!found) { return res.molochError(200, 'Custom column configuration not found'); }
+
+  Db.setUser(user.userId, user, function(err, info) {
+    if (err) {
+      console.log('/user/columns udpate error', err, info);
+      return res.molochError(500, 'Update custom column configuration failed');
+    }
+    return res.send(JSON.stringify({
+      success   : true,
+      text      : 'Updated column configuration',
+      colConfig : req.body
+    }));
+  });
+});
+
 // creates a new custom column configuration for a user
 app.post('/user/columns/create', [checkCookieToken, logAction(), postSettingUser], function(req, res) {
   if (!req.settingUser) {return res.molochError(403, 'Unknown user');}
@@ -1470,6 +1592,40 @@ app.get('/user/spiview/fields', getSettingUser, function(req, res) {
   if (!req.settingUser) {return res.send([]);}
 
   return res.send(req.settingUser.spiviewFieldConfigs || []);
+});
+
+// udpates custom spiview field configuration for a user
+app.put('/user/spiview/fields/:name', checkCookieToken, logAction(), postSettingUser, function(req, res) {
+  if (!req.settingUser) { return res.molochError(403, 'Unknown user'); }
+
+  if (!req.body.name)   { return res.molochError(403, 'Missing custom spiview field configuration name'); }
+  if (!req.body.fields) { return res.molochError(403, 'Missing fields'); }
+
+  let user = req.settingUser;
+  user.spiviewFieldConfigs = user.spiviewFieldConfigs || [];
+
+  // find the custom spiview field configuration to update
+  let found = false;
+  for (let i = 0, ilen = user.spiviewFieldConfigs.length; i < ilen; ++i) {
+    if (req.body.name === user.spiviewFieldConfigs[i].name) {
+      found = true;
+      user.spiviewFieldConfigs[i] = req.body;
+    }
+  }
+
+  if (!found) { return res.molochError(200, 'Custom spiview field configuration not found'); }
+
+  Db.setUser(user.userId, user, function(err, info) {
+    if (err) {
+      console.log('/user/spiview/fields udpate error', err, info);
+      return res.molochError(500, 'Update spiview field configuration failed');
+    }
+    return res.send(JSON.stringify({
+      success   : true,
+      text      : 'Updated spiview field configuration',
+      colConfig : req.body
+    }));
+  });
 });
 
 // creates a new custom spiview fields configuration for a user
@@ -2101,7 +2257,7 @@ function sessionsListFromIds(req, ids, fields, cb) {
   }
 
   async.eachLimit(ids, 10, function(id, nextCb) {
-    Db.getWithOptions(Db.id2Index(id), 'session', id, {_source: fields.join(",")}, function(err, session) {
+    Db.getWithOptions(Db.sid2Index(id), 'session', Db.sid2Id(id), {_source: fields.join(",")}, function(err, session) {
       if (err) {
         return nextCb(null);
       }
@@ -2133,8 +2289,7 @@ function sessionsListFromIds(req, ids, fields, cb) {
 //////////////////////////////////////////////////////////////////////////////////
 //// APIs
 //////////////////////////////////////////////////////////////////////////////////
-app.get('/history/list', function(req, res) {
-
+app.get('/history/list', recordResponseTime, function(req, res) {
   var userId;
   if (req.user.createEnabled) { // user is an admin, they can view all logs
     // if the admin has requested a specific user
@@ -2223,6 +2378,10 @@ app.get('/history/list', function(req, res) {
       var log = hit._source;
       log.id = hit._id;
       log.index = hit._index;
+      if (!req.user.createEnabled) {
+        // remove forced expression for reqs made by nonadmin users
+        log.forcedExpression = undefined;
+      }
       results.results.push(log);
     }
     var r = {
@@ -2265,7 +2424,7 @@ app.get('/fields', function(req, res) {
   }
 });
 
-app.get('/file/list', logAction('files'), function(req, res) {
+app.get('/file/list', logAction('files'), recordResponseTime, function(req, res) {
   var columns = ["num", "node", "name", "locked", "first", "filesize"];
 
   var query = {_source: columns,
@@ -2332,7 +2491,7 @@ app.get('/eshealth.json', function(req, res) {
   });
 });
 
-app.get('/esindices/list', function(req, res) {
+app.get('/esindices/list', recordResponseTime, function(req, res) {
   Db.indicesCache(function(err, indices) {
     // Implement filtering
     if (req.query.filter !== undefined) {
@@ -2349,9 +2508,9 @@ app.get('/esindices/list', function(req, res) {
     var sortField = req.query.sortField || "index";
     if (sortField === "index" || sortField === "status" || sortField === "health") {
       if (req.query.desc === "true") {
-        indices = indices.sort(function(a,b){ return b.index.localeCompare(a.index); });
+        indices = indices.sort(function(a,b){ return b[sortField].localeCompare(a[sortField]); });
       } else {
-        indices = indices.sort(function(a,b){ return a.index.localeCompare(b.index); });
+        indices = indices.sort(function(a,b){ return a[sortField].localeCompare(b[sortField]); });
       }
     } else {
       if (req.query.desc === "true") {
@@ -2380,7 +2539,24 @@ app.delete('/esindices/:index', logAction(), checkCookieToken, function(req, res
   });
 });
 
-app.get('/estask/list', function(req, res) {
+app.post('/esindices/:index/optimize', logAction(), checkCookieToken, function(req, res) {
+  if (!req.user.createEnabled) { return res.molochError(403, 'Need admin privileges'); }
+
+  if (!req.params.index) {
+    return res.molochError(403, 'Missing index to delete');
+  }
+
+  Db.optimizeIndex([req.params.index], {}, (err, result) => {
+    if (err) {
+      console.log ("ERROR -", req.params.index, "optimize failed", err);
+    }
+  });
+
+  // Always return right away, optimizeIndex might block
+  return res.send(JSON.stringify({ success: true, text: {} }));
+});
+
+app.get('/estask/list', recordResponseTime, function(req, res) {
   Db.tasks(function(err, tasks) {
     tasks = tasks.tasks;
 
@@ -2443,7 +2619,7 @@ app.post('/estask/cancel', logAction(), function(req, res) {
   });
 });
 
-app.get('/esshard/list', function(req, res) {
+app.get('/esshard/list', recordResponseTime, function(req, res) {
   Promise.all([Db.shards(),
                Db.getClusterSettings({flatSettings: true})
               ]).then(([shards, settings]) => {
@@ -2571,7 +2747,7 @@ app.post('/esshard/include/:type/:value', logAction(), checkCookieToken, functio
   });
 });
 
-app.get('/esstats.json', function(req, res) {
+app.get('/esstats.json', recordResponseTime, function(req, res) {
   var stats = [];
   var r;
 
@@ -2624,6 +2800,7 @@ app.get('/esstats.json', function(req, res) {
         ipExcluded: ipExcludes.includes(ip),
         nodeExcluded: nodeExcludes.includes(node.name),
         storeSize: node.indices.store.size_in_bytes,
+        freeSize: node.fs.total.available_in_bytes,
         docs: node.indices.docs.count,
         searches: node.indices.search.query_current,
         searchesTime: node.indices.search.query_time_in_millis,
@@ -2680,7 +2857,7 @@ function mergeUnarray(to, from) {
     }
   }
 }
-app.get('/stats.json', function(req, res) {
+app.get('/stats.json', recordResponseTime, function(req, res) {
   noCache(req, res);
 
   var query = {from: +req.query.start || 0,
@@ -3026,7 +3203,7 @@ app.use('/buildQuery.json', logAction('query'), function(req, res, next) {
   });
 });
 
-app.get('/sessions.json', logAction('sessions'), function(req, res) {
+app.get('/sessions.json', logAction('sessions'), recordResponseTime, function(req, res) {
   var i;
 
   var graph = {};
@@ -3083,8 +3260,8 @@ app.get('/sessions.json', logAction('sessions'), function(req, res) {
         if (fields === undefined) {
           return hitCb(null);
         }
-        fields.index = hit._index;
-        fields.id = hit._id;
+        //fields.index = hit._index;
+        fields.id = Db.session2Sid(hit);
 
         if (req.query.flatten === '1') {
           fields = flattenFields(fields);
@@ -3130,7 +3307,7 @@ app.get('/sessions.json', logAction('sessions'), function(req, res) {
   });
 });
 
-app.get('/spigraph.json', logAction('spigraph'), function(req, res) {
+app.get('/spigraph.json', logAction('spigraph'), fieldToExp, recordResponseTime, function(req, res) {
   req.query.facets = 1;
   buildSessionQuery(req, function(bsqErr, query, indices) {
     var results = {items: [], graph: {}, map: {}};
@@ -3142,8 +3319,13 @@ app.get('/spigraph.json', logAction('spigraph'), function(req, res) {
     query.size = 0;
     var size = +req.query.size || 20;
 
-    var field = req.query.field || "node";
-    query.aggregations.field = {terms: {field: field, size: size}};
+    var field = req.query.field || 'node';
+
+    if (field === 'ip.dst:port') {
+      query.aggregations.field = {terms: {field: 'dstIp', size: size}, aggs: {sub: {terms: {field: 'dstPort', size: size}}}};
+    } else {
+      query.aggregations.field = {terms: {field: field, size: size*2}};
+    }
 
     Promise.all([Db.healthCachePromise(),
                  Db.numberOfDocuments('sessions2-*'),
@@ -3166,15 +3348,32 @@ app.get('/spigraph.json', logAction('spigraph'), function(req, res) {
       var aggs = result.aggregations.field.buckets;
       var interval = query.aggregations.dbHisto.histogram.interval;
       var filter = {term: {}};
+      var sfilter = {term: {}};
       query.query.bool.filter.push(filter);
+
+      if (field === 'ip.dst:port') {
+        query.query.bool.filter.push(sfilter);
+      }
 
       delete query.aggregations.field;
 
-      var queries = [];
+      var queriesInfo = [];
       aggs.forEach(function(item) {
-        filter.term[field] = item.key;
-        queries.push(JSON.stringify(query));
+        if (field === 'ip.dst:port') {
+          filter.term.dstIp = item.key;
+          let sep = (item.key.indexOf(":") === -1)? ':' : '.';
+          item.sub.buckets.forEach((sitem) => {
+            sfilter.term.dstPort = sitem.key;
+            queriesInfo.push({key: item.key + sep + sitem.key, doc_count: sitem.doc_count, query: JSON.stringify(query)});
+          });
+        } else {
+          filter.term[field] = item.key;
+          queriesInfo.push({key: item.key, doc_count: item.doc_count, query: JSON.stringify(query)});
+        }
       });
+
+      queriesInfo = queriesInfo.sort((a, b) => {return b.doc_count - a.doc_count;}).slice(0, size*2);
+      let queries = queriesInfo.map((item) => {return item.query;});
 
       Db.msearch(indices, 'session', queries, function(err, result) {
         if (!result.responses) {
@@ -3182,7 +3381,7 @@ app.get('/spigraph.json', logAction('spigraph'), function(req, res) {
         }
 
         result.responses.forEach(function(item, i) {
-          var r = {name: aggs[i].key, count: aggs[i].doc_count};
+          var r = {name: queriesInfo[i].key, count: queriesInfo[i].doc_count};
 
           r.graph = graphMerge(req, query, result.responses[i].aggregations);
           if (r.graph.xmin === null) {
@@ -3205,25 +3404,25 @@ app.get('/spigraph.json', logAction('spigraph'), function(req, res) {
             r.paHisto += graph.pa1Histo[i][1] + graph.pa2Histo[i][1];
           }
           if (results.items.length === result.responses.length) {
-            var s = req.query.sort || "lpHisto";
+            var s = req.query.sort || 'lpHisto';
             results.items = results.items.sort(function (a, b) {
               var result;
               if (s === 'name') { result = a.name.localeCompare(b.name); }
               else { result = b[s] - a[s]; }
               return result;
-            });
+            }).slice(0, size);
             return res.send(results);
           }
         });
       });
     }).catch((err) => {
-      console.log("spigraph.json error", err);
+      console.log('spigraph.json error', err);
       return res.molochError(403, errorString(err));
     });
   });
 });
 
-app.get('/spiview.json', logAction('spiview'), function(req, res) {
+app.get('/spiview.json', logAction('spiview'), recordResponseTime, function(req, res) {
   if (req.query.spi === undefined) {
     return res.send({spi:{}, recordsTotal: 0, recordsFiltered: 0});
   }
@@ -3546,7 +3745,7 @@ function buildConnections(req, res, cb) {
   });
 }
 
-app.get('/connections.json', logAction('connections'), function(req, res) {
+app.get('/connections.json', logAction('connections'), recordResponseTime, function(req, res) {
   var health;
   Db.healthCache(function(err, h) {health = h;});
   buildConnections(req, res, function (err, nodes, links, total) {
@@ -3649,19 +3848,12 @@ app.get(/\/sessions.csv.*/, logAction(), function(req, res) {
   }
 });
 
-app.get('/unique.txt', logAction(), function(req, res) {
+app.get('/unique.txt', logAction(), fieldToExp, function(req, res) {
   if (req.query.field === undefined && req.query.exp === undefined) {
     return res.send("Missing field or exp parameter");
   }
 
   noCache(req, res);
-
-  // look up the field based on the expression
-  if (req.query.exp && !req.query.field) {
-    var field = Config.getFieldsMap()[req.query.exp];
-    if (field) { req.query.field = field.dbField; }
-    else { req.query.field = req.query.exp; }
-  }
 
   /* How should the results be written.  Use setImmediate to not blow stack frame */
   var writeCb;
@@ -3830,7 +4022,7 @@ function processSessionId(id, fullSession, headerCb, packetCb, endCb, maxPackets
     options  = {_source: "node,totPackets,packetPos,packetLen,srcIp,srcPort"};
   }
 
-  Db.getWithOptions(Db.id2Index(id), 'session', id, options, function(err, session) {
+  Db.getWithOptions(Db.sid2Index(id), 'session', Db.sid2Id(id), options, function(err, session) {
     if (err || !session.found) {
       console.log("session get error", err, session);
       return endCb("Session not found", null);
@@ -4198,7 +4390,7 @@ function localSessionDetail(req, res) {
  * Get SPI data for a session
  */
 app.get('/:nodeName/session/:id/detail', logAction(), function(req, res) {
-  Db.getWithOptions(Db.id2Index(req.params.id), 'session', req.params.id, {}, function(err, session) {
+  Db.getWithOptions(Db.sid2Index(req.params.id), 'session', Db.sid2Id(req.params.id), {}, function(err, session) {
     if (err || !session.found) {
       return res.end("Couldn't look up SPI data, error for session " + req.params.id + " Error: " +  err);
     }
@@ -4215,6 +4407,7 @@ app.get('/:nodeName/session/:id/detail', logAction(), function(req, res) {
         filename    : "sessionDetail",
         user        : req.user,
         session     : session,
+        Db          : Db,
         query       : req.query,
         basedir     : "/",
         hidePackets : hidePackets,
@@ -4327,6 +4520,140 @@ app.get('/:nodeName/:id/bodypng/:bodyType/:bodyNum/:bodyName', checkProxyRequest
     res.send(PNG.sync.write(png, {inputColorType:0, colorType: 0, bitDepth:8, inputHasAlpha:false}));
   });
 });
+
+/**
+ * Get a file given a hash of that file
+ */
+
+app.get('/bodyHash/:hash', logAction('bodyhash'), function(req, res) {
+  var hash = null;
+  var nodeName = null;
+  var sessionID = null;
+
+  buildSessionQuery(req, function(bsqErr, query, indices) {
+    if (bsqErr) {
+      res.status(400);
+      return res.end(bsqErr);
+    }
+
+    query.size = 1;
+    query.sort = { lastPacket: { order: 'desc' } };
+    query._source = ["node"];
+
+    if (Config.debug) {
+      console.log(`sessions.json ${indices} query`, JSON.stringify(query, null, 1));
+    }
+    Db.searchPrimary(indices, 'session', query, function(err, sessions) {
+      if (err ) {
+        console.log ("Error -> Db Search ", err);
+        res.status(400);
+        res.end(err);
+      } else if (sessions.error) {
+        console.log ("Error -> Db Search ", sessions.error);
+        res.status(400);
+        res.end(sessions.error);
+      } else {
+          if (Config.debug) {
+            console.log("bodyHash result", util.inspect(sessions, false, 50));
+          }
+          if (sessions.hits.hits.length > 0) {
+
+            nodeName = sessions.hits.hits[0]._source.node;
+            sessionID = Db.session2Sid(sessions.hits.hits[0]);
+            hash = req.params.hash;
+
+            isLocalView(nodeName, function () { // get file from the local disk
+              localGetItemByHash (nodeName, sessionID, hash, (err, item) => {
+                if (err) {
+                  res.status(400);
+                  return res.end(err);
+                } else if (item) {
+                  noCache(req, res);
+                  res.setHeader("content-type", "application/force-download");
+                  res.setHeader("content-disposition", "attachment; filename="+ item.bodyName+".pellet");
+                  return res.end(item.data);
+                } else {
+                  res.status(400);
+                  return res.end("No Match");
+                }
+              });
+            },
+            function () { // get file from the remote disk
+              var preq = util._extend({},req);
+              preq.params.nodeName = nodeName;
+              preq.params.id = sessionID;
+              preq.params.hash = hash;
+              preq.url ='/' + nodeName + '/' + sessionID + '/bodyHash/' + hash;
+              return proxyRequest(preq, res);
+            });
+          }
+          else {
+            res.status(400);
+            res.end ("No Match Found");
+          }
+      }
+    });
+  });
+});
+
+app.get('/:nodeName/:id/bodyHash/:hash', checkProxyRequest, function(req, res) {
+  localGetItemByHash (req.params.nodeName, req.params.id, req.params.hash, (err, item) => {
+    if (err) {
+       res.status(400);
+       return res.end(err);
+    } else if (item) {
+      noCache(req, res);
+      res.setHeader("content-type", "application/force-download");
+      res.setHeader("content-disposition", "attachment; filename="+ item.bodyName+".pellet");
+      return res.end(item.data);
+    } else {
+      res.status(400);
+      return res.end("No Match");
+    }
+  });
+});
+
+function localGetItemByHash(nodeName, sessionID, hash, cb) {
+  processSessionIdAndDecode(sessionID, 10000, function(err, session, incoming) {
+    if (err) {
+      return cb(err);
+    }
+    if (incoming.length === 0) {
+      return cb(null, null);
+    }
+    var options = {
+      id: sessionID,
+      nodeName: nodeName,
+      order: [],
+      "ITEM-HTTP": {
+        order: []
+      },
+      "ITEM-SMTP": {
+        order: ["BODY-UNBASE64"]
+      },
+      "ITEM-HASH": {
+        hash: hash
+      },
+      "ITEM-CB": {
+      }
+    };
+
+    options.order.push("ITEM-HTTP");
+    options.order.push("ITEM-SMTP");
+    options.order.push("ITEM-HASH");
+    options.order.push("ITEM-CB");
+    options["ITEM-CB"].cb = function(err, items) {
+      if (err) {
+        return cb(err, null);
+      }
+      if (items === undefined || items.length === 0) {
+        return cb("No match", null);
+      }
+      return cb(err, items[0]);
+    };
+    decode.createPipeline(options, options.order, new decode.Pcap2ItemStream(options, incoming));
+  });
+}
 
 function writePcap(res, id, options, doneCb) {
   var b = Buffer.alloc(0xfffe);
@@ -4612,10 +4939,11 @@ internals.usersMissing = {
   emailSearch: 0,
   removeEnabled: 0
 };
-app.post('/user/list', logAction('users'), function(req, res) {
+app.post('/user/list', logAction('users'), recordResponseTime, function(req, res) {
   if (!req.user.createEnabled) {return res.molochError(404, 'Need admin privileges');}
 
-  var columns = ["userId", "userName", "expression", "enabled", "createEnabled", "webEnabled", "headerAuthEnabled", "emailSearch", "removeEnabled"];
+  var columns = ['userId', 'userName', 'expression', 'enabled', 'createEnabled',
+    'webEnabled', 'headerAuthEnabled', 'emailSearch', 'removeEnabled', 'packetSearch'];
 
   var query = {_source: columns,
                sort: {},
@@ -4624,15 +4952,15 @@ app.post('/user/list', logAction('users'), function(req, res) {
               };
 
   if (req.body.filter) {
-    query.query = {bool: {should: [{wildcard: {userName: "*" + req.body.filter + "*"}},
-                                   {wildcard: {userId: "*" + req.body.filter + "*"}}
+    query.query = {bool: {should: [{wildcard: {userName: '*' + req.body.filter + '*'}},
+                                   {wildcard: {userId: '*' + req.body.filter + '*'}}
                                   ]
                          }
                   };
   }
 
-  req.body.sortField = req.body.sortField || "userId";
-  query.sort[req.body.sortField] = { order: req.body.desc === true ? "desc": "asc"};
+  req.body.sortField = req.body.sortField || 'userId';
+  query.sort[req.body.sortField] = { order: req.body.desc === true ? 'desc': 'asc'};
   query.sort[req.body.sortField].missing = internals.usersMissing[req.body.sortField];
 
   Promise.all([Db.searchUsers(query),
@@ -4644,11 +4972,12 @@ app.post('/user/list', logAction('users'), function(req, res) {
     for (let i = 0, ilen = users.hits.hits.length; i < ilen; i++) {
       var fields = users.hits.hits[i]._source || users.hits.hits[i].fields;
       fields.id = users.hits.hits[i]._id;
-      fields.expression = fields.expression || "";
+      fields.expression = fields.expression || '';
       fields.headerAuthEnabled = fields.headerAuthEnabled || false;
       fields.emailSearch = fields.emailSearch || false;
       fields.removeEnabled = fields.removeEnabled || false;
-      fields.userName = safeStr(fields.userName || "");
+      fields.userName = safeStr(fields.userName || '');
+      fields.packetSearch = fields.packetSearch || false;
       results.results.push(fields);
     }
 
@@ -4657,7 +4986,7 @@ app.post('/user/list', logAction('users'), function(req, res) {
              data: results.results};
     res.send(r);
   }).catch((err) => {
-    console.log("ERROR - /user/list", err);
+    console.log('ERROR - /user/list', err);
     return res.send({recordsTotal: 0, recordsFiltered: 0, data: []});
   });
 });
@@ -4689,10 +5018,11 @@ app.post('/user/create', logAction(), checkCookieToken, function(req, res) {
       emailSearch: req.body.emailSearch === true,
       headerAuthEnabled: req.body.headerAuthEnabled === true,
       createEnabled: req.body.createEnabled === true,
-      removeEnabled: req.body.removeEnabled === true
+      removeEnabled: req.body.removeEnabled === true,
+      packetSearch: req.body.packetSearch === true
     };
 
-    console.log('Creating new user', nuser);
+    // console.log('Creating new user', nuser);
     Db.setUser(req.body.userId, nuser, function(err, info) {
       if (!err) {
         return res.send(JSON.stringify({success: true, text:'User created succesfully'}));
@@ -4763,6 +5093,7 @@ app.post('/user/update', logAction(), checkCookieToken, postSettingUser, functio
     user.emailSearch = req.body.emailSearch === true;
     user.headerAuthEnabled = req.body.headerAuthEnabled === true;
     user.removeEnabled = req.body.removeEnabled === true;
+    user.packetSearch = req.body.packetSearch === true;
 
     // Can only change createEnabled if it is currently turned on
     if (req.body.createEnabled !== undefined && req.user.createEnabled) {
@@ -4770,7 +5101,9 @@ app.post('/user/update', logAction(), checkCookieToken, postSettingUser, functio
     }
 
     Db.setUser(req.body.userId, user, function(err, info) {
-      console.log("setUser", user, err, info);
+      if (Config.debug) {
+        console.log("setUser", user, err, info);
+      }
       return res.send(JSON.stringify({success: true, text:'User "' + req.body.userId + '" updated successfully'}));
     });
   });
@@ -4847,7 +5180,7 @@ function addTagsList(allTagNames, list, doneCb) {
       }
     };
 
-    Db.update(Db.id2Index(session._id), 'session', session._id, document, function(err, data) {
+    Db.update(session._index, 'session', session._id, document, function(err, data) {
       if (err) {
         console.log("addTagsList error", session, err, data);
       }
@@ -4857,6 +5190,10 @@ function addTagsList(allTagNames, list, doneCb) {
 }
 
 function removeTagsList(res, allTagNames, list) {
+  if (!list.length) {
+    return res.molochError(200, 'No sessions to remove tags from');
+  }
+
   async.eachLimit(list, 10, function(session, nextCb) {
     var fields = session._source || session.fields;
 
@@ -4888,7 +5225,7 @@ function removeTagsList(res, allTagNames, list) {
 
     }
 
-    Db.update(Db.id2Index(session._id), 'session', session._id, document, function(err, data) {
+    Db.update(session._index, 'session', session._id, document, function(err, data) {
       if (err) {
         console.log("removeTagsList error", err);
       }
@@ -4911,12 +5248,18 @@ app.post('/addTags', logAction(), function(req, res) {
     var ids = queryValueToArray(req.body.ids);
 
     sessionsListFromIds(req, ids, ["tags", "node"], function(err, list) {
+      if (!list.length) {
+        return res.molochError(200, 'No sessions to add tags to');
+      }
       addTagsList(tags, list, function () {
         return res.send(JSON.stringify({success: true, text: "Tags added successfully"}));
       });
     });
   } else {
     sessionsListFromQuery(req, res, ["tags", "node"], function(err, list) {
+      if (!list.length) {
+        return res.molochError(200, 'No sessions to add tags to');
+      }
       addTagsList(tags, list, function () {
         return res.send(JSON.stringify({success: true, text: "Tags added successfully"}));
       });
@@ -4948,145 +5291,651 @@ app.post('/removeTags', logAction(), function(req, res) {
 });
 
 //////////////////////////////////////////////////////////////////////////////////
-//// Search Session Add/Remove Tags
+//// Packet Search
 //////////////////////////////////////////////////////////////////////////////////
+function packetSearch (packet, options) {
+  let found = false;
 
-function pcapSearch(id, options, cb) {
-  if (options.regex) {
-    options.regexp = new RegExp(options.regex);
-  } else if (options.findString) {
-  } else {
-    console.log("ERROR - Unknown search type", options);
-    return cb(null, true);
+  switch (options.searchType) {
+    case 'asciicase':
+      if (packet.toString().includes(options.search)) {
+        found = true;
+      }
+      break;
+    case 'ascii':
+      if (packet.toString().toLowerCase().includes(options.search.toLowerCase())) {
+        found = true;
+      }
+      break;
+    case 'regex':
+      if (options.regex && packet.toString().match(options.regex)) {
+        found = true;
+      }
+      break;
+    case 'hex':
+      if (packet.toString('hex').includes(options.search)) {
+        found = true;
+      }
+      break;
+    case 'hexregex':
+      if (options.regex && packet.toString('hex').match(options.regex)) {
+        found = true;
+      }
+      break;
+    default:
+      console.log('Invalid hunt search type');
   }
-  processSessionIdAndDecode(id, 10000, function(err, session, results) {
-    if (err) {
-      return cb(null, false);
-    }
 
-    for (let i = 0, ilen = results.length; i < ilen; i++) {
-      if (options.regex) {
-        if (results[i].data.toString().match(options.regexp)) {
-          return cb(null, true);
+  return found;
+}
+
+function sessionHunt (sessionId, options, cb) {
+  if (options.type === 'reassembled') {
+    processSessionIdAndDecode(sessionId, options.size || 10000, function (err, session, packets) {
+      if (err) {
+        return cb(null, false);
+      }
+
+      let i = 0;
+      let increment = 1;
+      let len = packets.length;
+
+      if (options.src && !options.dst) {
+        increment = 2;
+      } else if (options.dst && !options.src) {
+        i = 1;
+        increment = 2;
+      }
+
+      for (i; i < len; i+=increment) {
+        if (packetSearch(packets[i].data, options)) { return cb(null, true); }
+      }
+
+      return cb(null, false);
+    });
+  } else if (options.type === 'raw') {
+    let packets = [];
+    processSessionId(sessionId, true, null, function (pcap, buffer, cb, i) {
+      if (options.src === options.dst) {
+        packets.push(buffer);
+      } else {
+          let packet = {};
+          pcap.decode(buffer, packet);
+          packet.data = buffer.slice(16);
+          packets.push(packet);
+      }
+      cb(null);
+    }, function(err, session) {
+      if (err) {
+        return cb(null, false);
+      }
+
+      let len = packets.length;
+      if (options.src === options.dst) {
+        // If search both src/dst don't need to check key
+        for (let i = 0; i < len; i++) {
+          if (packetSearch(packets[i], options)) { return cb(null, true); }
         }
-      } else if (options.findString) {
-        if (results[i].data.includes(options.findString)) {
-          return cb(null, true);
+      } else {
+        // If searching src NOR dst need to check key
+        let skey = Pcap.keyFromSession(session);
+        for (let i = 0; i < len; i++) {
+          let key = Pcap.key(packets[i]);
+          let isSrc = key === skey;
+          if (options.src && isSrc) {
+            if (packetSearch(packets[i].data, options)) { return cb(null, true); }
+          } else if (options.dst && !isSrc) {
+            if (packetSearch(packets[i].data, options)) { return cb(null, true); }
+          }
         }
       }
+      return cb(null, false);
+    },
+    options.size || 10000, 10);
+  }
+}
+
+function pauseHuntJobWithError (huntId, hunt, error) {
+  if (error) { console.log(error.value); }
+
+  hunt.status = 'paused';
+
+  if (!hunt.errors) {
+    hunt.errors = [ error ];
+  } else {
+    hunt.errors.push(error);
+  }
+
+  Db.setHunt(huntId, hunt, (err, info) => {
+    internals.runningHuntJob = undefined;
+    if (err) {
+      console.log('Error adding errors and pausing hunt job', err, info);
+      return;
     }
-    return cb(null, true);
+    processHuntJobs();
   });
 }
 
-app.get('/:nodeName/searchSession/:id', checkProxyRequest, function(req, res) {
-  noCache(req, res);
-  res.statusCode = 200;
+function updateHuntStats (hunt, huntId, session, searchedSessions, cb) {
+  // update the hunt with number of matchedSessions and searchedSessions
+  // and the date of the first packet of the last searched session
+  let lastPacketTime = session.lastPacket;
+  let now = Math.floor(Date.now() / 1000);
 
-  var options = {};
-  options.regex = req.params.regex;
-  options.findString = req.params.findString;
+  if ((now - hunt.lastUpdated) >= 2) { // only update every 2 seconds
+    Db.get('hunts', 'hunt', huntId, (err, huntHit) => {
+      if (!huntHit || !huntHit.found) { // hunt hit not found, likely deleted
+        return cb('undefined');
+      }
+      if (err) {
+        let errorText = `Error finding hunt: ${hunt.name} (${huntId}): ${err}`;
+        pauseHuntJobWithError(huntId, hunt, { value: errorText });
+        return cb({ success: false, text: errorText });
+      }
+      hunt.status = huntHit._source.status;
+      hunt.lastUpdated = now;
+      hunt.searchedSessions = searchedSessions;
+      hunt.lastPacketTime = lastPacketTime;
+      Db.setHunt(huntId, hunt, () => {});
+      if (hunt.status === 'paused') {
+        return cb('paused');
+      } else {
+        return cb(null);
+      }
+    });
+  } else {
+    return cb(null);
+  }
+}
 
-  pcapSearch(req.params.id, options, function(err, matched) {
-    return res.send(JSON.stringify({success: true, matched: matched}));
+function updateSessionWithHunt (session, sessionId, hunt, huntId) {
+  if (session.huntId === undefined) {
+    session.huntId = [];
+  }
+  if (session.huntName === undefined) {
+    session.huntName = [];
+  }
+
+  session.huntId.push(huntId);
+  session.huntName.push(hunt.name);
+
+  // Do the ES update
+  let document = {
+    doc: {
+      huntId: session.huntId,
+      huntName: session.huntName
+    }
+  };
+
+  Db.update(Db.sid2Index(sessionId), 'session', Db.sid2Id(sessionId), document, function (err, data) {
+    if (err) {
+      console.log('add hunt info error', session, err, data);
+    }
+  });
+}
+
+function buildHuntOptions (hunt) {
+  let options = {
+    src: hunt.src,
+    dst: hunt.dst,
+    size: hunt.size,
+    type: hunt.type,
+    search: hunt.search,
+    searchType: hunt.searchType
+  };
+
+  if (hunt.searchType === 'regex' || hunt.searchType === 'hexregex') {
+    options.regex = new RegExp(hunt.search);
+  }
+
+  return options;
+}
+
+// Actually do the search against ES and process the results.
+function runHuntJob (huntId, hunt, query, user) {
+
+  let options = buildHuntOptions(hunt);
+  let searchedSessions;
+
+  Db.search('sessions2-*', 'session', query, {scroll: '600s'}, function getMoreUntilDone (err, result) {
+    if (err || result.error) {
+      pauseHuntJobWithError(huntId, hunt, { value: `Hunt error searching sessions: ${err}` });
+      return;
+    }
+
+    let hits = result.hits.hits;
+
+    if (searchedSessions === undefined) {
+      searchedSessions = hunt.searchedSessions || 0;
+      // if the session query results length is not equal to the total sessions that the hunt
+      // job is searching, update the hunt total sessions so that the percent works correctly
+      if (hunt.totalSessions !== (result.hits.total + searchedSessions)) {
+        hunt.totalSessions = result.hits.total + searchedSessions;
+      }
+    }
+
+    async.forEachLimit(hits, 3, function (hit, cb) {
+      searchedSessions++;
+      let session = hit._source;
+      let sessionId = Db.session2Sid(hit);
+      let node = session.node;
+
+      isLocalView(node, function () {
+        sessionHunt(sessionId, options, function (err, matched) {
+          if (err) {
+            return pauseHuntJobWithError(huntId, hunt, { value: `Hunt error searching session (${sessionId}): ${err}` });
+          }
+
+          if (matched) {
+            hunt.matchedSessions++;
+            updateSessionWithHunt(session, sessionId, hunt, huntId);
+          }
+
+          updateHuntStats(hunt, huntId, session, searchedSessions, cb);
+        });
+      },
+      function () { // Check Remotely
+        let path = `${node}/hunt/${huntId}/remote/${sessionId}`;
+
+        makeRequest (node, path, user, (err, response) => {
+          if (err) {
+            return pauseHuntJobWithError(huntId, hunt, { value: `Error hunting on remote viewer: ${err}` });
+          }
+          let json = JSON.parse(response);
+          if (json.error) {
+            console.log(`Error hunting on remote viewer: ${json.error} - ${path}`);
+            return pauseHuntJobWithError(huntId, hunt, { value: `Error hunting on remote viewer: ${json.error}` });
+          }
+          if (json.matched) { hunt.matchedSessions++; }
+          return updateHuntStats(hunt, huntId, session, searchedSessions, cb);
+        });
+      });
+    }, function (err) { // done running this section of hunt job
+
+      // Some kind of error, stop now
+      if (err === 'paused' || err === 'undefined') {
+        internals.runningHuntJob = undefined;
+        return;
+      }
+
+      // There might be more, issue another scroll
+      if (result.hits.hits.length !== 0) {
+        return Db.scroll({ body: { scroll_id: result._scroll_id, }, scroll: '600s' }, getMoreUntilDone);
+      }
+
+      // We are totally done with this hunt
+      hunt.status = 'finished';
+      hunt.searchedSessions = hunt.totalSessions;
+      Db.setHunt(huntId, hunt, (err, info) => {
+        internals.runningHuntJob = undefined;
+        processHuntJobs(); // Start new hunt
+      });
+    });
+  });
+}
+
+// Do the house keeping before actually running the hunt job
+function processHuntJob (huntId, hunt) {
+  let now = Math.floor(Date.now() / 1000);
+
+  hunt.lastUpdated = now;
+  if (!hunt.started) { hunt.started = now; }
+
+  Db.setHunt(huntId, hunt, (err, info) => {
+    if (err) {
+      pauseHuntJobWithError(huntId, hunt, { value: `Error starting hunt job: ${err} ${info}` });
+      return;
+    }
+  });
+
+  // find the user that created the hunt
+  Db.getUserCache(hunt.userId, function(err, user) {
+    if (err && !user) {
+      pauseHuntJobWithError(huntId, hunt, { value: err });
+      return;
+    }
+    if (!user || !user.found) {
+      pauseHuntJobWithError(huntId, hunt, { value: `User ${hunt.userId} doesn't exist` });
+      return;
+    }
+    if (!user._source.enabled) {
+      pauseHuntJobWithError(huntId, hunt, { value: `User ${hunt.userId} is not enabled` });
+      return;
+    }
+
+    user = user._source;
+
+    molochparser.parser.yy = {
+      emailSearch: user.emailSearch === true,
+      fieldsMap: Config.getFieldsMap()
+    };
+
+    // build session query
+    var query = {
+      from: 0,
+      size: 100, // Only fetch 100 items at a time
+      query: { bool: { filter: [{}] } },
+      _source: ['_id', 'node'],
+      sort: { lastPacket: { order: 'asc' } }
+    };
+
+    // get the size of the query if it is being restarted
+    if (hunt.lastPacketTime) {
+      query.size = hunt.totalSessions - hunt.searchedSessions;
+    }
+
+    if (hunt.query.expression) {
+      try {
+        query.query.bool.filter.push(molochparser.parse(hunt.query.expression));
+      } catch (e) {
+        pauseHuntJobWithError(huntId, hunt, { value: `Couldn't compile hunt query expression: ${e}` });
+        return;
+      }
+    }
+
+    if (user.expression && user.expression.length > 0) {
+      try {
+        // Expression was set by admin, so assume email search ok
+        molochparser.parser.yy.emailSearch = true;
+        var userExpression = molochparser.parse(user.expression);
+        query.query.bool.filter.push(userExpression);
+      } catch (e) {
+        pauseHuntJobWithError(huntId, hunt, { value: `Couldn't compile user forced expression (${user.expression}): ${e}` });
+        return;
+      }
+    }
+
+    lookupQueryItems(query.query.bool.filter, function (lerr) {
+      query.query.bool.filter[0] = {
+        range: {
+          lastPacket: {
+            gte: hunt.lastPacketTime || hunt.query.startTime * 1000,
+            lt: hunt.query.stopTime * 1000
+          }
+        }
+      };
+
+      query._source = ['lastPacket', 'node', 'huntId', 'huntName'];
+
+      if (Config.debug > 2) {
+        console.log('HUNT', hunt.name, hunt.userId, '- start:', new Date(hunt.lastPacketTime || hunt.query.startTime * 1000), 'stop:', new Date(hunt.query.stopTime * 1000));
+      }
+
+      // do sessions query
+      runHuntJob(huntId, hunt, query, user);
+    });
+  });
+}
+
+// Kick off the process of running a hunt job
+// cb is optional and is called either when a job has been started or end of function
+function processHuntJobs (cb) {
+  if (Config.debug) {
+    console.log('HUNT - processing hunt jobs');
+  }
+
+  if (internals.runningHuntJob) { return (cb?cb():null); }
+  internals.runningHuntJob = true;
+
+  let query = {
+    size: 10000,
+    sort: { created: { order: 'asc' } },
+    query: { terms: { status: ['queued', 'paused', 'running'] } }
+  };
+
+  Db.searchHunt(query)
+    .then((hunts) => {
+      if (hunts.error) { throw hunts.error; }
+
+      for (let i = 0, ilen = hunts.hits.hits.length; i < ilen; i++) {
+        var hit = hunts.hits.hits[i];
+        var hunt = hit._source;
+        let id = hit._id;
+
+        if (hunt.status === 'running') { // there is a job already running
+          internals.runningHuntJob = hunt;
+          if (!internals.proccessHuntJobsInitialized) {
+            internals.proccessHuntJobsInitialized = true;
+            // restart the abandoned hunt
+            processHuntJob(id, hunt);
+          }
+          return (cb?cb():null);
+        } else if (hunt.status === 'queued') { // get the first queued hunt
+          hunt.status = 'running'; // update the hunt job
+          internals.runningHuntJob = hunt;
+          processHuntJob(id, hunt);
+          return (cb?cb():null);
+        }
+      }
+
+      // Made to the end without starting a job
+      internals.proccessHuntJobsInitialized = true;
+      internals.runningHuntJob = undefined;
+      return (cb?cb():null);
+    }).catch(err => {
+      console.log('Error fetching hunt jobs', err);
+      return (cb?cb():null);
+    });
+}
+
+function updateHuntStatus (req, res, status, successText, errorText) {
+  Db.get('hunts', 'hunt', req.params.id, (err, hit) => {
+    if (err) {
+      console.log(errorText, err, hit);
+      return res.molochError(500, errorText);
+    }
+
+    // don't let a user play a hunt job if one is already running
+    if (status === 'running' && internals.runningHuntJob) {
+      return res.molochError(403, 'You cannot start a new hunt until the running job completes or is paused.');
+    }
+
+    let hunt = hit._source;
+
+    // if hunt is finished, don't allow pause
+    if (hunt.status === 'finished' && status === 'paused') {
+      return res.molochError(403, 'You cannot pause a completed hunt.');
+    }
+
+    // clear the running hunt job if this is it
+    if (hunt.status === 'running') { internals.runningHuntJob = undefined; }
+    hunt.status = status; // update the hunt job
+
+    Db.setHunt(req.params.id, hunt, (err, info) => {
+      if (err) {
+        console.log(errorText, err, info);
+        return res.molochError(500, errorText);
+      }
+      res.send(JSON.stringify({success: true, text: successText}));
+      processHuntJobs();
+    });
+  });
+}
+
+app.post('/hunt', logAction('hunt'), checkCookieToken, function (req, res) {
+  // make sure viewer is not multi and user has permission
+  if (Config.get('multiES', false)) { return res.molochError(401, 'Not supported in multies'); }
+  if (!req.user.packetSearch) { return res.molochError(403, 'Need packet search privileges'); }
+  // make sure all the necessary data is included in the post body
+  if (!req.body.hunt) { return res.molochError(403, 'You must provide a hunt object'); }
+  if (!req.body.hunt.totalSessions) { return res.molochError(403, 'This hunt does not apply to any sessions'); }
+  if (!req.body.hunt.name) { return res.molochError(403, 'Missing hunt name'); }
+  if (!req.body.hunt.size) { return res.molochError(403, 'Missing max mumber of packets to examine per session'); }
+  if (!req.body.hunt.search) { return res.molochError(403, 'Missing packet search text'); }
+  if (!req.body.hunt.src && !req.body.hunt.dst) {
+    return res.molochError(403, 'The hunt must search source or destination packets (or both)');
+  }
+  if (!req.body.hunt.query) { return res.molochError(403, 'Missing query'); }
+  if (!req.body.hunt.query.startTime || !req.body.hunt.query.stopTime) {
+    return res.molochError(403, 'Missing fully formed query (must include start time and stop time)');
+  }
+
+  let searchTypes = [ 'ascii', 'asciicase', 'hex', 'wildcard', 'regex', 'hexregex' ];
+  if (!req.body.hunt.searchType) { return res.molochError(403, 'Missing packet search text type'); }
+  else if (searchTypes.indexOf(req.body.hunt.searchType) === -1) {
+    return res.molochError(403, 'Improper packet search text type. Must be "ascii", "asciicase", "hex", "wildcard", "hexregex", or "regex"');
+  }
+
+  if (!req.body.hunt.type) { return res.molochError(403, 'Missing packet search type (raw or reassembled packets)'); }
+  else if (req.body.hunt.type !== 'raw' && req.body.hunt.type !== 'reassembled') {
+    return res.molochError(403, 'Improper packet search type. Must be "raw" or "reassembled"');
+  }
+
+  let limit = req.user.createEnabled ? Config.get('huntAdminLimit', 10000000) : Config.get('huntLimit', 1000000);
+  if (parseInt(req.body.hunt.totalSessions) > limit) {
+    return res.molochError(403, `This hunt applies to too many sessions. Narrow down your session search to less than ${limit} first.`);
+  }
+
+  let now = Math.floor(Date.now() / 1000);
+
+  req.body.hunt.name = req.body.hunt.name.replace(/[^-a-zA-Z0-9_: ]/g, '');
+
+  let hunt = req.body.hunt;
+  hunt.created = now;
+  hunt.status = 'queued'; // always starts as queued
+  hunt.userId = req.user.userId;
+  hunt.matchedSessions = 0; // start with no matches
+  hunt.searchedSessions = 0; // start with no sessions searched
+  hunt.query = { // only use the necessary query items
+    expression: req.body.hunt.query.expression,
+    startTime: req.body.hunt.query.startTime,
+    stopTime: req.body.hunt.query.stopTime
+  };
+
+  Db.createHunt(hunt, function (err, result) {
+    if (err) { console.log('create hunt error', err, result); }
+    hunt.id = result._id;
+    processHuntJobs( () => {
+      return res.send(JSON.stringify({ success: true, hunt: hunt }));
+    });
   });
 });
 
+app.get('/hunt/list', logAction('hunt/list'), recordResponseTime, function (req, res) {
+  if (Config.get('multiES', false)) { return res.molochError(401, 'Not supported in multies'); }
+  if (!req.user.packetSearch) { return res.molochError(403, 'Need packet search privileges'); }
 
-function searchSession(req, session, cb) {
-  var fields = session._source || session.fields;
-  isLocalView(fields.node, function () {
-    var options = {};
-    options.regex = req.body.regex || req.params.regex;
-    options.findString = req.body.findString || req.params.findString;
-    pcapSearch(session._id, options, function(err, matched) {
-      cb(null, matched);
-    });
-  },
-  function () {
-    // Check Remotely
-    getViewUrl(fields.node, function(err, viewUrl, client) {
-      var info = url.parse(viewUrl);
-      info.path = Config.basePath(fields.node) + fields.node + "/searchSession/" + session._id;
-      info.agent = (client === http?internals.httpAgent:internals.httpsAgent);
-      addAuth(info, req.user, fields.node);
-      addCaTrust(info, fields.node);
-      var preq = client.request(info, function(pres) {
-        pres.on('end', function () {
-          cb(null, true); // ALW FIX
-        });
-      });
-      preq.on('error', function (e) {
-        console.log("ERROR - Couldn't searchSession", info, "\nerror=", e);
-        return cb({success: false, text: "Couldn't searchSession" + e});
-      });
-      preq.end();
-    });
-  });
-}
+  let query = {
+    sort: {},
+    from: parseInt(req.query.start) || 0,
+    size: parseInt(req.query.length) || 10000,
+    query: { bool: { must: [] } }
+  };
 
-function searchAndTagList(req, tags, list, doneCb) {
-  async.eachLimit(list, 10, function(session, nextCb) {
-    var fields = session._source || session.fields;
-    if (!fields) {
-      console.log("No Fields", session);
-      return nextCb(null);
-    }
+  query.sort[req.query.sortField || 'created'] = { order: req.query.desc === 'true' ? 'desc': 'asc'};
 
-    var doit = false;
-    if (fields.tags) {
-      for (let i = 0, ilen = tags.length; i < ilen; i++) {
-        if (fields.tags.indexOf(tags[i]) === -1) {
-          doit = true;
-          break;
+  if (req.query.history) { // only get finished jobs
+    query.query.bool.must.push({ term: { status: 'finished' } });
+    if (req.query.searchTerm) { // apply search term
+      query.query.bool.must.push({
+        query_string: {
+          query : req.query.searchTerm,
+          fields: ['name', 'userId']
         }
+      });
+    }
+  } else { // get queued, paused, and running jobs
+    query.from = 0;
+    query.size = 1000;
+    query.query.bool.must.push({ terms: { status: ['queued', 'paused', 'running'] } });
+  }
+
+  if (Config.debug) {
+    console.log('hunt query:', JSON.stringify(query, null, 2));
+  }
+
+  Promise.all([Db.searchHunt(query),
+               Db.numberOfHunts()])
+    .then(([hunts, total]) => {
+      if (hunts.error) { throw hunts.error; }
+
+      var results = { total:hunts.hits.total, results:[] };
+      for (let i = 0, ilen = hunts.hits.hits.length; i < ilen; i++) {
+        var hit = hunts.hits.hits[i];
+        var hunt = hit._source;
+        hunt.id = hit._id;
+        hunt.index = hit._index;
+        results.results.push(hunt);
       }
-    } else {
-      doit = true;
-    }
 
-    if (doit) {
-      searchSession(req, session, function (err, matched) {
-        nextCb(null);
-      });
-    } else {
-      nextCb(null);
-    }
-  }, doneCb);
-}
+      var r = {
+        recordsTotal: total.count,
+        recordsFiltered: results.total,
+        data: results.results
+      };
 
-app.post('/searchAndTag', logAction(), function(req, res) {
-  var tags = [];
-  var regex = req.body.regex || "";
-  if (req.body.tags) {
-    tags = req.body.tags.replace(/[^-a-zA-Z0-9_:,]/g, "").split(",");
-  }
-
-  if (tags.length === 0) { return res.molochError(200, "No tags specified"); }
-  if (regex.length === 0) { return res.molochError(200, "No regex specified"); }
-
-  if (req.body.ids) {
-    var ids = queryValueToArray(req.body.ids);
-
-    sessionsListFromIds(req, ids, ["ta", "tags-term", "node"], function(err, list) {
-      searchAndTagList(req, tags, list, function () {
-        return res.send(JSON.stringify({success: true, text: "Tags added successfully"}));
-      });
+      res.send(r);
+    }).catch(err => {
+      console.log('ERROR - /hunt/list', err);
+      return res.molochError(500, 'Error retrieving hunts - ' + err);
     });
-  } else {
-    sessionsListFromQuery(req, res, ["ta", "tags-term", "node"], function(err, list) {
-      searchAndTagList(req, tags, list, function () {
-        return res.send(JSON.stringify({success: true, text: "Tags added successfully"}));
+});
+
+app.delete('/hunt/:id', logAction('hunt/:id'), checkCookieToken, checkHuntAccess, function (req, res) {
+  if (Config.get('multiES', false)) { return res.molochError(401, 'Not supported in multies'); }
+  if (!req.user.packetSearch) { return res.molochError(403, 'Need packet search privileges'); }
+
+  Db.deleteHuntItem(req.params.id, function (err, result) {
+    if (err || result.error) {
+      console.log('ERROR - deleting hunt item', err || result.error);
+      return res.molochError(500, 'Error deleting hunt item');
+    } else {
+      res.send(JSON.stringify({success: true, text: 'Deleted hunt item successfully'}));
+    }
+  });
+});
+
+app.put('/hunt/:id/pause', logAction('hunt'), checkCookieToken, checkHuntAccess, function (req, res) {
+  if (Config.get('multiES', false)) { return res.molochError(401, 'Not supported in multies'); }
+  if (!req.user.packetSearch) { return res.molochError(403, 'Need packet search privileges'); }
+  updateHuntStatus(req, res, 'paused', 'Paused hunt item successfully', 'Error pausing hunt job');
+});
+
+app.put('/hunt/:id/play', logAction('hunt'), checkCookieToken, checkHuntAccess, function (req, res) {
+  if (Config.get('multiES', false)) { return res.molochError(401, 'Not supported in multies'); }
+  if (!req.user.packetSearch) { return res.molochError(403, 'Need packet search privileges'); }
+  updateHuntStatus(req, res, 'queued', 'Queued hunt item successfully', 'Error starting hunt job');
+});
+
+app.get('/:nodeName/hunt/:huntId/remote/:sessionId', function (req, res) {
+  let huntId = req.params.huntId;
+  let sessionId = req.params.sessionId;
+
+  // fetch hunt and session
+  Promise.all([Db.get('hunts', 'hunt', huntId),
+               Db.get(Db.sid2Index(sessionId), 'session', Db.sid2Id(sessionId))])
+    .then(([hunt, session]) => {
+      if (hunt.error || session.error) { res.send({ matched: false }); }
+
+      let matched = false;
+
+      hunt = hunt._source;
+      session = session._source;
+
+      let options = buildHuntOptions(hunt);
+
+      sessionHunt(sessionId, options, function (err, matched) {
+        if (err) {
+          return res.send({ matched: false, error: err });
+        }
+
+        if (matched) {
+          updateSessionWithHunt(session, sessionId, hunt, huntId);
+        }
+
+        return res.send({ matched: matched });
       });
+    }).catch((err) => {
+      console.log('ERROR - hunt/remote', err);
+      res.send({ matched: false, error: err });
     });
-  }
 });
 
 //////////////////////////////////////////////////////////////////////////////////
 //// Pcap Delete/Scrub
 //////////////////////////////////////////////////////////////////////////////////
 
-function pcapScrub(req, res, id, entire, endCb) {
+function pcapScrub(req, res, sid, entire, endCb) {
   if (pcapScrub.scrubbingBuffers === undefined) {
     pcapScrub.scrubbingBuffers = [Buffer.alloc(5000), Buffer.alloc(5000), Buffer.alloc(5000)];
     pcapScrub.scrubbingBuffers[0].fill(0);
@@ -5122,7 +5971,7 @@ function pcapScrub(req, res, id, entire, endCb) {
     });
   }
 
-  Db.getWithOptions(Db.id2Index(id), 'session', id, {_source: "node,ipProtocol,packetPos,packetLen"}, function(err, session) {
+  Db.getWithOptions(Db.sid2Index(sid), 'session', Db.sid2Id(sid), {_source: "node,ipProtocol,packetPos,packetLen"}, function(err, session) {
     var fields = session._source || session.fields;
 
     var fileNum;
@@ -5160,7 +6009,7 @@ function pcapScrub(req, res, id, entire, endCb) {
     },
     function (pcapErr, results) {
       if (entire) {
-        Db.deleteDocument(Db.id2Index(session._id), 'session', session._id, function(err, data) {
+        Db.deleteDocument(session._index, 'session', session._id, function(err, data) {
           endCb(pcapErr, fields);
         });
       } else {
@@ -5171,7 +6020,7 @@ function pcapScrub(req, res, id, entire, endCb) {
             scrubat: new Date().getTime()
           }
         };
-        Db.update(Db.id2Index(session._id), 'session', session._id, document, function(err, data) {
+        Db.update(session._index, 'session', session._id, document, function(err, data) {
           endCb(pcapErr, fields);
         });
       }
@@ -5179,24 +6028,24 @@ function pcapScrub(req, res, id, entire, endCb) {
   });
 }
 
-app.get('/:nodeName/scrub/:id', checkProxyRequest, function(req, res) {
+app.get('/:nodeName/scrub/:sid', checkProxyRequest, function(req, res) {
   if (!req.user.removeEnabled) { return res.molochError(200, "Need remove data privileges"); }
 
   noCache(req, res);
   res.statusCode = 200;
 
-  pcapScrub(req, res, req.params.id, false, function(err) {
+  pcapScrub(req, res, req.params.sid, false, function(err) {
     res.end();
   });
 });
 
-app.get('/:nodeName/delete/:id', checkProxyRequest, function(req, res) {
+app.get('/:nodeName/delete/:sid', checkProxyRequest, function(req, res) {
   if (!req.user.removeEnabled) { return res.molochError(200, "Need remove data privileges"); }
 
   noCache(req, res);
   res.statusCode = 200;
 
-  pcapScrub(req, res, req.params.id, true, function(err) {
+  pcapScrub(req, res, req.params.sid, true, function(err) {
     res.end();
   });
 });
@@ -5210,26 +6059,13 @@ function scrubList(req, res, entire, list) {
 
     isLocalView(fields.node, function () {
       // Get from our DISK
-      pcapScrub(req, res, item._id, entire, nextCb);
+      pcapScrub(req, res, Db.session2Sid(item), entire, nextCb);
     },
     function () {
       // Get from remote DISK
-      getViewUrl(fields.node, function(err, viewUrl, client) {
-        var info = url.parse(viewUrl);
-        info.path = Config.basePath(fields.node) + fields.node + (entire?"/delete/":"/scrub/") + item._id;
-        info.agent = (client === http?internals.httpAgent:internals.httpsAgent);
-        addAuth(info, req.user, fields.node);
-        addCaTrust(info, fields.node);
-        var preq = client.request(info, function(pres) {
-          pres.on('end', function () {
-            setImmediate(nextCb);
-          });
-        });
-        preq.on('error', function (e) {
-          console.log("ERROR - Couldn't proxy scrub request=", info, "\nerror=", e);
-          nextCb(null);
-        });
-        preq.end();
+      let path = fields.node + (entire?"/delete/":"/scrub/") + item._id;
+      makeRequest(fields.node, path, req.user, function (err, response) {
+        setImmediate(nextCb);
       });
     });
   }, function(err) {
@@ -5453,28 +6289,13 @@ function sendSessionsList(req, res, list) {
       internals.sendSessionQueue.push(options, nextCb);
     },
     function () {
-      // Get from remote DISK
-      getViewUrl(fields.node, function(err, viewUrl, client) {
-        var info = url.parse(viewUrl);
-        info.path = Config.basePath(fields.node) + fields.node + "/sendSession/" + item._id + "?saveId=" + saveId + "&cluster=" + req.body.cluster;
-        info.agent = (client === http?internals.httpAgent:internals.httpsAgent);
-        if (req.body.tags) {
-          info.path += "&tags=" + req.body.tags;
-        }
-        addAuth(info, req.user, fields.node);
-        addCaTrust(info, fields.node);
-        var preq = client.request(info, function(pres) {
-          pres.on('data', function (chunk) {
-          });
-          pres.on('end', function () {
-            setImmediate(nextCb);
-          });
-        });
-        preq.on('error', function (e) {
-          console.log("ERROR - Couldn't proxy sendSession request=", info, "\nerror=", e);
-          nextCb(null);
-        });
-        preq.end();
+      let path = `${fields.node}/sendSession/${item._id}?saveId=${saveId}&cluster=${req.body.cluster}`;
+      if (req.body.tags) {
+        path += `&tags=${req.body.tags}`;
+      }
+
+      makeRequest(fields.node, path, req.user, (err, response) => {
+        setImmediate(nextCb);
       });
     });
   }, function(err) {
@@ -5601,7 +6422,7 @@ app.post('/receiveSession', function receiveSession(req, res) {
   function saveSession() {
     var id = session.id;
     delete session.id;
-    Db.indexNow(Db.id2Index(id), "session", id, session, function(err, info) {
+    Db.indexNow(Db.sid2Index(id), "session", Db.sid2Id(id), session, function(err, info) {
     });
   }
 
@@ -5755,6 +6576,26 @@ if (Config.get("regressionTests")) {
     processCronQueries();
     res.send("{}");
   });
+
+  // Make sure all jobs have run and return
+  app.get('/processHuntJobs', function (req, res) {
+    processHuntJobs();
+
+    setTimeout(function checkHuntFinished() {
+      if (internals.runningHuntJob) {
+        setTimeout(checkHuntFinished, 1000);
+      } else {
+        Db.search("hunts", "hunt", {query: {term: {status: "queued"}}}, function(err, result) {
+          if (result.hits.total > 0) {
+            processHuntJobs();
+            setTimeout(checkHuntFinished, 1000);
+          } else {
+            res.send('{}');
+          }
+        });
+      }
+    }, 1000);
+  });
 }
 
 app.use('/cyberchef.htm', function(req, res) {
@@ -5828,6 +6669,8 @@ app.use((req, res) => {
     .replace(/_userId_/g, req.user?req.user.userId:'-')
     .replace(/_userName_/g, req.user?req.user.userName:'-');
 
+  let limit = req.user.createEnabled ? Config.get('huntAdminLimit', 10000000) : Config.get('huntLimit', 1000000);
+
   const appContext = {
     theme: theme,
     titleConfig: titleConfig,
@@ -5835,7 +6678,10 @@ app.use((req, res) => {
     version: app.locals.molochversion,
     devMode: Config.get('devMode', false),
     demoMode: Config.get('demoMode', false),
-    themeUrl: theme === 'custom-theme' ? 'user.css' : ''
+    multiViewer: Config.get('multiES', false),
+    themeUrl: theme === 'custom-theme' ? 'user.css' : '',
+    huntWarn: Config.get('huntWarn', 100000),
+    huntLimit: limit
   };
 
   // Create a fresh Vue app instance
@@ -5844,7 +6690,7 @@ app.use((req, res) => {
   // Render the Vue instance to HTML
   renderer.renderToString(vueApp, appContext, (err, html) => {
     if (err) {
-      console.error(err);
+      console.log(err);
       if (err.code === 404) {
         res.status(404).end('Page not found');
       } else {
@@ -6105,10 +6951,11 @@ function main () {
   createRightClicks();
   setInterval(createRightClicks, 5*60*1000);
 
-  if (Config.get("cronQueries", false)) {
+  if (Config.get("cronQueries", false)) { // this viewer will process the cron queries
     console.log("This node will process Cron Queries, delayed by", internals.cronTimeout, "seconds");
     setInterval(processCronQueries, 60*1000);
     setTimeout(processCronQueries, 1000);
+    setInterval(processHuntJobs, 10000);
   }
 
   var server;
@@ -6159,7 +7006,7 @@ processArgs(process.argv);
 //////////////////////////////////////////////////////////////////////////////////
 Db.initialize({host: internals.elasticBase,
                prefix: Config.get("prefix", ""),
-               usersHost: Config.get("usersElasticsearch"),
+               usersHost: Config.get("usersElasticsearch")?Config.get("usersElasticsearch").split(","):undefined,
                usersPrefix: Config.get("usersPrefix"),
                nodeName: Config.nodeName(),
                dontMapTags: Config.get("multiES", false),

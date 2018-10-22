@@ -4,12 +4,18 @@
 
     <!-- typeahead input -->
     <div class="input-group input-group-sm">
-      <span class="input-group-prepend cursor-help"
+      <span class="input-group-prepend input-group-prepend-fw cursor-help"
         v-b-tooltip.hover
         placement="bottomright"
         title="Search Expression">
-        <span class="input-group-text">
-          <span class="fa fa-search"></span>
+        <span class="input-group-text input-group-text-fw">
+          <span v-if="!shiftKeyHold"
+            class="fa fa-search fa-fw">
+          </span>
+          <span v-else
+            class="query-shortcut">
+            Q
+          </span>
         </span>
       </span>
       <input type="text"
@@ -22,14 +28,21 @@
         @input="debounceExprChange"
         @keyup.enter="enterClick"
         @keyup.esc.tab.enter.down.up.stop="keyup($event)"
-        class="form-control search-control" />
-      <span v-if="expression"
-        @click="clear()"
-        class="fa fa-close text-muted clear-input cursor-pointer">
+        class="form-control search-control"
+      />
+      <span class="input-group-append">
+        <button type="button"
+          @click="clear"
+          :disabled="!expression"
+          class="btn btn-outline-secondary btn-clear-input">
+          <span class="fa fa-close">
+          </span>
+        </button>
       </span>
     </div> <!-- /typeahead input -->
 
     <!-- TODO fix tooltip placement issues -->
+    <!-- https://github.com/bootstrap-vue/bootstrap-vue/issues/1352 -->
     <!-- results dropdown -->
     <div id="typeahead-results"
       ref="typeaheadResults"
@@ -40,8 +53,7 @@
         class="dropdown-item cursor-pointer"
         :class="{'active':key === activeIdx}"
         @click="addToQuery(value)"
-        v-b-tooltip.hover
-        placement="right"
+        v-b-tooltip.hover.top
         :title="value.help">
         <strong v-if="value.exp">{{ value.exp }}</strong>
         <strong v-if="!value.exp">{{ value }}</strong>
@@ -112,6 +124,9 @@ export default {
       set: function (newValue) {
         this.$store.commit('setFocusSearch', newValue);
       }
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
     }
   },
   watch: {
@@ -571,13 +586,6 @@ export default {
   width: auto;
 }
 
-.clear-input {
-  z-index: 3;
-  position: absolute;
-  right: 10px;
-  top: 8px;
-}
-
 .typeahead-results {
   top: initial;
   left: initial;
@@ -586,12 +594,6 @@ export default {
   overflow-x: hidden;
   max-height: 500px;
   margin-left: 30px;
-}
-
-/* make sure corners are rounded even
- * when the clear input button is present */
-input.search-control {
-  border-radius: 0 3px 3px 0 !important;
 }
 
 @media screen and (max-height: 600px) {

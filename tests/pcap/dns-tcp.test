@@ -60,6 +60,38 @@
                   "74.125.228.46"
                ],
                "ipCnt" : 11,
+               "nameserverASN" : [
+                  "AS15169 Google LLC",
+                  "AS15169 Google LLC",
+                  "AS15169 Google LLC",
+                  "AS15169 Google LLC"
+               ],
+               "nameserverGEO" : [
+                  "US",
+                  "US",
+                  "US",
+                  "US"
+               ],
+               "nameserverHost" : [
+                  "ns1.google.com",
+                  "ns4.google.com",
+                  "ns3.google.com",
+                  "ns2.google.com"
+               ],
+               "nameserverHostCnt" : 4,
+               "nameserverIp" : [
+                  "216.239.38.10",
+                  "216.239.34.10",
+                  "216.239.36.10",
+                  "216.239.32.10"
+               ],
+               "nameserverIpCnt" : 4,
+               "nameserverRIR" : [
+                  "ARIN",
+                  "ARIN",
+                  "ARIN",
+                  "ARIN"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -86,10 +118,9 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "Cisco",
                "Cisco Systems, Inc"
             ],
-            "dstOuiCnt" : 2,
+            "dstOuiCnt" : 1,
             "dstPackets" : 4,
             "dstPayload8" : "01545e6381800001",
             "dstPort" : 53,
@@ -203,6 +234,38 @@
                   "64.12.79.57"
                ],
                "ipCnt" : 5,
+               "nameserverASN" : [
+                  "AS1668 AOL Transit Data Network",
+                  "AS1668 AOL Transit Data Network",
+                  "AS1668 AOL Transit Data Network",
+                  "AS1668 AOL Transit Data Network"
+               ],
+               "nameserverGEO" : [
+                  "US",
+                  "US",
+                  "US",
+                  "US"
+               ],
+               "nameserverHost" : [
+                  "dns-02.ns.aol.com",
+                  "dns-01.ns.aol.com",
+                  "dns-07.ns.aol.com",
+                  "dns-06.ns.aol.com"
+               ],
+               "nameserverHostCnt" : 4,
+               "nameserverIp" : [
+                  "64.236.1.107",
+                  "207.200.73.80",
+                  "64.12.51.132",
+                  "205.188.157.232"
+               ],
+               "nameserverIpCnt" : 4,
+               "nameserverRIR" : [
+                  "ARIN",
+                  "ARIN",
+                  "ARIN",
+                  "ARIN"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -229,10 +292,9 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "Cisco",
                "Cisco Systems, Inc"
             ],
-            "dstOuiCnt" : 2,
+            "dstOuiCnt" : 1,
             "dstPackets" : 4,
             "dstPayload8" : "0100e2ec81800001",
             "dstPort" : 53,

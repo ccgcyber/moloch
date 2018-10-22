@@ -13,15 +13,65 @@
                   "APNIC"
                ],
                "host" : [
-                  "coconut.itojun.org",
-                  "itojun.org",
-                  "kiwi.itojun.org"
+                  "itojun.org"
                ],
-               "hostCnt" : 3,
+               "hostCnt" : 1,
                "ip" : [
                   "210.160.95.97"
                ],
                "ipCnt" : 1,
+               "mailserverASN" : [
+                  "AS4713 NTT Communications Corporation",
+                  "---",
+                  "AS4713 NTT Communications Corporation",
+                  "---"
+               ],
+               "mailserverGEO" : [
+                  "JP",
+                  "---",
+                  "JP",
+                  "---"
+               ],
+               "mailserverHost" : [
+                  "coconut.itojun.org",
+                  "kiwi.itojun.org"
+               ],
+               "mailserverHostCnt" : 2,
+               "mailserverIp" : [
+                  "210.160.95.97",
+                  "3ffe:501:410:0:2c0:dfff:fe47:33e",
+                  "210.160.95.99",
+                  "3ffe:501:410:100:5254:ff:feda:48bf"
+               ],
+               "mailserverIpCnt" : 4,
+               "mailserverRIR" : [
+                  "APNIC",
+                  "",
+                  "APNIC",
+                  ""
+               ],
+               "nameserverASN" : [
+                  "AS4713 NTT Communications Corporation",
+                  "AS4713 NTT Communications Corporation"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP"
+               ],
+               "nameserverHost" : [
+                  "coconut.itojun.org",
+                  "tiger.hiroo.oshokuji.org"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "210.160.95.97",
+                  "210.145.33.242"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -47,7 +97,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -110,7 +160,7 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "3com",
+               "3Com",
                "Megahertz Corporation"
             ],
             "dstOuiCnt" : 2,
@@ -169,7 +219,7 @@
             ],
             "srcMacCnt" : 2,
             "srcOui" : [
-               "3com",
+               "3Com",
                "Megahertz Corporation"
             ],
             "srcOuiCnt" : 2,
@@ -198,7 +248,7 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "3com",
+               "3Com",
                "Megahertz Corporation"
             ],
             "dstOuiCnt" : 2,
@@ -280,7 +330,7 @@
             ],
             "srcMacCnt" : 2,
             "srcOui" : [
-               "3com",
+               "3Com",
                "Megahertz Corporation"
             ],
             "srcOuiCnt" : 2,
@@ -302,10 +352,58 @@
          "body" : {
             "dns" : {
                "host" : [
-                  "www.yahoo.com",
+                  "www.yahoo.com"
+               ],
+               "hostCnt" : 1,
+               "mailserverASN" : [
+                  "AS11590 Cumberland Technologies International"
+               ],
+               "mailserverGEO" : [
+                  "US"
+               ],
+               "mailserverHost" : [
                   "mr1.yahoo.com"
                ],
-               "hostCnt" : 2,
+               "mailserverHostCnt" : 1,
+               "mailserverIp" : [
+                  "206.251.17.77"
+               ],
+               "mailserverIpCnt" : 1,
+               "mailserverRIR" : [
+                  "ARIN"
+               ],
+               "nameserverASN" : [
+                  "AS3301 Telia Company AB",
+                  "AS3561 Savvis",
+                  "AS3561 Savvis",
+                  "AS3561 Savvis"
+               ],
+               "nameserverGEO" : [
+                  "SE",
+                  "US",
+                  "US",
+                  "US"
+               ],
+               "nameserverHost" : [
+                  "ns.europe.yahoo.com",
+                  "ns2.dca.yahoo.com",
+                  "ns1.yahoo.com",
+                  "ns5.dcx.yahoo.com"
+               ],
+               "nameserverHostCnt" : 4,
+               "nameserverIp" : [
+                  "195.67.49.25",
+                  "204.71.200.33",
+                  "209.143.200.34",
+                  "216.32.74.10"
+               ],
+               "nameserverIpCnt" : 4,
+               "nameserverRIR" : [
+                  "RIPE",
+                  "ARIN",
+                  "ARIN",
+                  "ARIN"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -331,7 +429,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -421,7 +519,7 @@
             ],
             "srcMacCnt" : 1,
             "srcOui" : [
-               "3com"
+               "3Com"
             ],
             "srcOuiCnt" : 1,
             "srcPackets" : 2,
@@ -463,6 +561,28 @@
                   "3ffe:0501:0410:0100:5254:00ff:feda:48bf"
                ],
                "ipCnt" : 2,
+               "nameserverASN" : [
+                  "AS4713 NTT Communications Corporation",
+                  "AS4713 NTT Communications Corporation"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP"
+               ],
+               "nameserverHost" : [
+                  "coconut.itojun.org",
+                  "tiger.hiroo.oshokuji.org"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "210.160.95.97",
+                  "210.145.33.242"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -488,7 +608,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -550,7 +670,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 30,
@@ -763,6 +883,28 @@
                   "3ffe:0501:0410:0100:5254:00ff:feda:48bf"
                ],
                "ipCnt" : 2,
+               "nameserverASN" : [
+                  "AS4713 NTT Communications Corporation",
+                  "AS4713 NTT Communications Corporation"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP"
+               ],
+               "nameserverHost" : [
+                  "coconut.itojun.org",
+                  "tiger.hiroo.oshokuji.org"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "210.160.95.97",
+                  "210.145.33.242"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -788,7 +930,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -850,7 +992,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -905,6 +1047,23 @@
                   "a.e.9.6.7.0.e.f.f.f.7.9.0.6.2.0.1.0.0.0.0.0.0.0.7.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2497 Internet Initiative Japan Inc."
+               ],
+               "nameserverGEO" : [
+                  "JP"
+               ],
+               "nameserverHost" : [
+                  "sh1.iijlab.net"
+               ],
+               "nameserverHostCnt" : 1,
+               "nameserverIp" : [
+                  "202.232.15.98"
+               ],
+               "nameserverIpCnt" : 1,
+               "nameserverRIR" : [
+                  "APNIC"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -930,7 +1089,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -992,7 +1151,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1050,7 +1209,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1108,7 +1267,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1208,7 +1367,7 @@
             ],
             "srcMacCnt" : 1,
             "srcOui" : [
-               "3com"
+               "3Com"
             ],
             "srcOuiCnt" : 1,
             "srcPackets" : 3,
@@ -1232,6 +1391,32 @@
                   "0.f.f.7.6.b.e.f.f.f.7.9.0.6.2.0.2.0.8.1.0.0.0.0.1.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2500 WIDE Project",
+                  "AS2500 WIDE Project",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "ns2.v6.wide.ad.jp",
+                  "ns1.v6.wide.ad.jp"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "203.178.136.188",
+                  "203.178.141.212",
+                  "3ffe:501:4819:2000:5254:ff:fedc:50d2"
+               ],
+               "nameserverIpCnt" : 3,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -1257,7 +1442,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -1319,7 +1504,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1377,7 +1562,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1435,7 +1620,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1535,7 +1720,7 @@
             ],
             "srcMacCnt" : 1,
             "srcOui" : [
-               "3com"
+               "3Com"
             ],
             "srcOuiCnt" : 1,
             "srcPackets" : 3,
@@ -1559,6 +1744,32 @@
                   "2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.5.4.3.2.0.0.8.1.1.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2500 WIDE Project",
+                  "AS2500 WIDE Project",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "ns2.v6.wide.ad.jp",
+                  "ns1.v6.wide.ad.jp"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "203.178.136.188",
+                  "203.178.141.212",
+                  "3ffe:501:4819:2000:5254:ff:fedc:50d2"
+               ],
+               "nameserverIpCnt" : 3,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -1584,7 +1795,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -1646,7 +1857,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1704,7 +1915,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1762,7 +1973,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -1862,7 +2073,7 @@
             ],
             "srcMacCnt" : 1,
             "srcOui" : [
-               "3com"
+               "3Com"
             ],
             "srcOuiCnt" : 1,
             "srcPackets" : 3,
@@ -1886,6 +2097,23 @@
                   "e.3.3.0.7.4.e.f.f.f.f.d.0.c.2.0.0.0.0.0.0.1.4.0.1.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS4713 NTT Communications Corporation"
+               ],
+               "nameserverGEO" : [
+                  "JP"
+               ],
+               "nameserverHost" : [
+                  "coconut.itojun.org"
+               ],
+               "nameserverHostCnt" : 1,
+               "nameserverIp" : [
+                  "210.160.95.97"
+               ],
+               "nameserverIpCnt" : 1,
+               "nameserverRIR" : [
+                  "APNIC"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -1911,7 +2139,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -1973,7 +2201,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -2031,7 +2259,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -2100,6 +2328,33 @@
                   "3ffe:0501:0000:1001:0000:0000:0000:0002"
                ],
                "ipCnt" : 1,
+               "nameserverASN" : [
+                  "AS2500 WIDE Project",
+                  "AS2500 WIDE Project",
+                  "AS2500 WIDE Project"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP",
+                  "JP"
+               ],
+               "nameserverHost" : [
+                  "ns.wide.ad.jp",
+                  "ns.rcac.tdi.co.jp",
+                  "ns.tokyo.wide.ad.jp"
+               ],
+               "nameserverHostCnt" : 3,
+               "nameserverIp" : [
+                  "203.178.136.61",
+                  "203.178.136.63",
+                  "202.249.17.17"
+               ],
+               "nameserverIpCnt" : 3,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC",
+                  "APNIC"
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -2125,7 +2380,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -2188,7 +2443,7 @@
             ],
             "dstMacCnt" : 2,
             "dstOui" : [
-               "3com",
+               "3Com",
                "Megahertz Corporation"
             ],
             "dstOuiCnt" : 2,
@@ -2239,7 +2494,7 @@
             ],
             "srcMacCnt" : 2,
             "srcOui" : [
-               "3com",
+               "3Com",
                "Megahertz Corporation"
             ],
             "srcOuiCnt" : 2,
@@ -2264,6 +2519,32 @@
                   "2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.1.0.0.1.0.0.0.0.1.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2500 WIDE Project",
+                  "AS2500 WIDE Project",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "ns2.v6.wide.ad.jp",
+                  "ns1.v6.wide.ad.jp"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "203.178.141.212",
+                  "203.178.136.188",
+                  "3ffe:501:4819:2000:5254:ff:fedc:50d2"
+               ],
+               "nameserverIpCnt" : 3,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -2289,7 +2570,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -2348,6 +2629,32 @@
                   "2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.1.0.0.1.0.0.0.0.1.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2500 WIDE Project",
+                  "AS2500 WIDE Project",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "ns2.v6.wide.ad.jp",
+                  "ns1.v6.wide.ad.jp"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "203.178.136.188",
+                  "203.178.141.212",
+                  "3ffe:501:4819:2000:5254:ff:fedc:50d2"
+               ],
+               "nameserverIpCnt" : 3,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -2373,7 +2680,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -2432,6 +2739,32 @@
                   "2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.1.0.0.1.0.0.0.0.1.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2500 WIDE Project",
+                  "AS2500 WIDE Project",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "ns2.v6.wide.ad.jp",
+                  "ns1.v6.wide.ad.jp"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "203.178.136.188",
+                  "203.178.141.212",
+                  "3ffe:501:4819:2000:5254:ff:fedc:50d2"
+               ],
+               "nameserverIpCnt" : 3,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -2457,7 +2790,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -2614,7 +2947,7 @@
             ],
             "srcMacCnt" : 1,
             "srcOui" : [
-               "3com"
+               "3Com"
             ],
             "srcOuiCnt" : 1,
             "srcPackets" : 1,
@@ -2635,12 +2968,15 @@
          "body" : {
             "dns" : {
                "ASN" : [
+                  "AS2497 Internet Initiative Japan Inc.",
                   "---"
                ],
                "GEO" : [
+                  "JP",
                   "---"
                ],
                "RIR" : [
+                  "APNIC",
                   ""
                ],
                "host" : [
@@ -2648,9 +2984,36 @@
                ],
                "hostCnt" : 1,
                "ip" : [
+                  "202.232.15.98",
                   "3ffe:0507:0000:0001:0260:97ff:fe07:69ea"
                ],
-               "ipCnt" : 1,
+               "ipCnt" : 2,
+               "nameserverASN" : [
+                  "AS2497 Internet Initiative Japan Inc.",
+                  "AS2497 Internet Initiative Japan Inc.",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "sh1.iijlab.net",
+                  "dns0.iij.ad.jp"
+               ],
+               "nameserverHostCnt" : 2,
+               "nameserverIp" : [
+                  "202.232.15.98",
+                  "202.232.2.44",
+                  "3ffe:507:0:1:260:97ff:fe07:69ea"
+               ],
+               "nameserverIpCnt" : 3,
+               "nameserverRIR" : [
+                  "APNIC",
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -2676,7 +3039,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -2738,7 +3101,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 0,
@@ -2861,6 +3224,27 @@
                   "a.e.9.6.7.0.e.f.f.f.7.9.0.6.2.0.1.0.0.0.0.0.0.0.7.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2497 Internet Initiative Japan Inc.",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "sh1.iijlab.net"
+               ],
+               "nameserverHostCnt" : 1,
+               "nameserverIp" : [
+                  "202.232.15.98",
+                  "3ffe:507:0:1:260:97ff:fe07:69ea"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -2886,7 +3270,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -2945,6 +3329,27 @@
                   "a.e.9.6.7.0.e.f.f.f.7.9.0.6.2.0.1.0.0.0.0.0.0.0.7.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2497 Internet Initiative Japan Inc.",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "sh1.iijlab.net"
+               ],
+               "nameserverHostCnt" : 1,
+               "nameserverIp" : [
+                  "202.232.15.98",
+                  "3ffe:507:0:1:260:97ff:fe07:69ea"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -2970,7 +3375,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -3029,6 +3434,27 @@
                   "a.e.9.6.7.0.e.f.f.f.7.9.0.6.2.0.1.0.0.0.0.0.0.0.7.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2497 Internet Initiative Japan Inc.",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "sh1.iijlab.net"
+               ],
+               "nameserverHostCnt" : 1,
+               "nameserverIp" : [
+                  "202.232.15.98",
+                  "3ffe:507:0:1:260:97ff:fe07:69ea"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -3054,7 +3480,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -3113,6 +3539,27 @@
                   "a.e.9.6.7.0.e.f.f.f.7.9.0.6.2.0.1.0.0.0.0.0.0.0.7.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2497 Internet Initiative Japan Inc.",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "sh1.iijlab.net"
+               ],
+               "nameserverHostCnt" : 1,
+               "nameserverIp" : [
+                  "202.232.15.98",
+                  "3ffe:507:0:1:260:97ff:fe07:69ea"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -3138,7 +3585,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,
@@ -3197,6 +3644,27 @@
                   "a.e.9.6.7.0.e.f.f.f.7.9.0.6.2.0.1.0.0.0.0.0.0.0.7.0.5.0.e.f.f.3.ip6.int"
                ],
                "hostCnt" : 1,
+               "nameserverASN" : [
+                  "AS2497 Internet Initiative Japan Inc.",
+                  "---"
+               ],
+               "nameserverGEO" : [
+                  "JP",
+                  "---"
+               ],
+               "nameserverHost" : [
+                  "sh1.iijlab.net"
+               ],
+               "nameserverHostCnt" : 1,
+               "nameserverIp" : [
+                  "202.232.15.98",
+                  "3ffe:507:0:1:260:97ff:fe07:69ea"
+               ],
+               "nameserverIpCnt" : 2,
+               "nameserverRIR" : [
+                  "APNIC",
+                  ""
+               ],
                "opcode" : [
                   "QUERY"
                ],
@@ -3222,7 +3690,7 @@
             ],
             "dstMacCnt" : 1,
             "dstOui" : [
-               "3com"
+               "3Com"
             ],
             "dstOuiCnt" : 1,
             "dstPackets" : 1,

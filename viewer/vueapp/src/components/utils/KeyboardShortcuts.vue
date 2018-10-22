@@ -26,6 +26,10 @@
       <br>
       <code>'H'</code> - jump to the Moloch Help page
       <br>
+      <code>'U'</code> - jump to the Moloch Hunt page
+      <br>
+      <code>'shift + enter'</code> - issue search/refresh
+      <br>
       <code>'esc'</code> - remove focus from any input and close this dialog
       <br>
       <code>'?'</code> - shows you this dialog, but I guess you already knew that
@@ -69,7 +73,7 @@ export default {
 
 <style scoped>
 .keyboard-shortcuts-help {
-  position: absolute;
+  position: fixed;
   top: 155px;
   width: 465px;
   z-index: 1;

@@ -221,8 +221,8 @@ LOCAL void rip_classify(MolochSession_t *session, const unsigned char *UNUSED(da
 LOCAL void isakmp_udp_classify(MolochSession_t *session, const unsigned char *data, int len, int UNUSED(which), void *UNUSED(uw))
 {
     if (len < 18 ||
-            (data[16] != 8 && data[16] != 33 && data[16] != 46) ||
-            (data[17] != 0x10 && data[17] != 0x20)) {
+            (data[16] != 1 && data[16] != 8 && data[16] != 33 && data[16] != 46) ||
+            (data[17] != 0x10 && data[17] != 0x20 && data[17] != 0x02)) {
         return;
     }
     moloch_session_add_protocol(session, "isakmp");
@@ -292,6 +292,13 @@ LOCAL void mqtt_classify(MolochSession_t *session, const unsigned char *data, in
     }
 }
 /******************************************************************************/
+LOCAL void hdfs_classify(MolochSession_t *session, const unsigned char *data, int len, int UNUSED(which), void *UNUSED(uw))
+{
+    if (len < 10 || data[5] != 0xa)
+        return;
+    moloch_session_add_protocol(session, "hdfs");
+}
+/******************************************************************************/
 LOCAL void hsrp_udp_classify(MolochSession_t *session, const unsigned char *data, int len, int UNUSED(which), void *UNUSED(uw))
 {
     if (session->port1 != session->port2 || len < 3)
@@ -318,7 +325,7 @@ void moloch_parser_init()
     moloch_parsers_classifier_register_tcp("rdp", NULL, 0, (unsigned char*)"\x03\x00", 2, rdp_classify);
     moloch_parsers_classifier_register_tcp("imap", NULL, 0, (unsigned char*)"* OK ", 5, imap_classify);
     moloch_parsers_classifier_register_tcp("pop3", "pop3", 0, (unsigned char*)"+OK ", 4, misc_add_protocol_classify);
-    moloch_parsers_classifier_register_tcp("gh0st", NULL, 14, 0, 0, gh0st_classify);
+    moloch_parsers_classifier_register_tcp("gh0st", NULL, 13, (unsigned char *)"\x78", 1, gh0st_classify);
     moloch_parsers_classifier_register_tcp("other220", NULL, 0, (unsigned char*)"220 ", 4, other220_classify);
     moloch_parsers_classifier_register_tcp("vnc", NULL, 0, (unsigned char*)"RFB 0", 5, vnc_classify);
 
@@ -328,6 +335,7 @@ void moloch_parser_init()
     moloch_parsers_classifier_register_tcp("redis", "redis", 0, (unsigned char*)"\x2a\x33\x0d\x0a\x24", 5, misc_add_protocol_classify);
     moloch_parsers_classifier_register_tcp("redis", "redis", 0, (unsigned char*)"\x2a\x34\x0d\x0a\x24", 5, misc_add_protocol_classify);
     moloch_parsers_classifier_register_tcp("redis", "redis", 0, (unsigned char*)"\x2a\x35\x0d\x0a\x24", 5, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_tcp("redis", "redis", 0, (unsigned char*)"-NOAUTH ", 5, misc_add_protocol_classify);
 
     moloch_parsers_classifier_register_udp("bt", "bittorrent", 0, (unsigned char*)"d1:a", 4, misc_add_protocol_classify);
     moloch_parsers_classifier_register_udp("bt", "bittorrent", 0, (unsigned char*)"d1:r", 4, misc_add_protocol_classify);
@@ -429,9 +437,10 @@ void moloch_parser_init()
 
     moloch_parsers_classifier_register_tcp("nzsql", "nzsql", 0, (unsigned char*)"\x00\x00\x00\x08\x00\x01\x00\x03", 8, misc_add_protocol_classify);
 
-    moloch_parsers_classifier_register_tcp("splunk", "splunk", 0, (unsigned char*)"--splunk-cooked-mode-v3--", 25, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_tcp("splunk", "splunk", 0, (unsigned char*)"--splunk-cooked-mode", 20, misc_add_protocol_classify);
 
     moloch_parsers_classifier_register_port("isakmp",  NULL, 500, MOLOCH_PARSERS_PORT_UDP, isakmp_udp_classify);
+    moloch_parsers_classifier_register_port("isakmp",  NULL, 4500, MOLOCH_PARSERS_PORT_UDP, isakmp_udp_classify);
 
     moloch_parsers_classifier_register_port("aruba-papi",  NULL, 8211, MOLOCH_PARSERS_PORT_UDP, aruba_papi_udp_classify);
 
@@ -440,6 +449,18 @@ void moloch_parser_init()
     moloch_parsers_classifier_register_tcp("memcached", "memcached", 0, (unsigned char*)"flush_all", 9, misc_add_protocol_classify);
     moloch_parsers_classifier_register_tcp("memcached", "memcached", 0, (unsigned char*)"STORED\r\n", 8, misc_add_protocol_classify);
     moloch_parsers_classifier_register_tcp("memcached", "memcached", 0, (unsigned char*)"END\r\n", 5, misc_add_protocol_classify);
+
+    moloch_parsers_classifier_register_tcp("hbase", "hbase", 0, (unsigned char*)"HBas\x00", 5, misc_add_protocol_classify);
+
+    moloch_parsers_classifier_register_tcp("hadoop", "hadoop", 0, (unsigned char*)"hrpc\x09", 5, misc_add_protocol_classify);
+
+    moloch_parsers_classifier_register_tcp("hdfs", NULL, 0, (unsigned char*)"\x00\x1c\x50", 3, hdfs_classify);
+    moloch_parsers_classifier_register_tcp("hdfs", NULL, 0, (unsigned char*)"\x00\x1c\x51", 3, hdfs_classify);
+    moloch_parsers_classifier_register_tcp("hdfs", NULL, 0, (unsigned char*)"\x00\x1c\x55", 3, hdfs_classify);
+
+    moloch_parsers_classifier_register_tcp("zookeeper", "zookeeper", 0, (unsigned char*)"mntr\n", 5, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_tcp("zookeeper", "zookeeper", 0, (unsigned char*)"\x00\x00\x00\x2c\x00\x00\x00\x00", 8, misc_add_protocol_classify);
+    moloch_parsers_classifier_register_tcp("zookeeper", "zookeeper", 0, (unsigned char*)"\x00\x00\x00\x2d\x00\x00\x00\x00", 8, misc_add_protocol_classify);
 
     moloch_parsers_classifier_register_udp("memcached", "memcached", 6, (unsigned char*)"\x00\x00stats", 7, misc_add_protocol_classify);
     moloch_parsers_classifier_register_udp("memcached", "memcached", 6, (unsigned char*)"\x00\x00gets ", 7, misc_add_protocol_classify);
@@ -450,6 +471,8 @@ void moloch_parser_init()
 
     moloch_parsers_classifier_register_port("hsrp",  NULL, 1985, MOLOCH_PARSERS_PORT_UDP, hsrp_udp_classify);
     moloch_parsers_classifier_register_port("hsrp",  NULL, 2029, MOLOCH_PARSERS_PORT_UDP, hsrp_udp_classify);
+
+    moloch_parsers_classifier_register_udp("elasticsearch", "elasticsearch", 0, (unsigned char*)"ES\x00\x00", 4, misc_add_protocol_classify);
 
 
     userField = moloch_field_by_db("user");

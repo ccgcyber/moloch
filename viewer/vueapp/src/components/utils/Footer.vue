@@ -5,6 +5,9 @@
       <small>
         Moloch v{{molochVersion}} |
         <a href="https://molo.ch">molo.ch</a>
+        <span v-if="responseTime">
+          | {{ responseTime | commaString }}ms
+        </span>
       </small>
     </p>
   </div>
@@ -18,6 +21,11 @@ export default {
     return {
       molochVersion: this.$constants.MOLOCH_VERSION
     };
+  },
+  computed: {
+    responseTime: function () {
+      return this.$store.state.responseTime;
+    }
   }
 };
 </script>
@@ -25,8 +33,13 @@ export default {
 <style scoped>
 .footer {
   text-align: center;
-  margin-top: var(--px-md);
-  color     : var(--color-gray-dark);
+  color: var(--color-gray-dark);
   border-top: 1px solid var(--color-gray-light);
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 25px;
+  line-height: 25px;
+  overflow: hidden;
 }
 </style>

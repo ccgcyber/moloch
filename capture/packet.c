@@ -145,13 +145,13 @@ void moloch_packet_tcp_free(MolochSession_t *session)
 }
 /******************************************************************************/
 // Idea from gopacket tcpassembly/assemply.go
-LOCAL int32_t moloch_packet_sequence_diff (uint32_t a, uint32_t b)
+LOCAL int64_t moloch_packet_sequence_diff (int64_t a, int64_t b)
 {
     if (a > 0xc0000000 && b < 0x40000000)
-        return (a + 0xffffffffLL - b);
+        return a + 0x100000000LL - b;
 
     if (b > 0xc0000000 && a < 0x40000000)
-        return (a - b - 0xffffffffLL);
+        return a - b - 0x100000000LL;
 
     return b - a;
 }
@@ -214,7 +214,7 @@ LOCAL void moloch_packet_tcp_finish(MolochSession_t *session)
             session->databytes[which] += len;
             session->totalDatabytes[which] += len;
 
-            if (config.yara && config.yaraEveryPacket) {
+            if (config.yara && config.yaraEveryPacket && !session->stopYara) {
                 moloch_yara_execute(session, data, len, 0);
             }
 
@@ -252,7 +252,7 @@ LOCAL void moloch_packet_process_udp(MolochSession_t * const session, MolochPack
 
         moloch_parsers_classify_udp(session, data, len, packet->direction);
 
-        if (config.yara && config.yaraEveryPacket) {
+        if (config.yara && config.yaraEveryPacket && !session->stopYara) {
             moloch_yara_execute(session, data, len, 0);
         }
     }
@@ -265,6 +265,7 @@ LOCAL void moloch_packet_process_udp(MolochSession_t * const session, MolochPack
     }
 }
 /******************************************************************************/
+SUPPRESS_ALIGNMENT
 LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacket_t * const packet)
 {
     struct tcphdr       *tcphdr = (struct tcphdr *)(packet->pkt + packet->payloadOffset);
@@ -272,11 +273,11 @@ LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacke
 
     int            len = packet->payloadLen - 4*tcphdr->th_off;
 
-#ifdef DEBUG_PACKET
-    LOG("poffset: %d plen: %d len: %d", packet->payloadOffset, packet->payloadLen, len);
-#endif
-
     const uint32_t seq = ntohl(tcphdr->th_seq);
+
+#ifdef DEBUG_PACKET
+    LOG("poffset: %d plen: %d len: %d seq: %u ack: %u", packet->payloadOffset, packet->payloadLen, len, seq, ntohl(tcphdr->th_ack));
+#endif
 
     if (tcphdr->th_win == 0 && (tcphdr->th_flags & TH_RST) == 0) {
         session->tcpFlagCnt[MOLOCH_TCPFLAG_SRC_ZERO + packet->direction]++;
@@ -366,8 +367,11 @@ LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacke
     }
 
     if (tcphdr->th_flags & TH_ACK) {
-        if (session->haveTcpSession && (session->ackedUnseenSegment & (1 << packet->direction)) == 0 &&
-            (moloch_packet_sequence_diff(session->tcpSeq[(packet->direction+1)%2], ntohl(tcphdr->th_ack)) > 1)) {
+        if (session->haveTcpSession &&  // Seen a SYN
+            (session->ackedUnseenSegment & (1 << packet->direction)) == 0 &&  // Haven't already tagged
+            session->tcpSeq[(packet->direction+1)%2] != 0 &&                  // The syn-ack isn't what is missing
+            (moloch_packet_sequence_diff(session->tcpSeq[(packet->direction+1)%2], ntohl(tcphdr->th_ack)) > 1)) { // more then one byte missing
+
                 static const char *tags[2] = {"acked-unseen-segment-src", "acked-unseen-segment-dst"};
                 moloch_session_add_tag(session, tags[packet->direction]);
                 session->ackedUnseenSegment |= (1 << packet->direction);
@@ -379,8 +383,8 @@ LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacke
         return 1;
 
     // This packet is before what we are processing
-    int32_t diff = moloch_packet_sequence_diff(session->tcpSeq[packet->direction], seq + len);
-    if (diff <= 0)
+    int64_t diff = moloch_packet_sequence_diff(session->tcpSeq[packet->direction], seq + len);
+    if (session->haveTcpSession && diff <= 0)
         return 1;
 
     MolochTcpData_t *ftd, *td = MOLOCH_TYPE_ALLOC(MolochTcpData_t);
@@ -393,7 +397,7 @@ LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacke
     td->dataOffset = packet->payloadOffset + 4*tcphdr->th_off;
 
 #ifdef DEBUG_PACKET
-    LOG("dir: %d seq: %u ack: %u len: %d diff0: %d", packet->direction, seq, ack, len, diff);
+    LOG("dir: %d seq: %u ack: %u len: %d diff0: %ld", packet->direction, seq, ack, len, diff);
 #endif
 
     if (DLL_COUNT(td_, tcpData) == 0) {
@@ -477,6 +481,7 @@ void moloch_packet_flush()
     }
 }
 /******************************************************************************/
+SUPPRESS_ALIGNMENT
 LOCAL void *moloch_packet_thread(void *threadp)
 {
     MolochPacket_t  *packet;
@@ -708,22 +713,27 @@ LOCAL void *moloch_packet_thread(void *threadp)
             }
         }
 
-        if (pcapFileHeader.linktype == 1 && session->firstBytesLen[packet->direction] < 8 && session->packets[packet->direction] < 10) {
+        if (session->firstBytesLen[packet->direction] < 8 && session->packets[packet->direction] < 10) {
             const uint8_t *pcapData = packet->pkt;
 
-            if (packet->direction == 1) {
-                moloch_field_macoui_add(session, mac1Field, oui1Field, pcapData+0);
-                moloch_field_macoui_add(session, mac2Field, oui2Field, pcapData+6);
-            } else {
-                moloch_field_macoui_add(session, mac1Field, oui1Field, pcapData+6);
-                moloch_field_macoui_add(session, mac2Field, oui2Field, pcapData+0);
-            }
+            if (pcapFileHeader.linktype == 1) {
+                if (packet->direction == 1) {
+                    moloch_field_macoui_add(session, mac1Field, oui1Field, pcapData+0);
+                    moloch_field_macoui_add(session, mac2Field, oui2Field, pcapData+6);
+                } else {
+                    moloch_field_macoui_add(session, mac1Field, oui1Field, pcapData+6);
+                    moloch_field_macoui_add(session, mac2Field, oui2Field, pcapData+0);
+                }
 
-            int n = 12;
-            while (pcapData[n] == 0x81 && pcapData[n+1] == 0x00) {
-                uint16_t vlan = ((uint16_t)(pcapData[n+2] << 8 | pcapData[n+3])) & 0xfff;
-                moloch_field_int_add(vlanField, session, vlan);
-                n += 4;
+                int n = 12;
+                while (pcapData[n] == 0x81 && pcapData[n+1] == 0x00) {
+                    uint16_t vlan = ((uint16_t)(pcapData[n+2] << 8 | pcapData[n+3])) & 0xfff;
+                    moloch_field_int_add(vlanField, session, vlan);
+                    n += 4;
+                }
+
+                if (packet->vlan)
+                    moloch_field_int_add(vlanField, session, packet->vlan);
             }
 
             if (packet->tunnel & MOLOCH_PACKET_TUNNEL_GRE) {
@@ -743,6 +753,10 @@ LOCAL void *moloch_packet_thread(void *threadp)
 
             if (packet->tunnel &  MOLOCH_PACKET_TUNNEL_MPLS) {
                 moloch_session_add_protocol(session, "mpls");
+            }
+
+            if (packet->tunnel &  MOLOCH_PACKET_TUNNEL_GTP) {
+                moloch_session_add_protocol(session, "gtp");
             }
         }
 
@@ -904,6 +918,7 @@ void moloch_packet_frags_free(MolochFrags_t * const frags)
     MOLOCH_TYPE_FREE(MolochFrags_t, frags);
 }
 /******************************************************************************/
+SUPPRESS_ALIGNMENT
 LOCAL gboolean moloch_packet_frags_process(MolochPacket_t * const packet)
 {
     MolochPacket_t * fpacket;
@@ -1064,7 +1079,7 @@ LOCAL void moloch_packet_log(int ses)
         stats.total = totalPackets;
     }
 
-    LOG("packets: %" PRIu64 " current sessions: %u/%u oldest: %d - recv: %" PRIu64 " drop: %" PRIu64 " (%0.2f) queue: %d disk: %d packet: %d close: %d ns: %d frags: %d/%d pstats: %" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64,
+    LOG("packets: %" PRIu64 " current sessions: %u/%u oldest: %d - recv: %" PRIu64 " drop: %" PRIu64 " (%0.2f) queue: %d disk: %d packet: %d close: %d ns: %d frags: %d/%d pstats: %" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64,
       totalPackets,
       moloch_session_watch_count(ses),
       moloch_session_monitoring(),
@@ -1083,7 +1098,8 @@ LOCAL void moloch_packet_log(int ses)
       packetStats[MOLOCH_PACKET_IP_DROPPED],
       packetStats[MOLOCH_PACKET_OVERLOAD_DROPPED],
       packetStats[MOLOCH_PACKET_CORRUPT],
-      packetStats[MOLOCH_PACKET_UNKNOWN]
+      packetStats[MOLOCH_PACKET_UNKNOWN],
+      packetStats[MOLOCH_PACKET_IPPORT_DROPPED]
       );
 }
 /******************************************************************************/
@@ -1113,7 +1129,7 @@ LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const pa
         MOLOCH_LOCK(packetQ[thread].lock);
         overloadDrops[thread]++;
         if ((overloadDrops[thread] % 10000) == 1) {
-            LOG("WARNING - Packet Q %u is overflowing, total dropped %u, increase packetThreads or maxPacketsInQueue", thread, overloadDrops[thread]);
+            LOG("WARNING - Packet Q %u is overflowing, total dropped %u, increase packetThreads or maxPacketsInQueue in %s", thread, overloadDrops[thread], config.configFile);
         }
         packet->pkt = 0;
         MOLOCH_COND_SIGNAL(packetQ[thread].lock);
@@ -1133,6 +1149,50 @@ LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const pa
     return MOLOCH_PACKET_SUCCESS;
 }
 /******************************************************************************/
+LOCAL int moloch_packet_ip4_gtp(MolochPacketBatch_t *batch, MolochPacket_t * const packet, const uint8_t *data, int len)
+{
+    if (len < 12) {
+        return MOLOCH_PACKET_CORRUPT;
+    }
+    BSB bsb;
+    BSB_INIT(bsb, data, len);
+
+    uint8_t  flags = 0;
+    uint8_t  next = 0;
+
+
+    BSB_IMPORT_u08(bsb, flags);
+    BSB_IMPORT_skip(bsb, 1); // mtype
+    BSB_IMPORT_skip(bsb, 2); // mlen
+    BSB_IMPORT_skip(bsb, 4); // teid
+    if (flags & 0x7) {
+        BSB_IMPORT_skip(bsb, 3);
+        BSB_IMPORT_u08(bsb, next);
+    }
+
+    while (next != 0 && !BSB_IS_ERROR(bsb)) {
+        uint8_t extlen = 0;
+        BSB_IMPORT_u08(bsb, extlen);
+        BSB_IMPORT_skip(bsb, extlen*4-2);
+        BSB_IMPORT_u08(bsb, next);
+    }
+
+    if (BSB_IS_ERROR(bsb)) {
+        return MOLOCH_PACKET_CORRUPT;
+    }
+
+    packet->tunnel |= MOLOCH_PACKET_TUNNEL_GTP;
+
+    // Should check for v4 vs v6 here
+    BSB_IMPORT_u08(bsb, flags);
+    BSB_IMPORT_rewind(bsb, 1);
+
+    if ((flags & 0xf0) == 0x60)
+        return moloch_packet_ip6(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
+    return moloch_packet_ip4(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
+}
+/******************************************************************************/
+SUPPRESS_ALIGNMENT
 LOCAL int moloch_packet_ip4(MolochPacketBatch_t *batch, MolochPacket_t * const packet, const uint8_t *data, int len)
 {
     struct ip           *ip4 = (struct ip*)data;
@@ -1188,6 +1248,9 @@ LOCAL int moloch_packet_ip4(MolochPacketBatch_t *batch, MolochPacket_t * const p
     }
 
     switch (ip4->ip_p) {
+    case IPPROTO_IPV4:
+        return moloch_packet_ip4(batch, packet, data + ip_hdr_len, len - ip_hdr_len);
+        break;
     case IPPROTO_TCP:
         if (len < ip_hdr_len + (int)sizeof(struct tcphdr)) {
 #ifdef DEBUG_PACKET
@@ -1224,6 +1287,15 @@ LOCAL int moloch_packet_ip4(MolochPacketBatch_t *batch, MolochPacket_t * const p
         }
 
         udphdr = (struct udphdr *)((char*)ip4 + ip_hdr_len);
+
+        // See if this is really GTP
+        if (udphdr->uh_dport == 0x6808 && len > ip_hdr_len + (int)sizeof(struct udphdr) + 12) {
+            int rem = len - ip_hdr_len - sizeof(struct udphdr *);
+            uint8_t *buf = (uint8_t *)ip4 + ip_hdr_len + sizeof(struct udphdr *);
+            if ((buf[0] & 0xf0) == 0x30 && buf[1] == 0xff && (buf[2] << 8 | buf[3]) == rem - 8) {
+                return moloch_packet_ip4_gtp(batch, packet, buf, rem);
+            }
+        }
 
         moloch_session_id(sessionId, ip4->ip_src.s_addr, udphdr->uh_sport,
                           ip4->ip_dst.s_addr, udphdr->uh_dport);
@@ -1272,6 +1344,7 @@ LOCAL int moloch_packet_ip4(MolochPacketBatch_t *batch, MolochPacket_t * const p
     return moloch_packet_ip(batch, packet, sessionId);
 }
 /******************************************************************************/
+SUPPRESS_ALIGNMENT
 LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len)
 {
     struct ip6_hdr      *ip6 = (struct ip6_hdr *)data;
@@ -1406,7 +1479,7 @@ LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const 
 
     packet->protocol = nxt;
     packet->payloadOffset = packet->ipOffset + ip_hdr_len;
-    packet->payloadLen = ip_len - ip_hdr_len + sizeof(struct ip6_hdr);
+    packet->payloadLen = ip_len + sizeof(struct ip6_hdr) - ip_hdr_len;
     return moloch_packet_ip(batch, packet, sessionId);
 }
 /******************************************************************************/
@@ -1676,7 +1749,7 @@ void moloch_packet_batch(MolochPacketBatch_t * batch, MolochPacket_t * const pac
     int rc;
 
 #ifdef DEBUG_PACKET
-    LOG("enter %p %d %d", packet, pcapFileHeader.linktype, packet->pktlen);
+    LOG("enter %p %u %d", packet, pcapFileHeader.linktype, packet->pktlen);
 #endif
 
     switch(pcapFileHeader.linktype) {
@@ -1738,6 +1811,7 @@ int moloch_packet_outstanding()
     return count;
 }
 /******************************************************************************/
+SUPPRESS_UNSIGNED_INTEGER_OVERFLOW
 LOCAL uint32_t moloch_packet_frag_hash(const void *key)
 {
     int i;
@@ -1787,111 +1861,111 @@ void moloch_packet_init()
         "mac.src", "Src MAC", "srcMac",
         "Source ethernet mac addresses set for session",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
-        NULL);
+        (char *)NULL);
 
     mac2Field = moloch_field_define("general", "lotermfield",
         "mac.dst", "Dst MAC", "dstMac",
         "Destination ethernet mac addresses set for session",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "lotermfield",
         "mac", "Src or Dst MAC", "macall",
         "Shorthand for mac.src or mac.dst",
         0,  MOLOCH_FIELD_FLAG_FAKE,
         "regex", "^mac\\\\.(?:(?!\\\\.cnt$).)*$",
-        NULL);
+        (char *)NULL);
 
     oui1Field = moloch_field_define("general", "termfield",
         "oui.src", "Src OUI", "srcOui",
         "Source ethernet oui set for session",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
-        NULL);
+        (char *)NULL);
 
     oui2Field = moloch_field_define("general", "termfield",
         "oui.dst", "Dst OUI", "dstOui",
         "Destination ethernet oui set for session",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
-        NULL);
+        (char *)NULL);
 
 
     vlanField = moloch_field_define("general", "integer",
         "vlan", "VLan", "vlan",
         "vlan value",
         MOLOCH_FIELD_TYPE_INT_GHASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
-        NULL);
+        (char *)NULL);
 
     greIpField = moloch_field_define("general", "ip",
         "gre.ip", "GRE IP", "greIp",
         "GRE ip addresses for session",
         MOLOCH_FIELD_TYPE_IP_GHASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "tcpflags.syn", "TCP Flag SYN", "tcpflags.syn",
         "Count of packets with SYN and no ACK flag set",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "tcpflags.syn-ack", "TCP Flag SYN-ACK", "tcpflags.syn-ack",
         "Count of packets with SYN and ACK flag set",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "tcpflags.ack", "TCP Flag ACK", "tcpflags.ack",
         "Count of packets with only the ACK flag set",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "tcpflags.psh", "TCP Flag PSH", "tcpflags.psh",
         "Count of packets with PSH flag set",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "tcpflags.fin", "TCP Flag FIN", "tcpflags.fin",
         "Count of packets with FIN flag set",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "tcpflags.rst", "TCP Flag RST", "tcpflags.rst",
         "Count of packets with RST flag set",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "tcpflags.urg", "TCP Flag URG", "tcpflags.urg",
         "Count of packets with URG flag set",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     icmpTypeField = moloch_field_define("general", "integer",
         "icmp.type", "ICMP Type", "icmp.type",
         "ICMP type field values",
         MOLOCH_FIELD_TYPE_INT_GHASH, 0,
-        NULL);
+        (char *)NULL);
 
     icmpCodeField = moloch_field_define("general", "integer",
         "icmp.code", "ICMP Code", "icmp.code",
         "ICMP code field values",
         MOLOCH_FIELD_TYPE_INT_GHASH, 0,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "packets.src", "Src Packets", "srcPackets",
         "Total number of packets sent by source in a session",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     moloch_field_define("general", "integer",
         "packets.dst", "Dst Packets", "dstPackets",
         "Total number of packets sent by destination in a session",
         0,  MOLOCH_FIELD_FLAG_FAKE,
-        NULL);
+        (char *)NULL);
 
     int t;
     for (t = 0; t < config.packetThreads; t++) {

@@ -6,16 +6,33 @@
       <div class="mr-1 ml-1 mt-1 mb-1">
         <div class="input-group input-group-sm">
           <div class="input-group-prepend">
-            <span class="input-group-text">
-              <span class="fa fa-search">
+            <span class="input-group-text input-group-text-fw">
+              <span v-if="!shiftKeyHold"
+                class="fa fa-search fa-fw">
+              </span>
+              <span v-else
+                class="query-shortcut">
+                Q
               </span>
             </span>
           </div>
           <input type="text"
             class="form-control"
             v-model="query.filter"
-            @keyup="searchForUsers()"
-            placeholder="Begin typing to search for users by name">
+            v-focus-input="focusInput"
+            @blur="onOffFocus"
+            @input="searchForUsers"
+            placeholder="Begin typing to search for users by name"
+          />
+          <span class="input-group-append">
+            <button type="button"
+              @click="clear"
+              :disabled="!query.filter"
+              class="btn btn-outline-secondary btn-clear-input">
+              <span class="fa fa-close">
+              </span>
+            </button>
+          </span>
         </div>
       </div>
     </div>
@@ -72,6 +89,14 @@
           </thead>
           <transition-group name="list"
             tag="tbody">
+            <tr v-if="!users.data.length"
+              key="noUsers"
+              class="text-danger text-center">
+              <td colspan="11"
+                class="pt-2">
+                <h6>No users match your search</h6>
+              </td>
+            </tr>
             <tr v-for="(user, index) of users.data"
               :key="user.id">
               <td class="no-wrap">
@@ -81,75 +106,83 @@
                 <input v-model="user.userName"
                   class="form-control form-control-sm"
                   type="text"
-                  @change="userChanged(user)"
+                  @change="userChanged(user, 'userName')"
                 />
               </td>
               <td class="no-wrap">
                 <input v-model="user.expression"
                   class="form-control form-control-sm"
                   type="text"
-                  @change="userChanged(user)"
+                  @change="userChanged(user, 'expression')"
                 />
               </td>
               <td class="no-wrap">
                 <input type="checkbox"
                   v-model="user.enabled"
-                  @change="userChanged(user)"
+                  @change="userChanged(user, 'enabled')"
                 />
               </td>
               <td class="no-wrap">
                 <input type="checkbox"
                   v-model="user.createEnabled"
-                  @change="userChanged(user)"
+                  @change="userChanged(user, 'createEnabled')"
                 />
               </td>
               <td class="no-wrap">
                 <input type="checkbox"
                   v-model="user.webEnabled"
-                  @change="userChanged(user)"
+                  @change="userChanged(user, 'webEnabled')"
                 />
               </td>
               <td class="no-wrap">
                 <input type="checkbox"
                   v-model="user.headerAuthEnabled"
-                  @change="userChanged(user);"
+                  @change="userChanged(user, 'headerAuthEnabled');"
                 />
               </td>
               <td class="no-wrap">
                 <input type="checkbox"
                   v-model="user.emailSearch"
-                  @change="userChanged(user)"
+                  @change="userChanged(user, 'emailSearch')"
                 />
               </td>
               <td class="no-wrap">
                 <input type="checkbox"
-                    v-model="user.removeEnabled"
-                    @change="userChanged(user)"
-                  />
+                  v-model="user.removeEnabled"
+                  @change="userChanged(user, 'removeEnabled')"
+                />
               </td>
-              <td class="no-wrap pull-right">
-                <a class="btn btn-sm btn-theme-primary"
-                  :href="`settings?userId=${user.userId}`"
-                  v-b-tooltip.hover
-                  :title="`Settings for ${user.userId}`">
-                  <span class="fa fa-gear">
-                  </span>
-                </a>
-                <a class="btn btn-sm btn-theme-secondary"
-                  :href="`history?userId=${user.userId}`"
-                  v-b-tooltip.hover
-                  :title="`History for ${user.userId}`">
-                  <span class="fa fa-history">
-                  </span>
-                </a>
-                <button type="button"
-                  class="btn btn-sm btn-danger"
-                  @click="deleteUser(user, index)"
-                  v-b-tooltip.hover
-                  :title="`Delete ${user.userId}`">
-                  <span class="fa fa-trash-o">
-                  </span>
-                </button>
+              <td class="no-wrap">
+                <input type="checkbox"
+                  v-model="user.packetSearch"
+                  @change="userChanged(user, 'packetSearch')"
+                />
+              </td>
+              <td class="no-wrap">
+                <span class="pull-right">
+                  <a class="btn btn-sm btn-theme-primary"
+                    :href="`settings?userId=${user.userId}`"
+                    v-b-tooltip.hover
+                    :title="`Settings for ${user.userId}`">
+                    <span class="fa fa-gear">
+                    </span>
+                  </a>
+                  <a class="btn btn-sm btn-theme-secondary"
+                    :href="`history?userId=${user.userId}`"
+                    v-b-tooltip.hover
+                    :title="`History for ${user.userId}`">
+                    <span class="fa fa-history">
+                    </span>
+                  </a>
+                  <button type="button"
+                    class="btn btn-sm btn-danger"
+                    @click="deleteUser(user, index)"
+                    v-b-tooltip.hover
+                    :title="`Delete ${user.userId}`">
+                    <span class="fa fa-trash-o">
+                    </span>
+                  </button>
+                </span>
               </td>
             </tr>
           </transition-group>
@@ -222,7 +255,7 @@
               <div>
                 <button type="button"
                   class="btn btn-sm btn-theme-tertiary pull-right mb-4"
-                  @click="createUser()">
+                  @click="createUser">
                   <span class="fa fa-plus-circle">
                   </span>&nbsp;
                   Create
@@ -310,6 +343,17 @@
                   </label>
                 </div>
               </div>
+              <div class="form-group form-group-sm offset-sm-1 col-sm-11">
+                <div class="checkbox">
+                  <label v-b-tooltip.hover
+                    :title="columns[9].help">
+                    <input type="checkbox"
+                      v-model="newuser.packetSearch"
+                    />
+                    Packet Search
+                  </label>
+                </div>
+              </div>
             </form>
           </div>
         </div> <!-- /new user form -->
@@ -327,20 +371,24 @@ import MolochPaging from '../utils/Pagination';
 import MolochError from '../utils/Error';
 import MolochLoading from '../utils/Loading';
 import MolochToast from '../utils/Toast';
+import FocusInput from '../utils/FocusInput';
 
 let searchInputTimeout; // timeout to debounce the search input
 
 export default {
   name: 'Users',
   components: { MolochPaging, MolochError, MolochLoading, MolochToast },
+  directives: { FocusInput },
   data: function () {
     return {
       error: '',
       loading: true,
-      user: null,
       users: null,
       createError: '',
-      newuser: { enabled: true },
+      newuser: {
+        enabled: true,
+        packetSearch: true
+      },
       msg: '',
       msgType: undefined,
       query: {
@@ -359,12 +407,33 @@ export default {
         { name: 'Web Interface', sort: 'webEnabled', help: 'Can access the web interface. When off only APIs can be used' },
         { name: 'Web Auth Header', sort: 'headerAuthEnabled', help: 'Can login using the web auth header. This setting doesn\'t disable the password so it should be scrambled' },
         { name: 'Email Search', sort: 'emailSearch', help: 'Can perform email searches' },
-        { name: 'Can Remove Data', sort: 'removeEnabled', help: 'Can delete tags or delete/scrub pcap data' }
+        { name: 'Can Remove Data', sort: 'removeEnabled', help: 'Can delete tags or delete/scrub pcap data' },
+        { name: 'Can Search Packets', sort: 'packetSearch', help: 'Can create a packet search job (hunt)' }
       ]
     };
   },
+  computed: {
+    user: {
+      get: function () {
+        return this.$store.state.user;
+      },
+      set: function (newValue) {
+        this.$store.commit('setUser', newValue);
+      }
+    },
+    focusInput: {
+      get: function () {
+        return this.$store.state.focusSearch;
+      },
+      set: function (newValue) {
+        this.$store.commit('setFocusSearch', newValue);
+      }
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
+    }
+  },
   created: function () {
-    this.loadUser();
     this.loadData();
   },
   methods: {
@@ -383,6 +452,13 @@ export default {
         this.loadData();
       }, 400);
     },
+    clear () {
+      this.query.filter = undefined;
+      this.loadData();
+    },
+    onOffFocus: function () {
+      this.focusInput = false;
+    },
     columnClick (name) {
       this.query.sortField = name;
       this.query.desc = !this.query.desc;
@@ -393,11 +469,15 @@ export default {
       this.msg = null;
       this.msgType = null;
     },
-    userChanged: function (user) {
+    userChanged: function (user, field) {
       this.$http.post('user/update', user)
         .then((response) => {
           this.msg = response.data.text;
           this.msgType = 'success';
+          // update the current user if they were changed
+          if (this.user.userId === user.userId) {
+            this.user[field] = user[field];
+          }
         }, (error) => {
           this.msg = error.text;
           this.msgType = 'danger';

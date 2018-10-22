@@ -1,22 +1,26 @@
 <template>
   <div>
     <moloch-navbar></moloch-navbar>
-    <router-view />
+    <router-view v-if="user" />
     <transition name="shortcuts-slide">
       <moloch-keyboard-shortcuts
         v-if="displayKeyboardShortcutsHelp">
       </moloch-keyboard-shortcuts>
+      <div v-if="shiftKeyHold"
+        class="shortcut-help">
+        <span class="fa fa-question fa-fw">
+        </span>
+      </div>
     </transition>
     <moloch-footer></moloch-footer>
   </div>
 </template>
 
 <script>
+import UserService from './components/users/UserService';
 import MolochNavbar from './components/utils/Navbar';
 import MolochFooter from './components/utils/Footer';
 import MolochKeyboardShortcuts from './components/utils/KeyboardShortcuts';
-
-let holdingShiftKey = false;
 
 export default {
   name: 'App',
@@ -26,6 +30,14 @@ export default {
     MolochKeyboardShortcuts
   },
   computed: {
+    shiftKeyHold: {
+      get: function () {
+        return this.$store.state.shiftKeyHold;
+      },
+      set: function (newValue) {
+        this.$store.commit('setShiftKeyHold', newValue);
+      }
+    },
     displayKeyboardShortcutsHelp: {
       get: function () {
         return this.$store.state.displayKeyboardShortcutsHelp;
@@ -33,11 +45,31 @@ export default {
       set: function (newValue) {
         this.$store.commit('setDisplayKeyboardShortcutsHelp', newValue);
       }
+    },
+    user: {
+      get: function () {
+        return this.$store.state.user;
+      },
+      set: function (newValue) {
+        this.$store.commit('setUser', newValue);
+      }
     }
   },
   mounted: function () {
+    // get the current user for the entire app
+    // the rest of the app should compute the user with $store.state.user
+    UserService.getCurrent()
+      .then((response) => {
+        this.user = response;
+      }, (error) => {
+        this.user = { settings: { timezone: 'local' } };
+      });
+
     const inputs = ['input', 'select', 'textarea'];
 
+    // watch for keyup/down events for the entire app
+    // the rest of the app should compute necessary values with:
+    // $store.state.shiftKeyHold, focusSearch, and focusTimeRange
     window.addEventListener('keyup', (event) => {
       const activeElement = document.activeElement;
 
@@ -46,56 +78,80 @@ export default {
         this.$store.commit('setFocusSearch', false);
         this.$store.commit('setFocusTimeRange', false);
         return;
-      }
-
-      // quit if the user is in an input or not holding the shift key
-      if (!holdingShiftKey || (activeElement && inputs.indexOf(activeElement.tagName.toLowerCase()) !== -1)) {
+      } else if (event.keyCode === 16) { // shift
+        this.shiftKeyHold = false;
         return;
       }
 
-      if (event.keyCode === 81) { // q
-        // focus on search expression input
-        this.$store.commit('setFocusSearch', true);
-      } else if (event.keyCode === 84) { // t
-        // focus on time range selector
-        this.$store.commit('setFocusTimeRange', true);
-      } else if (event.keyCode === 83) { // s
-        // open sessions page if not on sessions page
-        if (this.$route.name !== 'Sessions') {
-          this.routeTo('/sessions');
-        }
-      } else if (event.keyCode === 86) { // v
-        // open spiview page if not on spiview page
-        if (this.$route.name !== 'Spiview') {
-          this.routeTo('/spiview');
-        }
-      } else if (event.keyCode === 71) { // g
-        // open spigraph page if not on spigraph page
-        if (this.$route.name !== 'Spigraph') {
-          this.routeTo('/spigraph');
-        }
-      } else if (event.keyCode === 67) { // c
-        // open connections page if not on connections page
-        if (this.$route.name !== 'Connections') {
-          this.routeTo('/connections');
-        }
-      } else if (event.keyCode === 72) { // h
-        // open help page if not on help page
-        if (this.$route.name !== 'Help') {
-          this.routeTo('/help');
-        }
-      } else if (event.keyCode === 191) { // /
-        // display the keyboard shortcut dialog
-        this.$store.commit('setDisplayKeyboardShortcutsHelp', true);
-      } else if (event.keyCode === 16) { // shift
-        // keyup on shift key, user is no longer holding shift
-        holdingShiftKey = false;
+      // quit if the user is in an input or not holding the shift key
+      if (!this.shiftKeyHold || (activeElement && inputs.indexOf(activeElement.tagName.toLowerCase()) !== -1)) {
+        return;
+      }
+
+      switch (event.keyCode) {
+        case 81: // q
+          // focus on search expression input
+          this.$store.commit('setFocusSearch', true);
+          break;
+        case 84: // t
+          // focus on time range selector
+          this.$store.commit('setFocusTimeRange', true);
+          break;
+        case 83: // s
+          // open sessions page if not on sessions page
+          if (this.$route.name !== 'Sessions') {
+            this.routeTo('/sessions');
+          }
+          break;
+        case 86: // v
+          // open spiview page if not on spiview page
+          if (this.$route.name !== 'Spiview') {
+            this.routeTo('/spiview');
+          }
+          break;
+        case 71: // g
+          // open spigraph page if not on spigraph page
+          if (this.$route.name !== 'Spigraph') {
+            this.routeTo('/spigraph');
+          }
+          break;
+        case 67: // c
+          // open connections page if not on connections page
+          if (this.$route.name !== 'Connections') {
+            this.routeTo('/connections');
+          }
+          break;
+        case 72: // h
+          // open help page if not on help page
+          if (this.$route.name !== 'Help') {
+            this.routeTo('/help');
+          }
+          break;
+        case 85: // u
+          // open hunt page if not on hunt page
+          if (this.$route.name !== 'Hunt') {
+            this.routeTo('/hunt');
+          }
+          break;
+        case 13: // enter
+          // trigger search/refresh
+          this.$store.commit('setIssueSearch', true);
+          break;
+        case 191: // /
+          // toggle display of the the keyboard shortcut dialog
+          this.$store.commit('setDisplayKeyboardShortcutsHelp', !this.displayKeyboardShortcutsHelp);
+          break;
       }
     });
 
     window.addEventListener('keydown', (event) => {
+      const activeElement = document.activeElement;
+      // quit if the user is in an input or not holding the shift key
+      if (activeElement && inputs.indexOf(activeElement.tagName.toLowerCase()) !== -1) {
+        return;
+      }
       if (event.keyCode === 16) { // shift
-        holdingShiftKey = true;
+        this.shiftKeyHold = true;
       }
     });
   },
@@ -115,6 +171,16 @@ export default {
 </script>
 
 <style>
+/* styles for bottom footer */
+html {
+  position: relative;
+  min-height: 100%;
+}
+#app {
+  padding-bottom: 25px;
+}
+
+/* global font, colors, and vars */
 body {
   color: var(--color-foreground);
   background-color: var(--color-background);
@@ -176,6 +242,12 @@ a.no-decoration { text-decoration: none; }
 }
 
 /* themed buttons */
+.btn-clear-input {
+  color: var(--color-foreground, #555) !important;
+  background-color: var(--color-background, #EEE) !important;
+  border-color: var(--color-gray) !important;
+}
+
 .btn.btn-theme-primary {
   color           : #FFFFFF;
   background-color: var(--color-primary);
@@ -301,6 +373,14 @@ label.btn-radio:disabled, button.btn-checkbox:disabled {
   flex-direction  : column;
 }
 
+.horizontal-center {
+  display         : flex;
+  align-items     : center;
+  justify-content : center;
+  text-align      : center;
+  flex-direction  : column;
+}
+
 /* displays large text for important information
  * note: must contain an inner div with the text
  * example:
@@ -374,11 +454,58 @@ dl.dl-horizontal dd {
   margin-bottom: 0;
 }
 
+.shortcut-help {
+  position: fixed;
+  top: 155px;
+  z-index: 1;
+  color: var(--color-tertiary-lighter);
+  background: var(--color-background, white);
+  border: 1px solid var(--color-gray);
+  border-left: none;
+  border-radius: 0 4px 4px 0 ;
+  -webkit-box-shadow: 0 0 16px -2px black;
+     -moz-box-shadow: 0 0 16px -2px black;
+          box-shadow: 0 0 16px -2px black;
+}
+
 /* keyboard shortcuts help animation */
 .shortcuts-slide-enter-active, .shortcuts-slide-leave-active {
   transition: all .5s ease;
 }
 .shortcuts-slide-enter, .shortcuts-slide-leave-to {
   transform: translateX(-465px);
+}
+
+/* make the shortcut letter the same size/position as the icon */
+.query-shortcut {
+  color: var(--color-tertiary-lighter);
+  font-size: 18px;
+  width: 20px;
+}
+.time-shortcut {
+  color: var(--color-tertiary-lighter);
+  font-size: 18px;
+  width: 20px;
+}
+/* make sure the width of the input prepend doesn't change */
+.input-group-prepend-fw, .input-group-text-fw {
+  width: 36px;
+}
+
+/* enter icon for search/refresh button to be displayed on shift hold */
+.search-btn { width: 62px; }
+.refresh-btn { width: 66px; }
+.enter-icon > .fa-long-arrow-left {
+  position: relative;
+  top: 2px;
+}
+.enter-icon > .enter-arm {
+  display: inline-block;
+  height: 9px;
+  width: 3px;
+  background-color: #FFFFFF;
+  position: relative;
+  top: -2px;
+  right: 6px;
 }
 </style>

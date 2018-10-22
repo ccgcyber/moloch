@@ -90,7 +90,8 @@
             </span>&nbsp;
             Themes
           </a>
-          <a class="nav-link cursor-pointer"
+          <a v-if="!multiviewer"
+            class="nav-link cursor-pointer"
             @click="openView('password')"
             :class="{'active':visibleTab === 'password'}">
             <span class="fa fa-fw fa-lock">
@@ -428,6 +429,8 @@
               <tr>
                 <th>Name</th>
                 <th>Expression</th>
+                <th width="30%">Sessions Columns</th>
+                <th>Sessions Sort</th>
                 <th>&nbsp;</th>
               </tr>
             </thead>
@@ -451,6 +454,31 @@
                     @input="viewChanged(key)"
                     class="form-control form-control-sm"
                   />
+                </td>
+                <td>
+                  <span v-if="item.sessionsColConfig">
+                    <label class="badge badge-secondary mr-1 mb-0 help-cursor"
+                      v-if="col && fieldsMap[col]"
+                      v-for="col in item.sessionsColConfig.visibleHeaders"
+                      v-b-tooltip.hover
+                      :title="fieldsMap[col].help"
+                      :key="col">
+                      {{ fieldsMap[col].friendlyName }}
+                    </label>
+                  </span>
+                </td>
+                <td>
+                  <span v-if="item.sessionsColConfig">
+                    <label class="badge badge-secondary mr-1 help-cursor"
+                      :title="fieldsMap[order[0]].help"
+                      v-for="order in item.sessionsColConfig.order"
+                      v-if="fieldsMap[order[0]]"
+                      v-b-tooltip.hover
+                      :key="order[0]">
+                      {{ fieldsMap[order[0]].friendlyName }}&nbsp;
+                      ({{ order[1] }})
+                    </label>
+                  </span>
                 </td>
                 <td>
                   <div class="btn-group btn-group-sm pull-right"
@@ -502,17 +530,18 @@
                     placeholder="Enter a new view name (20 chars or less)"
                   />
                 </td>
-                <td>
+                <td colspan="2">
                   <input type="text"
                     v-model="newViewExpression"
                     class="form-control form-control-sm"
                     placeholder="Enter a new view expression"
                   />
                 </td>
+                <td>&nbsp;</td>
                 <td>
                   <button class="btn btn-theme-tertiary btn-sm pull-right"
                     type="button"
-                    @click="createView()">
+                    @click="createView">
                     <span class="fa fa-plus-circle">
                     </span>&nbsp;
                     Create
@@ -650,7 +679,7 @@
                 </td>
               </tr> <!-- /cron query form error -->
               <!-- new cron query form -->
-              <tr @keyup.enter="createCronQuery()">
+              <tr @keyup.enter="createCronQuery">
                 <td>&nbsp;</td>
                 <td>
                   <select class="form-control form-control-sm"
@@ -709,12 +738,13 @@
                   />
                 </td>
                 <td>
-                  <a class="btn btn-theme-tertiary btn-sm pull-right"
+                  <button type="button"
+                    class="btn btn-theme-tertiary btn-sm pull-right"
                     @click="createCronQuery">
                     <span class="fa fa-plus-circle">
                     </span>&nbsp;
                     Create
-                  </a>
+                  </button>
                 </td>
               </tr> <!-- /new cron query form -->
               <!-- cron query form error -->
@@ -1426,7 +1456,7 @@
                     </button>
                     <button class="btn btn-theme-primary"
                       type="button"
-                      @click="updateThemeString()">
+                      @click="updateThemeString">
                       <span class="fa fa-check">
                       </span>&nbsp;
                       Apply
@@ -1441,9 +1471,9 @@
         </form> <!-- /theme settings -->
 
         <!-- password settings -->
-        <form v-if="visibleTab === 'password'"
+        <form v-if="visibleTab === 'password' && !multiviewer"
           class="form-horizontal"
-          @keyup.enter="changePassword()"
+          @keyup.enter="changePassword"
           id="password">
 
           <h3>Change Password</h3>
@@ -1499,7 +1529,7 @@
             <div class="col-sm-9">
               <button type="button"
                 class="btn btn-theme-tertiary"
-                @click="changePassword()">
+                @click="changePassword">
                 Change Password
               </button>
               <span v-if="changePasswordError"
@@ -1614,7 +1644,8 @@ export default {
       currentPassword: '',
       newPassword: '',
       confirmNewPassword: '',
-      changePasswordError: ''
+      changePasswordError: '',
+      multiviewer: this.$constants.MOLOCH_MULTIVIEWER
     };
   },
   created: function () {
@@ -1626,6 +1657,11 @@ export default {
         tab === 'col' || tab === 'theme' || tab === 'password' ||
         tab === 'spiview') {
         this.visibleTab = tab;
+      }
+
+      if (tab === 'password' && this.multiviewer) {
+        // multiviewer user can't change password
+        this.openView('general');
       }
     }
 
@@ -2393,6 +2429,15 @@ export default {
   },
   beforeDestroy: function () {
     if (clockInterval) { clearInterval(clockInterval); }
+
+    // remove userId route query parameter so that when a user
+    // comes back to this page, they are on their own settings
+    this.$router.replace({
+      query: {
+        ...this.$route.query,
+        userId: undefined
+      }
+    });
   }
 };
 </script>
