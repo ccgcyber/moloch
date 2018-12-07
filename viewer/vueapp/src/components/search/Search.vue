@@ -10,7 +10,8 @@
         class="pull-right ml-1 action-menu-dropdown"
         boundary="body"
         variant="theme-primary">
-        <b-dropdown-item @click="exportPCAP">
+        <b-dropdown-item @click="exportPCAP"
+          v-has-permission="'!disablePcapDownload'">
           <span class="fa fa-fw fa-file-o"></span>&nbsp;
           Export PCAP
         </b-dropdown-item>
@@ -48,12 +49,12 @@
       <!-- views dropdown menu -->
       <b-dropdown right
         size="sm"
-        class="pull-right ml-1"
+        class="pull-right ml-1 view-menu-dropdown"
         no-caret
         toggle-class="rounded"
         variant="theme-secondary">
         <template slot="button-content">
-          <div v-if="view"
+          <div v-if="view && views && views[view]"
             v-b-tooltip.hover.left
             :title="views[view].expression">
             <span class="fa fa-eye"></span>
@@ -80,11 +81,9 @@
           @click.self="setView(key)"
           v-b-tooltip.hover.left
           :title="value.expression">
-          <button class="btn btn-xs btn-default pull-right"
-            type="button"
-            @click="deleteView(key)">
-            <span class="fa fa-trash-o"></span>
-          </button>
+          <span v-if="value.shared"
+            class="fa fa-share-square">
+          </span>
           {{ key }}&nbsp;
           <span v-if="value.sessionsColConfig"
             class="fa fa-columns cursor-help"
@@ -267,7 +266,6 @@ export default {
   ],
   data: function () {
     return {
-      views: {},
       molochClusters: {},
       actionFormItemRadio: 'visible',
       actionFormItemRadioOptions: [
@@ -298,6 +296,14 @@ export default {
     },
     shiftKeyHold: function () {
       return this.$store.state.shiftKeyHold;
+    },
+    views: {
+      get: function () {
+        return this.$store.state.views;
+      },
+      set: function (newValue) {
+        this.$store.commit('setViews', newValue);
+      }
     }
   },
   watch: {
@@ -316,8 +322,8 @@ export default {
     }
   },
   created: function () {
-    this.getMolochClusters();
     this.getViews();
+    this.getMolochClusters();
   },
   methods: {
     /* exposed page functions ------------------------------------ */
@@ -382,8 +388,10 @@ export default {
       }
     },
     /* updates the views list with the included new view */
-    newView: function (views) {
-      if (views) { this.views = views; }
+    newView: function (view, viewName) {
+      if (view && viewName && this.views) {
+        this.views[viewName] = view;
+      }
     },
     setView: function (view) {
       this.view = view;
@@ -397,30 +405,6 @@ export default {
           view: view
         }
       });
-    },
-    deleteView: function (view) {
-      UserService.deleteView(view)
-        .then((response) => {
-          // display success message
-          if (response.text) {
-            this.message = response.text;
-            this.messageType = response.success ? 'success' : 'warning';
-          }
-
-          if (response.success) {
-            // remove the deleted view if it was selected
-            if (this.view === view) {
-              this.setView(undefined);
-            }
-
-            this.views[view] = null;
-            delete this.views[view];
-          }
-        })
-        .catch((error) => {
-          this.message = error;
-          this.messageType = 'danger';
-        });
     },
     /* helper functions ------------------------------------------ */
     getViews: function () {
@@ -436,11 +420,26 @@ export default {
         });
     },
     /**
-     * update the stop/start times in time component, which in turn
-     * notifies this controller (using the 'changeTime' event), then
-     * updates the time params and emits a 'changeSearch' event to parent
+     * If the start/stop time has changed:
+     * Applies the date start/stop time url parameters and removes the date url parameter
+     * Updating the url parameter triggers updateParams in Time.vue
+     * If just a search was issued:
+     * Update the start/stop time in the time component so that the query that is
+     * issued has the correct start/stop time (date only sent if -1)
      */
     timeUpdate: function () {
+      if (this.$store.state.timeRange === '0' &&
+        this.$store.state.time.startTime && this.$store.state.time.stopTime) {
+        this.$router.push({
+          query: {
+            ...this.$route.query,
+            date: undefined,
+            stopTime: this.$store.state.time.stopTime,
+            startTime: this.$store.state.time.startTime
+          }
+        });
+      }
+
       this.updateTime = true;
       setTimeout(() => {
         this.updateTime = false;
@@ -465,6 +464,12 @@ export default {
   }
 };
 </script>
+
+<style>
+.view-menu-dropdown .dropdown-menu {
+  width: 200px;
+}
+</style>
 
 <style scoped>
 form {

@@ -17,7 +17,7 @@
  */
 'use strict';
 
-var MIN_DB_VERSION = 53;
+var MIN_DB_VERSION = 55;
 
 //// Modules
 //////////////////////////////////////////////////////////////////////////////////
@@ -75,6 +75,7 @@ var internals = {
   pluginEmitter: new EventEmitter(),
   writers: {},
   oldDBFields: {},
+  isLocalViewRegExp: Config.get("isLocalViewRegExp")?new RegExp(Config.get("isLocalViewRegExp")):undefined,
 
   cronTimeout: +Config.get("dbFlushTimeout", 5) + // How long capture holds items
                60 +                               // How long before ES reindexs
@@ -190,8 +191,8 @@ if (Config.get("passwordSecret")) {
       return res.end();
     }
 
-    // No auth for stats.json, dstats.json, esstats.json, eshealth.json
-    if (req.url.match(/^\/([e]*[ds]*stats|eshealth).json/)) {
+    // No auth for eshealth.json or parliament.json
+    if (req.url.match(/^\/(parliament|eshealth).json/)) {
       return next();
     }
 
@@ -727,6 +728,10 @@ function makeRequest (node, path, user, cb) {
 }
 
 function isLocalView (node, yesCb, noCb) {
+  if (internals.isLocalViewRegExp && node.match(internals.isLocalViewRegExp)) {
+    return yesCb();
+  }
+
   var pcapWriteMethod = Config.getFull(node, "pcapWriteMethod");
   var writer = internals.writers[pcapWriteMethod];
   if (writer && writer.localNode === false) {
@@ -754,7 +759,7 @@ function checkCookieToken(req, res, next) {
 
   req.token = Config.auth2obj(req.headers['x-moloch-cookie']);
   var diff = Math.abs(Date.now() - req.token.date);
-  if (diff > 2400000 || req.token.pid !== process.pid ||
+  if (diff > 2400000 || /* req.token.pid !== process.pid || */
       req.token.userId !== req.user.userId) {
 
     console.trace('bad token', req.token);
@@ -1038,10 +1043,11 @@ var settingDefaults = {
 // gets the current user
 app.get('/user/current', function(req, res) {
 
-  var userProps = ['createEnabled', 'emailSearch', 'enabled', 'removeEnabled',
-    'headerAuthEnabled', 'settings', 'userId', 'webEnabled', 'packetSearch'];
+  let userProps = ['createEnabled', 'emailSearch', 'enabled', 'removeEnabled',
+    'headerAuthEnabled', 'settings', 'userId', 'webEnabled', 'packetSearch',
+    'hideStats', 'hideFiles', 'hidePcap', 'disablePcapDownload'];
 
-  var clone     = {};
+  let clone = {};
 
   for (let i = 0, ilen = userProps.length; i < ilen; ++i) {
     var prop = userProps[i];
@@ -1053,11 +1059,13 @@ app.get('/user/current', function(req, res) {
   clone.canUpload = app.locals.allowUploads;
 
   // If no settings, use defaults
-  if (clone.settings === undefined) {clone.settings = settingDefaults;}
+  if (clone.settings === undefined) { clone.settings = settingDefaults; }
 
   // Use settingsDefaults for any settings that are missing
   for (let item in settingDefaults) {
-    if (clone.settings[item] === undefined) {clone.settings[item] = settingDefaults[item];}
+    if (clone.settings[item] === undefined) {
+      clone.settings[item] = settingDefaults[item];
+    }
   }
 
   return res.send(clone);
@@ -1091,7 +1099,7 @@ function getSettingUser (req, res, next) {
 
 // express middleware to set req.settingUser to who to work on, depending if admin or not
 function postSettingUser (req, res, next) {
-  var userId;
+  let userId;
 
   if (req.query.userId === undefined || req.query.userId === req.user.userId) {
     userId = req.user.userId;
@@ -1158,134 +1166,353 @@ app.post('/user/settings/update', [checkCookieToken, logAction(), postSettingUse
   });
 });
 
+function saveSharedView (req, res, user, view, endpoint, successMessage, errorMessage) {
+  Db.getUser('_moloch_shared', (err, sharedUser) => {
+    if (!sharedUser || !sharedUser.found) {
+      // sharing for the first time
+      sharedUser = {
+        userId: '_moloch_shared',
+        userName: '_moloch_shared',
+        enabled: false,
+        webEnabled: false,
+        emailSearch: false,
+        headerAuthEnabled: false,
+        createEnabled: false,
+        removeEnabled: false,
+        packetSearch: false,
+        views: {}
+      };
+    } else {
+      sharedUser = sharedUser._source;
+    }
+
+    sharedUser.views = sharedUser.views || {};
+
+    if (sharedUser.views[req.body.name]) {
+      console.log('Trying to add duplicate shared view', sharedUser);
+      return res.molochError(403, 'Shared view already exists');
+    }
+
+    sharedUser.views[req.body.name] = view;
+
+    Db.setUser('_moloch_shared', sharedUser, (err, info) => {
+      if (err) {
+        console.log(endpoint, 'failed', err, info);
+        return res.molochError(500, errorMessage);
+      }
+      return res.send(JSON.stringify({
+        success : true,
+        text    : successMessage,
+        viewName: req.body.name,
+        view    : view
+      }));
+    });
+  });
+}
+
+// remove the string, 'shared:', that is added to shared views with the same
+// name as a user's personal view in the endpoint '/user/views'
+// also remove any special characters except ('-', '_', ':', and ' ')
+function sanitizeViewName (req, res, next) {
+  if (req.body.name) {
+    req.body.name = req.body.name.replace(/(^shared:)|[^-a-zA-Z0-9_: ]/g, '');
+  }
+  next();
+}
+
+// removes a view from the user that created the view and adds it to the shared user
+function shareView (req, res, user, endpoint, successMessage, errorMessage) {
+  let view = user.views[req.body.name];
+  view.shared = true;
+
+  delete user.views[req.body.name]; // remove the view from the
+
+  Db.setUser(user.userId, user, (err, info) => {
+    if (err) {
+      console.log(endpoint, 'failed', err, info);
+      return res.molochError(500, errorMessage);
+    }
+    // save the view on the shared user
+    return saveSharedView(req, res, user, view, endpoint, successMessage, errorMessage);
+  });
+}
+
+// removes a view from the shared user and adds it to the user that created the view
+function unshareView (req, res, user, sharedUser, endpoint, successMessage, errorMessage) {
+  Db.setUser('_moloch_shared', sharedUser, (err, info) => {
+    if (err) {
+      console.log(endpoint, 'failed', err, info);
+      return res.molochError(500, errorMessage);
+    }
+
+    if (user.views[req.body.name]) { // the user already has a view with this name
+      return res.molochError(403, 'A view already exists with this name.');
+    }
+
+    user.views[req.body.name] = {
+      expression: req.body.expression,
+      user: req.body.user, // keep the user so we know who created it
+      shared: false,
+      sessionsColConfig: req.body.sessionsColConfig
+    };
+
+    Db.setUser(user.userId, user, (err, info) => {
+      if (err) {
+        console.log(endpoint, 'failed', err, info);
+        return res.molochError(500, errorMessage);
+      }
+      return res.send(JSON.stringify({
+        success : true,
+        text    : successMessage
+      }));
+    });
+  });
+}
+
 // gets a user's views
 app.get('/user/views', getSettingUser, function(req, res) {
-  if (!req.settingUser) {return res.send({});}
+  if (!req.settingUser) { return res.send({}); }
 
-  return res.send(req.settingUser.views || {});
+  Db.getUser('_moloch_shared', (err, sharedUser) => {
+    if (sharedUser && sharedUser.found) {
+      sharedUser = sharedUser._source;
+      if (!req.settingUser.views) { req.settingUser.views = {}; }
+      for (let viewName in sharedUser.views) {
+        // check for views with the same name as a shared view so user specific views don't get overwritten
+        let sharedViewName = viewName;
+        if (req.settingUser.views[sharedViewName] && !req.settingUser.views[sharedViewName].shared) {
+          sharedViewName = `shared:${sharedViewName}`;
+        }
+        req.settingUser.views[sharedViewName] = sharedUser.views[viewName];
+      }
+    }
+
+    return res.send(req.settingUser.views || {});
+  });
 });
 
 // creates a new view for a user
-app.post('/user/views/create', [checkCookieToken, logAction(), postSettingUser], function(req, res) {
+app.post('/user/views/create', [checkCookieToken, logAction(), postSettingUser, sanitizeViewName], function (req, res) {
   if (!req.settingUser) {
     console.log('/user/views/create unknown user');
     return res.molochError(403, 'Unknown user');
   }
 
-  if (!req.body.viewName)   { return res.molochError(403, 'Missing view name'); }
+  if (!req.body.name)   { return res.molochError(403, 'Missing view name'); }
   if (!req.body.expression) { return res.molochError(403, 'Missing view expression'); }
 
-  var user = req.settingUser;
+  let user = req.settingUser;
   user.views = user.views || {};
-  var container = user.views;
-  if (req.body.groupName) {
-    req.body.groupName = req.body.groupName.replace(/[^-a-zA-Z0-9_: ]/g, '');
-    if (!user.views._groups) {
-      user.views._groups = {};
-    }
-    if (!user.views._groups[req.body.groupName]) {
-      user.views._groups[req.body.groupName] = {};
-    }
-    container = user.views._groups[req.body.groupName];
-  }
 
-  req.body.viewName = req.body.viewName.replace(/[^-a-zA-Z0-9_: ]/g, '');
-  if (container[req.body.viewName]) {
-    container[req.body.viewName].expression = req.body.expression;
+  let newView = {
+    expression: req.body.expression,
+    user: user.userId
+  };
+
+  if (req.body.shared) {
+    // save the view on the shared user
+    newView.shared = true;
+    saveSharedView(req, res, user, newView, '/user/views/create', 'Created shared view successfully', 'Create shared view failed');
   } else {
-    container[req.body.viewName] = {expression: req.body.expression};
-  }
-
-  if (req.body.sessionsColConfig) {
-    container[req.body.viewName].sessionsColConfig = req.body.sessionsColConfig;
-  } else if (container[req.body.viewName].sessionsColConfig && !req.body.sessionsColConfig) {
-    container[req.body.viewName].sessionsColConfig = undefined;
-  }
-
-  Db.setUser(user.userId, user, function(err, info) {
-    if (err) {
-      console.log('/user/views/create error', err, info);
-      return res.molochError(500, 'Create view failed');
+    newView.shared = false;
+    if (user.views[req.body.name]) {
+      return res.molochError(403, 'A view already exists with this name.');
+    } else {
+      user.views[req.body.name] = newView;
     }
-    return res.send(JSON.stringify({
-      success : true,
-      text    : 'Created view successfully',
-      viewName: req.body.viewName,
-      views   : user.views
-    }));
-  });
+
+    if (req.body.sessionsColConfig) {
+      user.views[req.body.name].sessionsColConfig = req.body.sessionsColConfig;
+    } else if (user.views[req.body.name].sessionsColConfig && !req.body.sessionsColConfig) {
+      user.views[req.body.name].sessionsColConfig = undefined;
+    }
+
+    Db.setUser(user.userId, user, (err, info) => {
+      if (err) {
+        console.log('/user/views/create error', err, info);
+        return res.molochError(500, 'Create view failed');
+      }
+      return res.send(JSON.stringify({
+        success : true,
+        text    : 'Created view successfully',
+        viewName: req.body.name,
+        view    : newView
+      }));
+    });
+  }
 });
 
 // deletes a user's specified view
-app.post('/user/views/delete', [checkCookieToken, logAction(), postSettingUser], function(req, res) {
+app.post('/user/views/delete', [checkCookieToken, logAction(), postSettingUser, sanitizeViewName], function(req, res) {
   if (!req.settingUser) {
     console.log('/user/views/delete unknown user');
     return res.molochError(403, 'Unknown user');
   }
 
-  if (!req.body.view) { return res.molochError(403, 'Missing view'); }
+  if (!req.body.name) { return res.molochError(403, 'Missing view name'); }
 
-  var user = req.settingUser;
+  let user = req.settingUser;
   user.views = user.views || {};
-  if (user.views[req.body.view] === undefined) { return res.molochError(200, "View not found"); }
-  delete user.views[req.body.view];
 
-  Db.setUser(user.userId, user, function(err, info) {
-    if (err) {
-      console.log('/user/views/delete failed', err, info);
-      return res.molochError(500, 'Delete view failed');
+  if (req.body.shared) {
+    Db.getUser('_moloch_shared', (err, sharedUser) => {
+      if (sharedUser && sharedUser.found) {
+        sharedUser = sharedUser._source;
+        sharedUser.views = sharedUser.views || {};
+        if (sharedUser.views[req.body.name] === undefined) { return res.molochError(404, 'View not found'); }
+        // only admins or the user that created the view can delete the shared view
+        if (!user.createEnabled && sharedUser.views[req.body.name].user !== user.userId) {
+          return res.molochError(401, 'Need admin privelages to delete another user\'s shared view');
+        }
+        delete sharedUser.views[req.body.name];
+      }
+
+      Db.setUser('_moloch_shared', sharedUser, (err, info) => {
+        if (err) {
+          console.log('/user/views/delete failed', err, info);
+          return res.molochError(500, 'Delete shared view failed');
+        }
+        return res.send(JSON.stringify({
+          success : true,
+          text    : 'Deleted shared view successfully'
+        }));
+      });
+    });
+  } else {
+    if (user.views[req.body.name] === undefined) { return res.molochError(404, 'View not found'); }
+    delete user.views[req.body.name];
+
+    Db.setUser(user.userId, user, (err, info) => {
+      if (err) {
+        console.log('/user/views/delete failed', err, info);
+        return res.molochError(500, 'Delete view failed');
+      }
+      return res.send(JSON.stringify({
+        success : true,
+        text    : 'Deleted view successfully'
+      }));
+    });
+  }
+});
+
+// shares/unshares a view
+app.post('/user/views/toggleShare', [checkCookieToken, logAction(), postSettingUser, sanitizeViewName], function (req, res) {
+  if (!req.body.name)       { return res.molochError(403, 'Missing view name'); }
+  if (!req.body.expression) { return res.molochError(403, 'Missing view expression'); }
+
+  let view;
+  let share = req.body.shared;
+  let user = req.settingUser;
+  user.views = user.views || {};
+
+  if (share && user.views[req.body.name] === undefined) { return res.molochError(404, 'View not found'); }
+
+  Db.getUser('_moloch_shared', (err, sharedUser) => {
+    if (!sharedUser || !sharedUser.found) {
+      // the shared user has not been created yet so there is no chance of duplicate views
+      if (share) { // add the view to the shared user
+        return shareView(req, res, user, '/user/views/toggleShare', 'Shared view successfully', 'Sharing view failed');
+      }
+      // if it not already a shared view and it's trying to be unshared, something went wrong, can't do it
+      return res.molochError(404, 'Shared user not found. Cannot unshare a view without a shared user.');
     }
-    return res.send(JSON.stringify({
-      success : true,
-      text    : 'Deleted view successfully'
-    }));
+
+    sharedUser = sharedUser._source;
+    sharedUser.views = sharedUser.views || {};
+
+    if (share) { // if sharing, make sure the view doesn't already exist
+      if (sharedUser.views[req.body.name]) { // duplicate detected
+        return res.molochError(403, 'A shared view already exists with this name.');
+      }
+      return shareView(req, res, user, '/user/views/toggleShare', 'Shared view successfully', 'Sharing view failed');
+    } else {
+      // if unsharing, remove it from shared user and add it to current user
+      if (sharedUser.views[req.body.name] === undefined) { return res.molochError(404, 'View not found'); }
+      // only admins or the user that created the view can update the shared view
+      if (!user.createEnabled && sharedUser.views[req.body.name].user !== user.userId) {
+        return res.molochError(401, 'Need admin privelages to unshare another user\'s shared view');
+      }
+      // save the view for later to determine who the view belongs to
+      view = sharedUser.views[req.body.name];
+      // delete the shared view
+      delete sharedUser.views[req.body.name];
+      return unshareView(req, res, user, sharedUser, '/user/views/toggleShare', 'Unshared view successfully', 'Unsharing view failed');
+    }
   });
 });
 
 // updates a user's specified view
-app.post('/user/views/update', [checkCookieToken, logAction(), postSettingUser], function(req, res) {
-
+app.post('/user/views/update', [checkCookieToken, logAction(), postSettingUser, sanitizeViewName], function (req, res) {
   if (!req.body.name)       { return res.molochError(403, 'Missing view name'); }
   if (!req.body.expression) { return res.molochError(403, 'Missing view expression'); }
   if (!req.body.key)        { return res.molochError(403, 'Missing view key'); }
 
-  var user = req.settingUser;
+  let user = req.settingUser;
   user.views = user.views || {};
-  var container = user.views;
-  if (req.body.groupName) {
-    req.body.groupName = req.body.groupName.replace(/[^-a-zA-Z0-9_: ]/g, '');
-    if (!user.views._groups) {
-      user.views._groups = {};
-    }
-    if (!user.views._groups[req.body.groupName]) {
-      user.views._groups[req.body.groupName] = {};
-    }
-    container = user.views._groups[req.body.groupName];
-  }
-  req.body.name = req.body.name.replace(/[^-a-zA-Z0-9_: ]/g, '');
-  if (container[req.body.name]) {
-    container[req.body.name].expression = req.body.expression;
+
+  if (req.body.shared) {
+    Db.getUser('_moloch_shared', (err, sharedUser) => {
+      if (sharedUser && sharedUser.found) {
+        sharedUser = sharedUser._source;
+        sharedUser.views = sharedUser.views || {};
+        if (sharedUser.views[req.body.key] === undefined) { return res.molochError(404, 'View not found'); }
+        // only admins or the user that created the view can update the shared view
+        if (!user.createEnabled && sharedUser.views[req.body.name].user !== user.userId) {
+          return res.molochError(401, 'Need admin privelages to update another user\'s shared view');
+        }
+        sharedUser.views[req.body.name] = {
+          expression: req.body.expression,
+          user: user.userId,
+          shared: true,
+          sessionsColConfig: req.body.sessionsColConfig
+        };
+        // delete the old one if the key (view name) has changed
+        if (sharedUser.views[req.body.key] && req.body.name !== req.body.key) {
+          sharedUser.views[req.body.key] = null;
+          delete sharedUser.views[req.body.key];
+        }
+      }
+
+      Db.setUser('_moloch_shared', sharedUser, (err, info) => {
+        if (err) {
+          console.log('/user/views/delete failed', err, info);
+          return res.molochError(500, 'Update shared view failed');
+        }
+        return res.send(JSON.stringify({
+          success : true,
+          text    : 'Updated shared view successfully'
+        }));
+      });
+    });
   } else {
-    container[req.body.name] = {expression: req.body.expression};
-  }
-
-  // delete the old one if the key (view name) has changed
-  if (user.views[req.body.key] && req.body.name !== req.body.key) {
-    user.views[req.body.key] = null;
-    delete user.views[req.body.key];
-  }
-
-  Db.setUser(user.userId, user, function(err, info) {
-    if (err) {
-      console.log('/user/views/update error', err, info);
-      return res.molochError(500, 'Updating view failed');
+    if (user.views[req.body.name]) {
+      user.views[req.body.name].expression = req.body.expression;
+    } else { // the name has changed, so create a new entry
+      user.views[req.body.name] = {
+        expression: req.body.expression,
+        user: user.userId,
+        shared: false,
+        sessionsColConfig: req.body.sessionsColConfig
+      };
     }
-    return res.send(JSON.stringify({
-      success : true,
-      text    : 'Updated view successfully',
-      views   : user.views
-    }));
-  });
+
+    // delete the old one if the key (view name) has changed
+    if (user.views[req.body.key] && req.body.name !== req.body.key) {
+      user.views[req.body.key] = null;
+      delete user.views[req.body.key];
+    }
+
+    Db.setUser(user.userId, user, function(err, info) {
+      if (err) {
+        console.log('/user/views/update error', err, info);
+        return res.molochError(500, 'Updating view failed');
+      }
+      return res.send(JSON.stringify({
+        success : true,
+        text    : 'Updated view successfully'
+      }));
+    });
+  }
 });
 
 // gets a user's cron queries
@@ -2128,16 +2355,52 @@ function buildSessionQuery(req, buildCb) {
     }
   }
 
-  if (!err && req.query.view && req.user.views && req.user.views[req.query.view]) {
+  if (!err && req.query.view) {
+    addViewToQuery(req, query, continueBuildQuery, buildCb);
+  } else {
+    continueBuildQuery(req, query, err, buildCb);
+  }
+}
+
+function addViewToQuery(req, query, continueBuildQueryCb, finalCb) {
+  let err;
+  let viewExpression;
+  if (req.user.views && req.user.views[req.query.view]) { // it's a user's view
     try {
-      var viewExpression = molochparser.parse(req.user.views[req.query.view].expression);
+      viewExpression = molochparser.parse(req.user.views[req.query.view].expression);
       query.query.bool.filter.push(viewExpression);
     } catch (e) {
-      console.log("ERR - User expression doesn't compile", req.user.views[req.query.view], e);
+      console.log('ERR - User expression doesn\'t compile', viewExpression, e);
       err = e;
     }
+    continueBuildQueryCb(req, query, err, finalCb);
+  } else { // it's a shared view
+    Db.getUser('_moloch_shared', (err, sharedUser) => {
+      if (sharedUser && sharedUser.found) {
+        sharedUser = sharedUser._source;
+        sharedUser.views = sharedUser.views || {};
+        for (let viewName in sharedUser.views) {
+          if (viewName === req.query.view) {
+            viewExpression = sharedUser.views[viewName].expression;
+            break;
+          }
+        }
+        if (sharedUser.views[req.query.view]) {
+          try {
+            viewExpression = molochparser.parse(sharedUser.views[req.query.view].expression);
+            query.query.bool.filter.push(viewExpression);
+          } catch (e) {
+            console.log('ERR - Shared user view expression doesn\'t compile', viewExpression, e);
+            err = e;
+          }
+        }
+        continueBuildQueryCb(req, query, err, finalCb);
+      }
+    });
   }
+}
 
+function continueBuildQuery(req, query, err, finalCb) {
   if (!err && req.user.expression && req.user.expression.length > 0) {
     try {
       // Expression was set by admin, so assume email search ok
@@ -2154,14 +2417,14 @@ function buildSessionQuery(req, buildCb) {
     if (req.query.date === '-1' ||                                      // An all query
         (req.query.bounding || "last") !== "last" ||                    // Not a last bounded query
         Config.get("queryAllIndices", Config.get("multiES", false))) {  // queryAllIndices (default: multiES)
-      return buildCb(err || lerr, query, "sessions2-*"); // Then we just go against all indices for a slight overhead
+      return finalCb(err || lerr, query, "sessions2-*"); // Then we just go against all indices for a slight overhead
     }
 
     Db.getIndices(req.query.startTime, req.query.stopTime, Config.get("rotateIndex", "daily"), function(indices) {
       if (indices.length > 3000) { // Will url be too long
-        return buildCb(err || lerr, query, "sessions2-*");
+        return finalCb(err || lerr, query, "sessions2-*");
       } else {
-        return buildCb(err || lerr, query, indices);
+        return finalCb(err || lerr, query, indices);
       }
     });
   });
@@ -2247,14 +2510,15 @@ function sessionsListFromQuery(req, res, fields, cb) {
 }
 
 function sessionsListFromIds(req, ids, fields, cb) {
+  var processSegments = false;
+  if (req && ((req.query.segments && req.query.segments.match(/^(time|all)$/)) || (req.body.segments && req.body.segments.match(/^(time|all)$/)))) {
+    if (fields.indexOf("rootId") === -1) { fields.push("rootId"); }
+    processSegments = true;
+  }
+
   var list = [];
   var nonArrayFields = ["ipProtocol", "firstPacket", "lastPacket", "srcIp", "srcPort", "srcGEO", "dstIp", "dstPort", "dstGEO", "totBytes", "totDataBytes", "totPackets", "node", "rootId"];
   var fixFields = nonArrayFields.filter(function(x) {return fields.indexOf(x) !== -1;});
-
-  // ES treats _source=no as turning off _source, very sad :(
-  if (fields.length === 1 && fields[0] === "node") {
-    fields.push("lastPacket");
-  }
 
   async.eachLimit(ids, 10, function(id, nextCb) {
     Db.getWithOptions(Db.sid2Index(id), 'session', Db.sid2Id(id), {_source: fields.join(",")}, function(err, session) {
@@ -2273,7 +2537,7 @@ function sessionsListFromIds(req, ids, fields, cb) {
       nextCb(null);
     });
   }, function(err) {
-    if (req && req.query.segments && req.query.segments.match(/^(time|all)$/)) {
+    if (processSegments) {
       buildSessionQuery(req, function(err, query, indices) {
         query._source = fields;
         sessionsListAddSegments(req, indices, query, list, function(err, list) {
@@ -2425,6 +2689,8 @@ app.get('/fields', function(req, res) {
 });
 
 app.get('/file/list', logAction('files'), recordResponseTime, function(req, res) {
+  if (req.user.hideFiles) { return res.molochError(403, 'Need permission to view files'); }
+
   var columns = ["num", "node", "name", "locked", "first", "filesize"];
 
   var query = {_source: columns,
@@ -2492,6 +2758,8 @@ app.get('/eshealth.json', function(req, res) {
 });
 
 app.get('/esindices/list', recordResponseTime, function(req, res) {
+  if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
+
   Db.indicesCache(function(err, indices) {
     // Implement filtering
     if (req.query.filter !== undefined) {
@@ -2557,6 +2825,8 @@ app.post('/esindices/:index/optimize', logAction(), checkCookieToken, function(r
 });
 
 app.get('/estask/list', recordResponseTime, function(req, res) {
+  if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
+
   Db.tasks(function(err, tasks) {
     tasks = tasks.tasks;
 
@@ -2620,6 +2890,8 @@ app.post('/estask/cancel', logAction(), function(req, res) {
 });
 
 app.get('/esshard/list', recordResponseTime, function(req, res) {
+  if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
+
   Promise.all([Db.shards(),
                Db.getClusterSettings({flatSettings: true})
               ]).then(([shards, settings]) => {
@@ -2636,7 +2908,7 @@ app.get('/esshard/list', recordResponseTime, function(req, res) {
 
     var regex;
     if (req.query.filter !== undefined) {
-      regex = new RegExp(req.query.filter);
+      regex = new RegExp(req.query.filter.toLowerCase());
     }
 
     let result = {};
@@ -2645,7 +2917,7 @@ app.get('/esshard/list', recordResponseTime, function(req, res) {
     for (var shard of shards) {
       if (shard.node === null || shard.node === "null") { shard.node = "Unassigned"; }
 
-      if (regex && !shard.index.match(regex) && !shard.node.match(regex)) { continue; }
+      if (regex && !shard.index.toLowerCase().match(regex) && !shard.node.toLowerCase().match(regex)) { continue; }
 
       if (result[shard.index] === undefined) {
         result[shard.index] = {name: shard.index, nodes: {}};
@@ -2747,7 +3019,41 @@ app.post('/esshard/include/:type/:value', logAction(), checkCookieToken, functio
   });
 });
 
+app.get('/esrecovery/list', recordResponseTime, function(req, res) {
+  if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
+
+  var sortField = (req.query.sortField || "index") + (req.query.desc === "true"?":desc":"");
+
+  Promise.all([Db.recovery(sortField)]).then(([recoveries]) => {
+
+    var regex;
+    if (req.query.filter !== undefined) {
+      regex = new RegExp(req.query.filter);
+    }
+
+    let all = req.query.all === 'true' || req.query.all === true;
+
+    let result = [];
+
+    for (var recovery of recoveries) {
+      if (! (req.query.show === 'all' ||
+            recovery.stage === req.query.show ||    //  Show only matching stage
+            (recovery.stage !== 'done' && req.query.show === 'notdone'))) {
+        continue;
+      }
+
+      if (regex && !recovery.index.match(regex) && !recovery.target_node.match(regex) && !recovery.source_node.match(regex)) { continue; }
+
+      result.push(recovery);
+    }
+
+    res.send(result);
+  });
+});
+
 app.get('/esstats.json', recordResponseTime, function(req, res) {
+  if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
+
   var stats = [];
   var r;
 
@@ -2800,7 +3106,7 @@ app.get('/esstats.json', recordResponseTime, function(req, res) {
         ipExcluded: ipExcludes.includes(ip),
         nodeExcluded: nodeExcludes.includes(node.name),
         storeSize: node.indices.store.size_in_bytes,
-        freeSize: node.fs.total.available_in_bytes,
+        freeSize: node.roles.includes("data")?node.fs.total.available_in_bytes:0,
         docs: node.indices.docs.count,
         searches: node.indices.search.query_current,
         searchesTime: node.indices.search.query_time_in_millis,
@@ -2857,7 +3163,60 @@ function mergeUnarray(to, from) {
     }
   }
 }
+
+app.get('/parliament.json', function (req, res) {
+  noCache(req, res);
+
+  let query = {
+    size: 500,
+    _source: [
+      'ver', 'nodeName', 'currentTime', 'monitoring', 'deltaBytes', 'deltaPackets', 'deltaMS',
+      'deltaESDropped', 'deltaDropped', 'deltaOverloadDropped'
+    ]
+  };
+
+  Promise.all([Db.search('stats', 'stat', query), Db.numberOfDocuments('stats')])
+    .then(([stats, total]) => {
+      if (stats.error) { throw stats.error; }
+
+      let results = { total: stats.hits.total, results: [] };
+
+      for (let i = 0, ilen = stats.hits.hits.length; i < ilen; i++) {
+        let fields = stats.hits.hits[i]._source || stats.hits.hits[i].fields;
+
+        if (stats.hits.hits[i]._source) {
+          mergeUnarray(fields, stats.hits.hits[i].fields);
+        }
+        fields.id = stats.hits.hits[i]._id;
+
+        // make sure necessary fields are not undefined
+        let keys = [ 'deltaOverloadDropped', 'monitoring', 'deltaESDropped' ];
+        for (const key of keys) {
+          fields[key] = fields[key] || 0;
+        }
+
+        fields.deltaBytesPerSec         = Math.floor(fields.deltaBytes * 1000.0/fields.deltaMS);
+        fields.deltaPacketsPerSec       = Math.floor(fields.deltaPackets * 1000.0/fields.deltaMS);
+        fields.deltaESDroppedPerSec     = Math.floor(fields.deltaESDropped * 1000.0/fields.deltaMS);
+        fields.deltaTotalDroppedPerSec  = Math.floor((fields.deltaDropped + fields.deltaOverloadDropped) * 1000.0/fields.deltaMS);
+
+        results.results.push(fields);
+      }
+
+      res.send({
+        data: results.results,
+        recordsTotal: total.count,
+        recordsFiltered: results.total
+      });
+    }).catch((err) => {
+      console.log('ERROR - /parliament.json', err);
+      res.send({ recordsTotal: 0, recordsFiltered: 0, data: [] });
+    });
+});
+
 app.get('/stats.json', recordResponseTime, function(req, res) {
+  if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
+
   noCache(req, res);
 
   var query = {from: +req.query.start || 0,
@@ -2923,12 +3282,15 @@ app.get('/stats.json', recordResponseTime, function(req, res) {
        "monitoring", "tcpSessions", "udpSessions", "icmpSessions", "sctpSessions", "espSessions",
        "usedSpaceM", "freeSpaceM", "freeSpaceP", "memory", "memoryP", "frags", "cpu", "esHealthMS",
        "diskQueue", "esQueue", "packetQueue", "closeQueue", "needSave", "fragsQueue",
-       "deltaFragsDropped", "deltaOverloadDropped", "deltaESDropped"
+       "deltaFragsDropped", "deltaOverloadDropped", "deltaESDropped",
+        "deltaWrittenBytes", "deltaUnwrittenBytes"
       ]) {
         fields[key] = fields[key] || 0;
       }
 
       fields.deltaBytesPerSec           = Math.floor(fields.deltaBytes * 1000.0/fields.deltaMS);
+      fields.deltaWrittenBytesPerSec    = Math.floor(fields.deltaWrittenBytes * 1000.0/fields.deltaMS);
+      fields.deltaUnwrittenBytesPerSec  = Math.floor(fields.deltaUnwrittenBytes * 1000.0/fields.deltaMS);
       fields.deltaBitsPerSec            = Math.floor(fields.deltaBytes * 1000.0/fields.deltaMS * 8);
       fields.deltaPacketsPerSec         = Math.floor(fields.deltaPackets * 1000.0/fields.deltaMS);
       fields.deltaSessionsPerSec        = Math.floor(fields.deltaSessions * 1000.0/fields.deltaMS);
@@ -2953,6 +3315,8 @@ app.get('/stats.json', recordResponseTime, function(req, res) {
 });
 
 app.get('/dstats.json', function(req, res) {
+  if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
+
   noCache(req, res);
 
   var nodeName = req.query.nodeName;
@@ -2985,6 +3349,8 @@ app.get('/dstats.json', function(req, res) {
     deltaTotalDropped: {_source: ["deltaDropped", "deltaOverloadDropped"], func: function (item) {return Math.floor(item.deltaDropped + item.deltaOverloadDropped);}},
     deltaBytesPerSec: {_source: ["deltaBytes", "deltaMS"], func: function(item) {return Math.floor(item.deltaBytes * 1000.0/item.deltaMS);}},
     deltaBitsPerSec: {_source: ["deltaBytes", "deltaMS"], func: function(item) {return Math.floor(item.deltaBytes * 1000.0/item.deltaMS * 8);}},
+    deltaWrittenBytesPerSec: {_source: ["deltaWrittenBytes", "deltaMS"], func: function(item) {return Math.floor(item.deltaWrittenBytes * 1000.0/item.deltaMS);}},
+    deltaUnwrittenBytesPerSec: {_source: ["deltaUnwrittenBytes", "deltaMS"], func: function(item) {return Math.floor(item.deltaUnwrittenBytes * 1000.0/item.deltaMS);}},
     deltaPacketsPerSec: {_source: ["deltaPackets", "deltaMS"], func: function(item) {return Math.floor(item.deltaPackets * 1000.0/item.deltaMS);}},
     deltaSessionsPerSec: {_source: ["deltaSessions", "deltaMS"], func: function(item) {return Math.floor(item.deltaSessions * 1000.0/item.deltaMS);}},
     deltaSessionBytesPerSec: {_source: ["deltaSessionBytes", "deltaMS"], func: function(item) {return Math.floor(item.deltaSessionBytes * 1000.0/item.deltaMS);}},
@@ -3144,27 +3510,42 @@ function fixFields(fields, fixCb) {
  *
  * @example
  * { http: { statuscode: [200, 302] } } => { "http.statuscode": [200, 302] }
+ * @example
+ * { cert: [ { alt: ["test.com"] } ] } => { "cert.alt": ["test.com"] }
  *
  * @param {object} fields The object containing fields to be flattened
  * @returns {object} fields The object with fields flattened
  */
 function flattenFields(fields) {
-  var newFields = {};
+  let newFields = {};
 
   for (let key in fields) {
     if (fields.hasOwnProperty(key)) {
-      var field = fields[key];
+      let field = fields[key];
+      let baseKey = key + '.';
       if (typeof field === 'object' && !field.length) {
-        var baseKey = key + '.';
-        for (var nestedKey in field) {
+        // flatten out object
+        for (let nestedKey in field) {
           if (field.hasOwnProperty(nestedKey)) {
-            var nestedField = field[nestedKey];
-            var newKey = baseKey + nestedKey;
+            let nestedField = field[nestedKey];
+            let newKey = baseKey + nestedKey;
             newFields[newKey] = nestedField;
           }
         }
         fields[key] = null;
         delete fields[key];
+      } else if (Array.isArray(field)) {
+        // flatten out list
+        for (let nestedField of field) {
+          if (typeof nestedField === 'object') {
+            for (let nestedKey in nestedField) {
+              let newKey = baseKey + nestedKey;
+              newFields[newKey] = nestedField[nestedKey];
+            }
+            fields[key] = null;
+            delete fields[key];
+          }
+        }
       }
     }
   }
@@ -3592,26 +3973,53 @@ app.get('/dns.json', logAction(), function(req, res) {
 });
 
 function buildConnections(req, res, cb) {
-  if (req.query.dstField === "ip.dst:port") {
-    var dstipport = true;
-    req.query.dstField = "dstIp";
+  let dstipport;
+  if (req.query.dstField === 'ip.dst:port') {
+    dstipport = true;
+    req.query.dstField = 'dstIp';
   }
 
-  req.query.srcField       = req.query.srcField || "srcIp";
-  req.query.dstField       = req.query.dstField || "dstIp";
-  var fsrc                 = req.query.srcField;
-  var fdst                 = req.query.dstField;
-  var minConn              = req.query.minConn  || 1;
-  req.query.iDisplayLength = req.query.iDisplayLength || "5000";
+  req.query.srcField       = req.query.srcField || 'srcIp';
+  req.query.dstField       = req.query.dstField || 'dstIp';
+  req.query.iDisplayLength = req.query.iDisplayLength || '5000';
+  let fsrc                 = req.query.srcField;
+  let fdst                 = req.query.dstField;
+  let minConn              = req.query.minConn || 1;
 
-  var srcIsIp              = fsrc.match(/(\.ip|Ip)$/);
-  var dstIsIp              = fdst.match(/(\.ip|Ip)$/);
+  let srcIsIp = fsrc.match(/(\.ip|Ip)$/);
+  let dstIsIp = fdst.match(/(\.ip|Ip)$/);
 
-  var nodesHash = {};
-  var connects = {};
+  let nodesHash = {};
+  let connects = {};
 
-  function process(vsrc, vdst, f) {
+  let dbFieldsMap = Config.getDBFieldsMap();
+  function updateValues (data, property, fields) {
+    for (let i in fields) {
+      let dbField = fields[i];
+      let field = dbFieldsMap[dbField];
+      if (data.hasOwnProperty(dbField)) {
+        // sum integers
+        if (field.type === 'integer' && field.category !== 'port') {
+          property[dbField] = (property[dbField] || 0) + data[dbField];
+        } else { // make a list of values
+          if (!property[dbField]) { property[dbField] = []; }
+          // make all values an array (because sometimes they are by default)
+          let values = [ data[dbField] ];
+          if (Array.isArray(data[dbField])) {
+            values = data[dbField];
+          }
+          for (let value of values) {
+            property[dbField].push(value);
+          }
+          if (property[dbField] && Array.isArray(property[dbField])) {
+            property[dbField] = [ ...new Set(property[dbField]) ]; // unique only
+          }
+        }
+      }
+    }
+  }
 
+  function process (vsrc, vdst, f, fields) {
     // ES 6 is returning formatted timestamps instead of ms like pre 6 did
     // https://github.com/elastic/elasticsearch/issues/27740
     if (vsrc.length === 24 && vsrc[23] === 'Z' && vsrc.match(/^\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d.\d\d\dZ$/)) {
@@ -3622,37 +4030,30 @@ function buildConnections(req, res, cb) {
     }
 
     if (nodesHash[vsrc] === undefined) {
-      nodesHash[vsrc] = {id: ""+vsrc, db: 0, by: 0, pa: 0, cnt: 0, sessions: 0};
+      nodesHash[vsrc] = { id: `${vsrc}`, cnt: 0, sessions: 0 };
     }
 
     nodesHash[vsrc].sessions++;
-    nodesHash[vsrc].by += f.totBytes;
-    nodesHash[vsrc].db += f.totDataBytes;
-    nodesHash[vsrc].pa += f.totPackets;
     nodesHash[vsrc].type |= 1;
+    updateValues(f, nodesHash[vsrc], fields);
 
     if (nodesHash[vdst] === undefined) {
-      nodesHash[vdst] = {id: ""+vdst, db: 0, by: 0, pa: 0, cnt: 0, sessions: 0};
+      nodesHash[vdst] = { id: `${vdst}`, cnt: 0, sessions: 0 };
     }
 
     nodesHash[vdst].sessions++;
-    nodesHash[vdst].by += f.totBytes;
-    nodesHash[vdst].db += f.totDataBytes;
-    nodesHash[vdst].pa += f.totPackets;
     nodesHash[vdst].type |= 2;
+    updateValues(f, nodesHash[vdst], fields);
 
-    var n = "" + vsrc + "->" + vdst;
-    if (connects[n] === undefined) {
-      connects[n] = {value: 0, source: vsrc, target: vdst, by: 0, db: 0, pa: 0, node: {}};
+    let linkId = `${vsrc}->${vdst}`;
+    if (connects[linkId] === undefined) {
+      connects[linkId] = { value: 0, source: vsrc, target: vdst };
       nodesHash[vsrc].cnt++;
       nodesHash[vdst].cnt++;
     }
 
-    connects[n].value++;
-    connects[n].by += f.totBytes;
-    connects[n].db += f.totDataBytes;
-    connects[n].pa += f.totPackets;
-    connects[n].node[f.node] = 1;
+    connects[linkId].value++;
+    updateValues(f, connects[linkId], fields);
   }
 
   buildSessionQuery(req, function(bsqErr, query, indices) {
@@ -3662,29 +4063,36 @@ function buildConnections(req, res, cb) {
     query.query.bool.filter.push({exists: {field: req.query.srcField}});
     query.query.bool.filter.push({exists: {field: req.query.dstField}});
 
-    query._source = ["totBytes", "totDataBytes", "totPackets", "node"];
+    // get the requested fields
+    let fields = ['totBytes', 'totDataBytes', 'totPackets', 'node'];
+    if (req.query.fields) { fields = req.query.fields.split(','); }
+    query._source = fields;
     query.docvalue_fields = [fsrc, fdst];
 
     if (dstipport) {
-      query._source.push("dstPort");
+      query._source.push('dstPort');
     }
 
-    //console.log("buildConnections query", JSON.stringify(query, null, 2));
+    if (Config.debug) {
+      console.log('buildConnections query', JSON.stringify(query, null, 2));
+    }
 
     Db.searchPrimary(indices, 'session', query, function (err, graph) {
-    //console.log("buildConnections result", JSON.stringify(graph, null, 2));
+      if (Config.debug) {
+        console.log('buildConnections result', JSON.stringify(graph, null, 2));
+      }
+
       if (err || graph.error) {
-        console.log("Build Connections ERROR", err, graph.error);
+        console.log('Build Connections ERROR', err, graph.error);
         return cb(err || graph.error);
       }
-      var i;
 
-      async.eachLimit(graph.hits.hits, 10, function(hit, hitCb) {
-        var f = hit._source;
+      async.eachLimit(graph.hits.hits, 10, function (hit, hitCb) {
+        let f = hit._source;
+        f = flattenFields(f);
 
-        var asrc = hit.fields[fsrc];
-        var adst = hit.fields[fdst];
-
+        let asrc = hit.fields[fsrc];
+        let adst = hit.fields[fdst];
 
         if (asrc === undefined || adst === undefined) {
           return setImmediate(hitCb);
@@ -3701,20 +4109,20 @@ function buildConnections(req, res, cb) {
         for (let vsrc of asrc) {
           for (let vdst of adst) {
             if (dstIsIp && dstipport) {
-              if (vdst.includes(":")) {vdst = '[' + vdst + ']';}
-              vdst += ":" + f.dstPort;
+              if (vdst.includes(':')) { vdst = `[${vdst}]`; }
+              vdst += ':' + f.dstPort;
             }
-            process(vsrc, vdst, f);
+            process(vsrc, vdst, f, fields);
           }
         }
         setImmediate(hitCb);
       }, function (err) {
-        var nodes = [];
-        var nodeKeys = Object.keys(nodesHash);
-        if (Config.get("regressionTests", false)) {
-          nodeKeys = nodeKeys.sort(function(a,b){return nodesHash[a].id.localeCompare(nodesHash[b].id);});
+        let nodes = [];
+        let nodeKeys = Object.keys(nodesHash);
+        if (Config.get('regressionTests', false)) {
+          nodeKeys = nodeKeys.sort(function (a,b) { return nodesHash[a].id.localeCompare(nodesHash[b].id); });
         }
-        for (var node of nodeKeys) {
+        for (let node of nodeKeys) {
           if (nodesHash[node].cnt < minConn) {
             nodesHash[node].pos = -1;
           } else {
@@ -3723,9 +4131,8 @@ function buildConnections(req, res, cb) {
           }
         }
 
-
-        var links = [];
-        for (var key in connects) {
+        let links = [];
+        for (let key in connects) {
           var c = connects[key];
           c.source = nodesHash[c.source].pos;
           c.target = nodesHash[c.target].pos;
@@ -3734,10 +4141,12 @@ function buildConnections(req, res, cb) {
           }
         }
 
-        //console.log("nodesHash", nodesHash);
-        //console.log("connects", connects);
-        //console.log("nodes", nodes.length, nodes);
-        //console.log("links", links.length, links);
+        if (Config.debug) {
+          console.log('nodesHash', nodesHash);
+          console.log('connects', connects);
+          console.log('nodes', nodes.length, nodes);
+          console.log('links', links.length, links);
+        }
 
         return cb(null, nodes, links, graph.hits.total);
       });
@@ -3745,12 +4154,12 @@ function buildConnections(req, res, cb) {
   });
 }
 
-app.get('/connections.json', logAction('connections'), recordResponseTime, function(req, res) {
-  var health;
-  Db.healthCache(function(err, h) {health = h;});
+app.get('/connections.json', logAction('connections'), recordResponseTime, function (req, res) {
+  let health;
+  Db.healthCache(function (err, h) { health = h; });
   buildConnections(req, res, function (err, nodes, links, total) {
     if (err) { return res.molochError(403, err.toString()); }
-    res.send({health: health, nodes: nodes, links: links, recordsFiltered: total});
+    res.send({ health: health, nodes: nodes, links: links, recordsFiltered: total });
   });
 });
 
@@ -3762,15 +4171,35 @@ app.get('/connections.csv', logAction(), function(req, res) {
       return res.send(err);
     }
 
-    res.write("Source, Destination, Sessions, Packets, Bytes, Databytes\r\n");
+    // write out the fields requested
+    let fields = ['totBytes', 'totDataBytes', 'totPackets', 'node'];
+    if (req.query.fields) { fields = req.query.fields.split(','); }
+
+    res.write("Source, Destination, Sessions");
+    let displayFields = {};
+    for (let field of fields) {
+      let fieldsMap = JSON.parse(app.locals.fieldsMap);
+      for (let f in fieldsMap) {
+        if (fieldsMap[f].dbField === field) {
+          let friendlyName = fieldsMap[f].friendlyName;
+          displayFields[field] = fieldsMap[f];
+          res.write(`, ${friendlyName}`);
+        }
+      }
+    }
+    res.write('\r\n');
+
     for (let i = 0, ilen = links.length; i < ilen; i++) {
       res.write("\"" + nodes[links[i].source].id.replace('"', '""') + "\"" + seperator +
                 "\"" + nodes[links[i].target].id.replace('"', '""') + "\"" + seperator +
-                     links[i].value + seperator +
-                     links[i].pa + seperator +
-                     links[i].by + seperator +
-                     links[i].db + "\r\n");
+                     links[i].value + seperator);
+      for (let f = 0, flen = fields.length; f < flen; f++) {
+        res.write(links[i][displayFields[fields[f]].dbField].toString());
+        if (f !== flen - 1) { res.write(seperator); }
+      }
+      res.write('\r\n');
     }
+
     res.end();
   });
 });
@@ -4432,6 +4861,8 @@ app.get('/:nodeName/session/:id/detail', logAction(), function(req, res) {
  * Get Session Packets
  */
 app.get('/:nodeName/session/:id/packets', logAction(), function(req, res) {
+  if (req.user.hidePcap) { return res.molochError(403, 'Need permission to view packets'); }
+
   isLocalView(req.params.nodeName, function () {
     noCache(req, res);
     req.packetsOnly = true;
@@ -4583,7 +5014,7 @@ app.get('/bodyHash/:hash', logAction('bodyhash'), function(req, res) {
               preq.params.nodeName = nodeName;
               preq.params.id = sessionID;
               preq.params.hash = hash;
-              preq.url ='/' + nodeName + '/' + sessionID + '/bodyHash/' + hash;
+              preq.url = Config.basePath(nodeName) + nodeName + '/' + sessionID + '/bodyHash/' + hash;
               return proxyRequest(preq, res);
             });
           }
@@ -4763,6 +5194,8 @@ function writePcapNg(res, id, options, doneCb) {
 }
 
 app.get('/:nodeName/pcapng/:id.pcapng', checkProxyRequest, function(req, res) {
+  if (req.user.disablePcapDownload) { return res.molochError(403, 'Need permission to download pcap'); }
+
   noCache(req, res, "application/vnd.tcpdump.pcap");
   writePcapNg(res, req.params.id, {writeHeader: !req.query || !req.query.noHeader || req.query.noHeader !== "true"}, function () {
     res.end();
@@ -4770,6 +5203,8 @@ app.get('/:nodeName/pcapng/:id.pcapng', checkProxyRequest, function(req, res) {
 });
 
 app.get('/:nodeName/pcap/:id.pcap', checkProxyRequest, function(req, res) {
+  if (req.user.disablePcapDownload) { return res.molochError(403, 'Need permission to download pcap'); }
+
   noCache(req, res, "application/vnd.tcpdump.pcap");
 
   writePcap(res, req.params.id, {writeHeader: !req.query || !req.query.noHeader || req.query.noHeader !== "true"}, function () {
@@ -4823,6 +5258,8 @@ app.get('/:nodeName/raw/:id', checkProxyRequest, function(req, res) {
 });
 
 app.get('/:nodeName/entirePcap/:id.pcap', checkProxyRequest, function(req, res) {
+  if (req.user.disablePcapDownload) { return res.molochError(403, 'Need permission to download pcap'); }
+
   noCache(req, res, "application/vnd.tcpdump.pcap");
 
   var options = {writeHeader: true};
@@ -4921,10 +5358,12 @@ function sessionsPcap(req, res, pcapWriter, extension) {
 }
 
 app.get(/\/sessions.pcapng.*/, logAction(), function(req, res) {
+  if (req.user.disablePcapDownload) { return res.molochError(403, 'Need permission to download pcap'); }
   return sessionsPcap(req, res, writePcapNg, "pcapng");
 });
 
 app.get(/\/sessions.pcap.*/, logAction(), function(req, res) {
+  if (req.user.disablePcapDownload) { return res.molochError(403, 'Need permission to download pcap'); }
   return sessionsPcap(req, res, writePcap, "pcap");
 });
 
@@ -4943,20 +5382,24 @@ app.post('/user/list', logAction('users'), recordResponseTime, function(req, res
   if (!req.user.createEnabled) {return res.molochError(404, 'Need admin privileges');}
 
   var columns = ['userId', 'userName', 'expression', 'enabled', 'createEnabled',
-    'webEnabled', 'headerAuthEnabled', 'emailSearch', 'removeEnabled', 'packetSearch'];
+    'webEnabled', 'headerAuthEnabled', 'emailSearch', 'removeEnabled', 'packetSearch',
+    'hideStats', 'hideFiles', 'hidePcap', 'disablePcapDownload'];
 
-  var query = {_source: columns,
-               sort: {},
-               from: +req.body.start || 0,
-               size: +req.body.length || 10000
-              };
+  var query = {
+    _source: columns,
+    sort: {},
+    from: +req.body.start || 0,
+    size: +req.body.length || 10000,
+    query: { // exclude the shared user from results
+      bool: { must_not: { term: { userId: '_moloch_shared' } } }
+    }
+  };
 
   if (req.body.filter) {
-    query.query = {bool: {should: [{wildcard: {userName: '*' + req.body.filter + '*'}},
-                                   {wildcard: {userId: '*' + req.body.filter + '*'}}
-                                  ]
-                         }
-                  };
+    query.query.bool.should = [
+      { wildcard: { userName: '*' + req.body.filter + '*' } },
+      { wildcard: { userId: '*' + req.body.filter + '*' } }
+    ];
   }
 
   req.body.sortField = req.body.sortField || 'userId';
@@ -4967,10 +5410,11 @@ app.post('/user/list', logAction('users'), recordResponseTime, function(req, res
                Db.numberOfUsers()
               ])
   .then(([users, total]) => {
-    if (users.error) {throw users.error;}
-    var results = {total: users.hits.total, results: []};
+    if (users.error) { throw users.error; }
+    let results = { total: users.hits.total, results: [] };
+    let hasSharedUser = false;
     for (let i = 0, ilen = users.hits.hits.length; i < ilen; i++) {
-      var fields = users.hits.hits[i]._source || users.hits.hits[i].fields;
+      let fields = users.hits.hits[i]._source || users.hits.hits[i].fields;
       fields.id = users.hits.hits[i]._id;
       fields.expression = fields.expression || '';
       fields.headerAuthEnabled = fields.headerAuthEnabled || false;
@@ -4981,9 +5425,11 @@ app.post('/user/list', logAction('users'), recordResponseTime, function(req, res
       results.results.push(fields);
     }
 
-    var r = {recordsTotal: total.count,
-             recordsFiltered: results.total,
-             data: results.results};
+    let r = {
+      recordsTotal: total.count,
+      recordsFiltered: results.total,
+      data: results.results
+    };
     res.send(r);
   }).catch((err) => {
     console.log('ERROR - /user/list', err);
@@ -5000,6 +5446,10 @@ app.post('/user/create', logAction(), checkCookieToken, function(req, res) {
 
   if (req.body.userId.match(/[^@\w.-]/)) {
     return res.molochError(403, 'User ID must be word characters');
+  }
+
+  if (req.body.userId === '_moloch_shared') {
+    return res.molochError(403, 'User ID cannot be the same as the shared moloch user');
   }
 
   Db.getUser(req.body.userId, function(err, user) {
@@ -5094,6 +5544,10 @@ app.post('/user/update', logAction(), checkCookieToken, postSettingUser, functio
     user.headerAuthEnabled = req.body.headerAuthEnabled === true;
     user.removeEnabled = req.body.removeEnabled === true;
     user.packetSearch = req.body.packetSearch === true;
+    user.hideStats = req.body.hideStats === true;
+    user.hideFiles = req.body.hideFiles === true;
+    user.hidePcap = req.body.hidePcap === true;
+    user.disablePcapDownload = req.body.disablePcapDownload === true;
 
     // Can only change createEnabled if it is currently turned on
     if (req.body.createEnabled !== undefined && req.user.createEnabled) {
@@ -5180,6 +5634,10 @@ function addTagsList(allTagNames, list, doneCb) {
       }
     };
 
+    if (Config.get('multiES', false) && session._node) {
+      document._node = session._node;  // add tag to a session using MultiES
+    }
+
     Db.update(session._index, 'session', session._id, document, function(err, data) {
       if (err) {
         console.log("addTagsList error", session, err, data);
@@ -5223,6 +5681,10 @@ function removeTagsList(res, allTagNames, list) {
         }
       };
 
+    }
+
+    if (Config.get('multiES', false) && session._node) {
+      document._node = session._node; // remove tag from a session using MultiES
     }
 
     Db.update(session._index, 'session', session._id, document, function(err, data) {
@@ -5614,7 +6076,7 @@ function processHuntJob (huntId, hunt) {
     var query = {
       from: 0,
       size: 100, // Only fetch 100 items at a time
-      query: { bool: { filter: [{}] } },
+      query: { bool: { must: [{ exists: { field: 'fileId' } }], filter: [{}] } },
       _source: ['_id', 'node'],
       sort: { lastPacket: { order: 'asc' } }
     };

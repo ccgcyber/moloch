@@ -319,6 +319,10 @@ exports.shards = function(cb) {
   return internals.elasticSearchClient.cat.shards({format: "json", bytes: "b", h: "index,shard,prirep,state,docs,store,ip,node,ur,uf,fm,sm"}, cb);
 };
 
+exports.recovery = function(sortField, cb) {
+  return internals.elasticSearchClient.cat.recovery({format: "json", bytes: "b", s: sortField}, cb);
+};
+
 exports.getClusterSettings = function(options, cb) {
   return internals.elasticSearchClient.cluster.getSettings(options, cb);
 };
@@ -791,6 +795,12 @@ exports.getIndices = function(startTime, stopTime, rotateIndex, cb) {
 
       startTime += offset;
 
+      if (aliases[iname] && (indices.length === 0 || iname !== indices[indices.length-1])) {
+        indices.push(iname);
+      }
+
+      // Check for shrink version
+      iname += '-shrink';
       if (aliases[iname] && (indices.length === 0 || iname !== indices[indices.length-1])) {
         indices.push(iname);
       }

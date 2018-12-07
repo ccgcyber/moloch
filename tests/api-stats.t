@@ -1,4 +1,4 @@
-use Test::More tests => 48;
+use Test::More tests => 59;
 use Cwd;
 use URI::Escape;
 use MolochTest;
@@ -99,3 +99,25 @@ my $test1Token = getTokenCookie("test1");
     $shards = viewerGet("/esshard/list");
     eq_or_diff($shards->{nodeExcludes}, [], "esshard: nodeExcludes empty");
     eq_or_diff($shards->{ipExcludes}, [], "esshard: ipExcludes empty");
+
+# esrecovery
+    my $recovery = viewerGet("/esrecovery/list?show=all");
+    cmp_ok (@{$recovery}, ">=", 100, "tasks array size");
+
+    $recovery = viewerGet("/esrecovery/list");
+    cmp_ok (@{$recovery}, "==", 0, "tasks array size");
+
+    $recovery = viewerGet("/esrecovery/list?show=notdone");
+    cmp_ok (@{$recovery}, "==", 0, "tasks array size");
+
+# parliament.json
+    my $stats = viewerGet("/parliament.json");
+    is (@{$stats->{data}}, 1, "parliament.json data set ");
+    is ($stats->{recordsTotal}, 1, "parliament.json recordsTotal");
+    is ($stats->{data}->[0]->{id}, "test", "parliament.json name");
+
+    foreach my $i ("deltaBytesPerSec", "deltaPacketsPerSec", "deltaESDroppedPerSec", "deltaTotalDroppedPerSec") {
+        is (exists $stats->{data}->[0]->{$i}, 1, "parliament.json $i");
+    }
+
+    is (exists $stats->{data}->[0]->{"totalPackets"}, "", "parliament.json doesn't have unnecessary fields");

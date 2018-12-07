@@ -12,7 +12,7 @@
     <div v-show="!error">
 
       <moloch-table
-        id="esTasksTable"
+        id="esRecoveryTable"
         :data="stats"
         :loadData="loadData"
         :columns="columns"
@@ -21,20 +21,8 @@
         :desc="query.desc"
         :sortField="query.sortField"
         table-classes="table-sm text-right small"
-        table-state-name="esTasksCols"
-        table-widths-state-name="esTasksColWidths">
-        <template slot="actions"
-          slot-scope="{ item }">
-          <a v-if="item.cancellable"
-            class="btn btn-xs btn-danger"
-            @click="cancelTask(item.taskId)"
-            v-b-tooltip.hover
-            title="Cancel task"
-            v-has-permission="'createEnabled'">
-            <span class="fa fa-trash-o">
-            </span>
-          </a>
-        </template>
+        table-state-name="esRecoveryCols"
+        table-widths-state-name="esRecoveryColWidths">
       </moloch-table>
 
     </div>
@@ -44,7 +32,6 @@
 </template>
 
 <script>
-import Vue from 'vue';
 import MolochError from '../utils/Error';
 import MolochLoading from '../utils/Loading';
 import MolochTable from '../utils/Table';
@@ -52,16 +39,12 @@ import MolochTable from '../utils/Table';
 let reqPromise; // promise returned from setInterval for recurring requests
 let respondedAt; // the time that the last data load succesfully responded
 
-function roundCommaString (val) {
-  let result = Vue.options.filters.commaString(Vue.options.filters.round(val, 0));
-  return result;
-};
-
 export default {
-  name: 'EsTasks',
+  name: 'EsRecovery',
   props: [
     'user',
     'dataInterval',
+    'recoveryShow',
     'refreshData',
     'searchTerm'
   ],
@@ -75,23 +58,32 @@ export default {
       averageValues: null,
       query: {
         filter: this.searchTerm || undefined,
-        sortField: 'action',
+        sortField: 'index',
         desc: false,
-        cancellable: false
+        show: this.recoveryShow || 'notdone'
       },
       columns: [ // es indices table columns
         // default columns
-        { id: 'action', name: 'Action', sort: 'action', dataField: 'action', default: true, width: 200 },
-        { id: 'description', name: 'Description', sort: 'description', dataField: 'description', default: true, width: 300 },
-        { id: 'start_time_in_millis', name: 'Start Time', sort: 'start_time_in_millis', dataField: 'start_time_in_millis', width: 180, default: true, dataFunction: (val) => { return this.$options.filters.timezoneDateString(Math.floor(val / 1000), this.user.settings.timezone, 'YYYY/MM/DD HH:mm:ss z'); } },
-        { id: 'running_time_in_nanos', name: 'Running Time', sort: 'running_time_in_nanos', dataField: 'running_time_in_nanos', width: 120, default: true, dataFunction: (val) => { return this.$options.filters.commaString(this.$options.filters.round(val / 1000000, 1)); } },
-        { id: 'childrenCount', name: 'Children', sort: 'childrenCount', dataField: 'childrenCount', default: true, width: 100, dataFunction: roundCommaString },
-        // all the rest of the available stats
-        { id: 'cancellable', name: 'Cancellable', sort: 'cancellable', dataField: 'cancellable', width: 100 },
-        { id: 'id', name: 'ID', sort: 'id', dataField: 'id', width: 80 },
-        { id: 'node', name: 'Node', sort: 'node', dataField: 'node', width: 180 },
-        { id: 'taskid', name: 'Task ID', sort: 'taskid', dataField: 'taskid', width: 150 },
-        { id: 'type', name: 'Type', sort: 'type', dataField: 'type', width: 100 }
+        { id: 'index', name: 'Index', sort: 'index', dataField: 'index', default: true, width: 200 },
+        { id: 'shard', name: 'Shard', sort: 'shard', dataField: 'shard', default: true, width: 80 },
+        { id: 'time', name: 'Time', sort: 'time', dataField: 'time', default: true, width: 80 },
+        { id: 'type', name: 'Type', sort: 'type', dataField: 'type', default: true, width: 100 },
+        { id: 'stage', name: 'Stage', sort: 'stage', dataField: 'stage', default: true, width: 100 },
+        { id: 'source_host', name: 'Src Host', sort: 'source_host', dataField: 'source_host', default: false, width: 200 },
+        { id: 'source_node', name: 'Src Node', sort: 'source_node', dataField: 'source_node', default: true, width: 120 },
+        { id: 'target_host', name: 'Dst Host', sort: 'target_host', dataField: 'target_host', default: false, width: 200 },
+        { id: 'target_node', name: 'Dst Node', sort: 'target_node', dataField: 'target_node', default: true, width: 120 },
+        { id: 'files', name: 'Files', sort: 'files', dataField: 'files', default: false, width: 100 },
+        { id: 'files_recovered', name: 'Files Recovered', sort: 'files_recovered', dataField: 'files_recovered', default: false, width: 100 },
+        { id: 'files_percent', name: 'Files %', sort: 'files_percent', dataField: 'files_percent', default: true, width: 80 },
+        { id: 'files_total', name: 'Files total', sort: 'files_total', dataField: 'files_total', default: false, width: 100 },
+        { id: 'bytes', name: 'Bytes', sort: 'bytes', dataField: 'bytes', default: false, width: 100 },
+        { id: 'bytes_recovered', name: 'Bytes Recovered', sort: 'bytes_recovered', dataField: 'bytes_recovered', default: false, width: 100 },
+        { id: 'bytes_percent', name: 'Bytes %', sort: 'bytes_percent', dataField: 'bytes_percent', default: true, width: 80 },
+        { id: 'bytes_total', name: 'Bytes total', sort: 'bytes_total', dataField: 'bytes_total', default: false, width: 100 },
+        { id: 'translog_ops', name: 'Translog', sort: 'translog_ops', dataField: 'translog_ops', default: false, width: 100 },
+        { id: 'translog_ops_recovered', name: 'Translog Recovered', sort: 'translog_ops_recovered', dataField: 'translog_ops_recovered', default: false, width: 100 },
+        { id: 'translog_ops_percent', name: 'Translog %', sort: 'translog_ops_percent', dataField: 'translog_ops_percent', default: true, width: 100 }
       ]
     };
   },
@@ -119,7 +111,8 @@ export default {
         this.setRequestInterval();
       }
     },
-    'query.cancellable': function () {
+    recoveryShow: function () {
+      this.query.show = this.recoveryShow;
       this.loadData();
     },
     refreshData: function () {
@@ -135,10 +128,6 @@ export default {
     }
   },
   methods: {
-    /* exposed page functions ------------------------------------ */
-    cancelTask (taskId) {
-      this.$http.post('estask/cancel', { taskId: taskId });
-    },
     /* helper functions ------------------------------------------ */
     setRequestInterval: function () {
       reqPromise = setInterval(() => {
@@ -151,12 +140,13 @@ export default {
       this.loading = true;
       respondedAt = undefined;
 
+      // this.query.all = 'true';
       this.query.filter = this.searchTerm;
 
       if (desc !== undefined) { this.query.desc = desc; }
       if (sortField) { this.query.sortField = sortField; }
 
-      this.$http.get('estask/list', { params: this.query })
+      this.$http.get('esrecovery/list', { params: this.query })
         .then((response) => {
           respondedAt = Date.now();
           this.error = '';

@@ -36,6 +36,9 @@ struct timeval               initialPacket; // Don't make LOCAL for now because 
 extern void                 *esServer;
 extern uint32_t              pluginsCbs;
 
+uint64_t                     writtenBytes;
+uint64_t                     unwrittenBytes;
+
 LOCAL int                    mac1Field;
 LOCAL int                    mac2Field;
 LOCAL int                    oui1Field;
@@ -486,6 +489,8 @@ LOCAL void *moloch_packet_thread(void *threadp)
 {
     MolochPacket_t  *packet;
     int thread = (long)threadp;
+    const uint32_t maxPackets75 = config.maxPackets*0.75;
+    uint32_t skipCount = 0;
 
     while (1) {
         MOLOCH_LOCK(packetQ[thread].lock);
@@ -500,10 +505,15 @@ LOCAL void *moloch_packet_thread(void *threadp)
         DLL_POP_HEAD(packet_, &packetQ[thread], packet);
         MOLOCH_UNLOCK(packetQ[thread].lock);
 
-        moloch_session_process_commands(thread);
+        // Only process commands if the packetQ is less then 75% full or every 8 packets
+        if (likely(DLL_COUNT(packet_, &packetQ[thread]) < maxPackets75) || (skipCount & 0x7) == 0) {
+            moloch_session_process_commands(thread);
+            if (!packet)
+                continue;
+        } else {
+            skipCount++;
+        }
 
-        if (!packet)
-            continue;
 #ifdef DEBUG_PACKET
         LOG("Processing %p %d", packet, packet->pktlen);
 #endif
@@ -692,6 +702,7 @@ LOCAL void *moloch_packet_thread(void *threadp)
         uint32_t packets = session->packets[0] + session->packets[1];
 
         if (session->stopSaving == 0 || packets < session->stopSaving) {
+            MOLOCH_THREAD_INCR_NUM(writtenBytes, packet->pktlen);
             moloch_writer_write(session, packet);
 
             int16_t len;
@@ -711,6 +722,8 @@ LOCAL void *moloch_packet_thread(void *threadp)
             if (packets >= config.maxPackets || session->midSave) {
                 moloch_session_mid_save(session, packet->ts.tv_sec);
             }
+        } else {
+            MOLOCH_THREAD_INCR_NUM(unwrittenBytes, packet->pktlen);
         }
 
         if (session->firstBytesLen[packet->direction] < 8 && session->packets[packet->direction] < 10) {
@@ -1111,8 +1124,8 @@ LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const pa
             initialDropped = stats.dropped;
         }
         initialPacket = packet->ts;
-        LOG("Initial Packet = %ld", initialPacket.tv_sec);
-        LOG("%" PRIu64 " Initial Dropped = %d", totalPackets, initialDropped);
+        if (!config.pcapReadOffline)
+            LOG("Initial Packet = %ld Initial Dropped = %d", initialPacket.tv_sec, initialDropped);
     }
 
     MOLOCH_THREAD_INCR(totalPackets);
@@ -1640,6 +1653,11 @@ LOCAL int moloch_packet_sll(MolochPacketBatch_t * batch, MolochPacket_t * const 
         return moloch_packet_pppoe(batch, packet, data+16, len - 16);
     case 0x8847:
         return moloch_packet_mpls(batch, packet, data+16, len - 16);
+    case 0x8100:
+        if ((data[20] & 0xf0) == 0x60)
+            return moloch_packet_ip6(batch, packet, data+20, len - 20);
+        else
+            return moloch_packet_ip4(batch, packet, data+20, len - 20);
     default:
 #ifdef DEBUG_PACKET
         LOG("BAD PACKET: Unknown ethertype %x", ethertype);
@@ -1754,9 +1772,12 @@ void moloch_packet_batch(MolochPacketBatch_t * batch, MolochPacket_t * const pac
 
     switch(pcapFileHeader.linktype) {
     case 0: // NULL
-        if (packet->pktlen > 4)
-            rc = moloch_packet_ip4(batch, packet, packet->pkt+4, packet->pktlen-4);
-        else {
+        if (packet->pktlen > 4) {
+            if (packet->pkt[0] == 30)
+                rc = moloch_packet_ip6(batch, packet, packet->pkt+4, packet->pktlen-4);
+            else
+                rc = moloch_packet_ip4(batch, packet, packet->pkt+4, packet->pktlen-4);
+        } else {
 #ifdef DEBUG_PACKET
             LOG("BAD PACKET: Too short %d", packet->pktlen);
 #endif
@@ -1861,12 +1882,14 @@ void moloch_packet_init()
         "mac.src", "Src MAC", "srcMac",
         "Source ethernet mac addresses set for session",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
+        "transform", "dash2Colon",
         (char *)NULL);
 
     mac2Field = moloch_field_define("general", "lotermfield",
         "mac.dst", "Dst MAC", "dstMac",
         "Destination ethernet mac addresses set for session",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT | MOLOCH_FIELD_FLAG_LINKED_SESSIONS,
+        "transform", "dash2Colon",
         (char *)NULL);
 
     moloch_field_define("general", "lotermfield",
@@ -1874,6 +1897,7 @@ void moloch_packet_init()
         "Shorthand for mac.src or mac.dst",
         0,  MOLOCH_FIELD_FLAG_FAKE,
         "regex", "^mac\\\\.(?:(?!\\\\.cnt$).)*$",
+        "transform", "dash2Colon",
         (char *)NULL);
 
     oui1Field = moloch_field_define("general", "termfield",

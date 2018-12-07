@@ -6,7 +6,7 @@
       <moloch-keyboard-shortcuts
         v-if="displayKeyboardShortcutsHelp">
       </moloch-keyboard-shortcuts>
-      <div v-if="shiftKeyHold"
+      <div v-else-if="shiftKeyHold && !displayKeyboardShortcutsHelp"
         class="shortcut-help">
         <span class="fa fa-question fa-fw">
         </span>
@@ -152,7 +152,19 @@ export default {
       }
       if (event.keyCode === 16) { // shift
         this.shiftKeyHold = true;
+      } else if (event.keyCode === 27) { // esc
+        this.shiftKeyHold = false;
       }
+    });
+
+    // if the user clicks something, remove shift hold
+    window.addEventListener('mousedown', (event) => {
+      this.shiftKeyHold = false;
+    });
+
+    // if the user focus is not in the web page, remove shift hold
+    window.addEventListener('blur', (event) => {
+      this.shiftKeyHold = false;
     });
   },
   methods: {
@@ -451,6 +463,13 @@ dl.dl-horizontal dt {
 }
 dl.dl-horizontal dd {
   margin-left: 205px;
+  margin-bottom: 0;
+}
+dl.dl-horizontal.dl-horizontal-wide dt {
+  width: 400px;
+}
+dl.dl-horizontal.dl-horizontal-wide dd {
+  margin-left: 410px;
   margin-bottom: 0;
 }
 

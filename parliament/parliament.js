@@ -14,6 +14,7 @@ const logger  = require('morgan');
 const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcrypt');
 const glob    = require('glob');
+const os      = require('os');
 
 /* app setup --------------------------------------------------------------- */
 const app     = express();
@@ -26,11 +27,12 @@ const issueTypes = {
   esDown: { on: true, name: 'ES Down', text: ' ES is down', severity: 'red', description: 'ES is unreachable' },
   esDropped: { on: true, name: 'ES Dropped', text: 'ES is dropping bulk inserts', severity: 'yellow', description: 'the capture node is overloading ES' },
   outOfDate: { on: true, name: 'Out of Date', text: 'has not checked in since', severity: 'red', description: 'the capture node has not checked in' },
-  noPackets: { on: true, name: 'No Packets', text: 'is not receiving packets', severity: 'red', description: 'the capture node is not receiving packets' }
+  noPackets: { on: true, name: 'Low Packets', text: 'is not receiving many packets', severity: 'red', description: 'the capture node is not receiving many packets' }
 };
 
 const settingsDefault = {
   general : {
+    noPackets: 0,
     outOfDate: 30,
     esQueryTimeout: 5,
     removeIssuesAfter: 60,
@@ -282,7 +284,14 @@ async function sendAlerts () {
         // timeout so that alerts are alerted in order
         setTimeout(() => {
           let alert = alerts[i];
-          alert.notifier.sendAlert(alert.config, alert.message);
+          let links = [];
+          if (parliament.settings.general.includeUrl) {
+            links.push({
+              text: 'Parliament Dashboard',
+              url: `${parliament.settings.general.hostname}?searchTerm=${alert.cluster}`
+            });
+          }
+          alert.notifier.sendAlert(alert.config, alert.message, links);
           if (app.get('debug')) {
             console.log('Sending alert:', alert.message, JSON.stringify(alert.config, null, 2));
           }
@@ -316,7 +325,7 @@ function formatIssueMessage (cluster, issue) {
 
   message += `${issue.text}`;
 
-  if (issue.value) {
+  if (issue.value !== undefined) {
     let value = ': ';
 
     if (issue.type === 'esDropped') {
@@ -366,7 +375,8 @@ function buildAlert (cluster, issue) {
     alerts.push({
       config: config,
       message: message,
-      notifier: notifier
+      notifier: notifier,
+      cluster: cluster.title
     });
   }
 }
@@ -501,7 +511,7 @@ function getStats (cluster) {
     let timeout = getGeneralSetting('esQueryTimeout') * 1000;
 
     let options = {
-      url: `${cluster.localUrl || cluster.url}/stats.json`,
+      url: `${cluster.localUrl || cluster.url}/parliament.json`,
       method: 'GET',
       rejectUnauthorized: false,
       timeout: timeout
@@ -557,7 +567,6 @@ function getStats (cluster) {
           }
 
           // Look for issues
-
           if ((now - stat.currentTime) > outOfDate) {
             setIssue(cluster, {
               type  : 'outOfDate',
@@ -566,10 +575,11 @@ function getStats (cluster) {
             });
           }
 
-          if (stat.deltaPacketsPerSec === 0) {
+          if (stat.deltaPacketsPerSec <= getGeneralSetting('noPackets')) {
             setIssue(cluster, {
               type: 'noPackets',
-              node: stat.nodeName
+              node: stat.nodeName,
+              value: stat.deltaPacketsPerSec
             });
           }
 
@@ -687,6 +697,9 @@ function initializeParliament () {
     if (!parliament.settings.general.outOfDate) {
       parliament.settings.general.outOfDate = settingsDefault.general.outOfDate;
     }
+    if (!parliament.settings.general.noPackets) {
+      parliament.settings.general.noPackets = settingsDefault.general.noPackets;
+    }
     if (!parliament.settings.general.esQueryTimeout) {
       parliament.settings.general.esQueryTimeout = settingsDefault.general.esQueryTimeout;
     }
@@ -695,6 +708,9 @@ function initializeParliament () {
     }
     if (!parliament.settings.general.removeAcknowledgedAfter) {
       parliament.settings.general.removeAcknowledgedAfter = settingsDefault.general.removeAcknowledgedAfter;
+    }
+    if (!parliament.settings.general.hostname) {
+      parliament.settings.general.hostname = os.hostname();
     }
 
     if (app.get('debug')) {
@@ -1049,13 +1065,14 @@ router.put('/settings', verifyToken, (req, res, next) => {
 
   // save general settings
   for (let s in req.body.settings.general) {
-    const setting = req.body.settings.general[s];
-    if (isNaN(setting)) {
+    let setting = req.body.settings.general[s];
+    if (s !== 'hostname' && s !== 'includeUrl' && isNaN(setting)) {
       const error = new Error(`${s} must be a number.`);
       error.httpStatusCode = 422;
       return next(error);
     }
-    parliament.settings.general[s] = parseInt(setting);
+    if (s !== 'hostname' && s !== 'includeUrl') { setting = parseInt(setting); }
+    parliament.settings.general[s] = setting;
   }
 
   let successObj  = { success: true, text: 'Successfully updated your settings.' };

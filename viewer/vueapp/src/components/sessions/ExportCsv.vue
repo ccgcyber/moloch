@@ -2,7 +2,7 @@
 
   <!-- export csv form -->
   <div class="row"
-    @keyup.stop.prevent.enter="exportPcap()">
+    @keyup.stop.prevent.enter="exportCsv()">
 
     <!-- segments select input -->
     <div class="col-md-4">
@@ -68,8 +68,10 @@
       <div class="btn btn-sm btn-warning pull-right"
         @click="done(null)">
         <span class="fa fa-ban">
-        </span>&nbsp;
-        Cancel
+        </span>
+        <span class="d-sm-none d-md-none d-lg-none d-xl-inline">
+          &nbsp;Cancel
+        </span>
       </div>
     </div> <!-- /cancel button -->
 
@@ -133,7 +135,7 @@ export default {
         }
       }
 
-      SessionsService.exportPcap(data, this.$route.query);
+      SessionsService.exportCsv(data, this.$route.query);
 
       this.done('CSV Exported', true);
     }

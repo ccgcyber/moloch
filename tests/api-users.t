@@ -1,4 +1,4 @@
-use Test::More tests => 71;
+use Test::More tests => 81;
 use Cwd;
 use URI::Escape;
 use MolochTest;
@@ -38,11 +38,11 @@ my $pwd = "*/pcap";
 
     $users = viewerPost("/user/list", "");
     is (@{$users->{data}}, 1, "Check Update #1");
-    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": true, "userId": "test1", "removeEnabled": true, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated", "id": "test1", "emailSearch": true, "enabled": false, "webEnabled": true, "packetSearch": false}', {relaxed => 1}), "Test User Update", { context => 3 });
+    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": true, "userId": "test1", "removeEnabled": true, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated", "id": "test1", "emailSearch": true, "enabled": false, "webEnabled": true, "packetSearch": false, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false }', {relaxed => 1}), "Test User Update", { context => 3 });
 
     $users = viewerPost2("/user/list", "");
     is (@{$users->{data}}, 1, "Check Update #2");
-    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": true, "userId": "test1", "removeEnabled": true, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated", "id": "test1", "emailSearch": true, "enabled": false, "webEnabled": true, "packetSearch": false}', {relaxed => 1}), "Test User Update", { context => 3 });
+    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": true, "userId": "test1", "removeEnabled": true, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated", "id": "test1", "emailSearch": true, "enabled": false, "webEnabled": true, "packetSearch": false, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Update", { context => 3 });
 
 # Add User 2
     my $json = viewerPostToken2("/user/create", '{"userId": "test2", "userName": "UserName2", "enabled":true, "password":"password"}', $token2);
@@ -92,22 +92,22 @@ my $pwd = "*/pcap";
 
     $users = viewerPost("/user/list", "");
     is (@{$users->{data}}, 2, "Check second Update #1");
-    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": true, "userId": "test2", "removeEnabled": false, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated2", "id": "test2", "emailSearch": true, "enabled": true, "webEnabled": true, "packetSearch": false}', {relaxed => 1}), "Test User Update", { context => 3 });
+    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": true, "userId": "test2", "removeEnabled": false, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated2", "id": "test2", "emailSearch": true, "enabled": true, "webEnabled": true, "packetSearch": false, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Update", { context => 3 });
 
     $users = viewerPost2("/user/list", "");
     is (@{$users->{data}}, 2, "Check second Update #2");
-    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": true, "userId": "test2", "removeEnabled": false, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated2", "id": "test2", "emailSearch": true, "enabled": true, "webEnabled": true, "packetSearch": false}', {relaxed => 1}), "Test User Update", { context => 3 });
+    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": true, "userId": "test2", "removeEnabled": false, "expression": "foo", "headerAuthEnabled": true, "userName": "UserNameUpdated2", "id": "test2", "emailSearch": true, "enabled": true, "webEnabled": true, "packetSearch": false, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Update", { context => 3 });
 
 # Reverse settings
     $json = viewerPostToken2("/user/update", '{"userId":"test2","userName":"UserNameUpdated3", "enabled":false, "removeEnabled":true, "headerAuthEnabled":false, "expression":"foo3", "emailSearch":false, "webEnabled":false, "createEnabled": false, "packetSearch": false}', $token2);
 
     $users = viewerPost("/user/list", "");
     is (@{$users->{data}}, 2, "Check second Update #1");
-    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": true, "expression": "foo3", "headerAuthEnabled": false, "userName": "UserNameUpdated3", "id": "test2", "emailSearch": false, "enabled": false, "webEnabled": false, "packetSearch": false}', {relaxed => 1}), "Test User Update", { context => 3 });
+    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": true, "expression": "foo3", "headerAuthEnabled": false, "userName": "UserNameUpdated3", "id": "test2", "emailSearch": false, "enabled": false, "webEnabled": false, "packetSearch": false, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Update", { context => 3 });
 
     $users = viewerPost2("/user/list", "");
     is (@{$users->{data}}, 2, "Check second Update #2");
-    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": true, "expression": "foo3", "headerAuthEnabled": false, "userName": "UserNameUpdated3", "id": "test2", "emailSearch": false, "enabled": false, "webEnabled": false, "packetSearch": false}', {relaxed => 1}), "Test User Update", { context => 3 });
+    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": true, "expression": "foo3", "headerAuthEnabled": false, "userName": "UserNameUpdated3", "id": "test2", "emailSearch": false, "enabled": false, "webEnabled": false, "packetSearch": false, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Update", { context => 3 });
 
 # Column
     my $info = viewerGet("/user/columns?molochRegressionUser=test1");
@@ -171,25 +171,50 @@ my $pwd = "*/pcap";
     $info = viewerGet("/user/views?molochRegressionUser=test1");
     eq_or_diff($info, from_json("{}"), "view: empty");
 
-    $info = viewerPostToken("/user/views/create?molochRegressionUser=test1", '{"viewName": "view1", "expression": "ip == 1.2.3.4"}', $test1Token);
+    $info = viewerPostToken("/user/views/create?molochRegressionUser=test1", '{"name": "view1", "expression": "ip == 1.2.3.4"}', $test1Token);
     ok($info->{success}, "view: create success");
     is($info->{viewName}, "view1", "view: create name");
-    eq_or_diff($info->{views}, from_json('{"view1": {"expression":"ip == 1.2.3.4"}}'), "view: 1 item");
+    eq_or_diff($info->{view}, from_json('{"expression":"ip == 1.2.3.4","user":"test1","shared":false}'), "view: 1 item");
+
+    $info = viewerPostToken("/user/views/create?molochRegressionUser=test1", '{"name": "view1", "expression": "ip == 1.2.3.4"}', $test1Token);
+    ok(!$info->{success}, "view: create failure with same view name");
 
     $info = viewerGet("/user/views?molochRegressionUser=test1");
-    eq_or_diff($info, from_json('{"view1": {"expression":"ip == 1.2.3.4"}}'), "view: 1 item");
+    eq_or_diff($info, from_json('{"view1":{"expression":"ip == 1.2.3.4","user":"test1","shared":false}}'), "view: 1 item");
 
     $info = viewerGet("/user/views?molochRegressionUser=anonymous&userId=test1");
-    eq_or_diff($info, from_json('{"view1": {"expression":"ip == 1.2.3.4"}}'), "view: 1 item admin");
+    eq_or_diff($info, from_json('{"view1":{"expression":"ip == 1.2.3.4","user":"test1","shared":false}}'), "view: 1 item admin");
 
-    $info = viewerPostToken("/user/views/delete?molochRegressionUser=test1", 'view=fred', $test1Token);
+    $info = viewerPostToken("/user/views/delete?molochRegressionUser=test1", '{"expression":"ip == 1.2.3.4","user":"test1","shared":false,"name":"fred"}', $test1Token);
     ok(!$info->{success}, "view: delete not found");
 
     $info = viewerGet("/user/views?molochRegressionUser=test1");
-    eq_or_diff($info, from_json('{"view1": {"expression":"ip == 1.2.3.4"}}'), "view: 1 item");
+    eq_or_diff($info, from_json('{"view1":{"expression":"ip == 1.2.3.4","user":"test1","shared":false}}'), "view: 1 item");
 
-    $info = viewerPostToken("/user/views/delete?molochRegressionUser=test1", 'view=view1', $test1Token);
+    $info = viewerPostToken("/user/views/toggleShare?molochRegressionUser=test1", '{"expression":"ip == 1.2.3.4","user":"test1","shared":true,"name":"view1"}', $test1Token);
+    ok($info->{success}, "view: share");
+
+    $info = viewerGet("/user/views?molochRegressionUser=test1");
+    eq_or_diff($info, from_json('{"view1":{"expression":"ip == 1.2.3.4","user":"test1","shared":true}}'), "view: 1 shared item");
+
+    $info = viewerPostToken("/user/views/toggleShare?molochRegressionUser=test1", '{"expression":"ip == 1.2.3.4","user":"test1","shared":false,"name":"view1"}', $test1Token);
+    ok($info->{success}, "view: unshare");
+
+    $info = viewerPostToken("/user/views/delete?molochRegressionUser=test1", '{"expression":"ip == 1.2.3.4","user":"test1","shared":false,"name":"view1"}', $test1Token);
     ok($info->{success}, "view: delete found");
+
+    $info = viewerPostToken("/user/views/create?molochRegressionUser=test1", '{"name": "view2", "expression": "ip == 1.2.3.4", "shared": true}', $test1Token);
+    ok($info->{success}, "view2: create success");
+    is($info->{viewName}, "view2", "view2: create name");
+    ok($info->{view}->{shared}, "view2: create shared");
+    eq_or_diff($info->{view}, from_json('{"expression":"ip == 1.2.3.4","user":"test1","shared":true}'), "view: 2 item");
+
+    $info = viewerPostToken("/user/views/create?molochRegressionUser=test1", '{"name": "view2", "expression": "ip == 1.2.3.4", "shared": true}', $test1Token);
+    ok(!$info->{success}, "view2: create failure with same shared view name");
+
+    $info = viewerPostToken("/user/views/toggleShare?molochRegressionUser=test1", '{"expression":"ip == 1.2.3.4","user":"test1","shared":false,"name":"view2"}', $test1Token);
+    ok($info->{success}, "view2: unshare");
+    $info = viewerPostToken("/user/views/delete?molochRegressionUser=test1", '{"expression":"ip == 1.2.3.4","user":"test1","shared":false,"name":"view2"}', $test1Token);
 
     $info = viewerGet("/user/views?molochRegressionUser=test1");
     eq_or_diff($info, from_json("{}"), "view: empty");

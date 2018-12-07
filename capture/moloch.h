@@ -120,7 +120,7 @@ typedef struct moloch_trie {
 
 typedef struct {
     MolochStringHead_t  commonName; // 2.5.4.3
-    char               *orgName;    // 2.5.4.10
+    MolochStringHead_t  orgName;    // 2.5.4.10
     char                orgUtf8;
 } MolochCertInfo_t;
 
@@ -208,6 +208,7 @@ typedef struct moloch_field_info {
     uint16_t                  type;
     uint16_t                  flags;
     char                      ruleEnabled;
+    char                     *transform;
 } MolochFieldInfo_t;
 
 typedef struct {

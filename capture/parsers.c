@@ -254,7 +254,7 @@ const char *moloch_parsers_magic_basic(MolochSession_t *session, int field, cons
         if (MAGIC_MATCH(0, "PK\005\006")) {
             return MAGIC_RESULT("application/zip");
         }
-        if (MAGIC_MATCH(0, "PK\007\008PK")) {
+        if (MAGIC_MATCH_LEN(0, "PK\007\008PK")) {
             return MAGIC_RESULT("application/zip");
         }
         break;
@@ -272,7 +272,7 @@ const char *moloch_parsers_magic_basic(MolochSession_t *session, int field, cons
         }
         break;
     case 'd':
-        if (len > 20 && MAGIC_MATCH(0, "d8:announce")) {
+        if (MAGIC_MATCH_LEN(0, "d8:announce")) {
             return MAGIC_RESULT("application/x-bittorrent");
         }
         break;
@@ -580,7 +580,7 @@ void moloch_parsers_init()
     flags |= MAGIC_NO_CHECK_CDF;
 #endif
 
-    if (magicMode == MOLOCH_MAGICMODE_LIBMAGIC || MOLOCH_MAGICMODE_BOTH) {
+    if (magicMode == MOLOCH_MAGICMODE_LIBMAGIC || magicMode == MOLOCH_MAGICMODE_BOTH) {
         int t;
         for (t = 0; t < config.packetThreads; t++) {
             cookie[t] = magic_open(flags);

@@ -73,6 +73,12 @@
             </span>&nbsp;
             Connections
           </a>
+          <a href="help#hunt"
+            class="nav-link">
+            <span class="fa fa-fw fa-eye">
+            </span>&nbsp;
+            Hunt
+          </a>
           <a href="help#files"
             class="nav-link">
             <span class="fa fa-fw fa-files-o">
@@ -491,6 +497,50 @@
 
           <hr>
 
+          <h3 id="hunt">
+            <span class="fa fa-fw fa-eye"></span>&nbsp;
+            Hunt
+          </h3>
+          <p>
+            The Hunt page allows users to search within session packets for text.
+            To perform a hunt, users should start by narrowing down their search on the Sessions page.
+            Then, switch to the Hunt tab where any new hunt will only search within the sessions searched for earlier.
+            Underneath the search bar, the Hunt page will display the number of sessions that will be searched.
+            To begin your hunt, click on the "Create a packet search job" button on the top right of the page (under the search bar).
+            The form that is presented is described below:
+          </p>
+            <dl class="dl-horizontal dl-horizontal-wide">
+              <dt>Name</dt>
+              <dd>The name of the hunt (multiple hunts can have the same name)</dd>
+              <dt>Max number of packets to examine per session</dt>
+              <dd>The maximum number of packets that the hunt will search within each session</dd>
+              <dt>Search</dt>
+              <dd>The text to search for (ascii, case sensitive ascii, hex, regex, or hex regex)</dd>
+              <dt>Search src/dst packets</dt>
+              <dd>Whether to search source or destination packets, or both</dd>
+              <dt>Search raw/reassembled packets</dt>
+              <dd>Whether to search raw or reassembled packets</dd>
+            </dl>
+          <p>
+            Once the hunt has been created, it will be added to the <strong>hunt job queue</strong>. Hunts run one at a time and
+            can be paused so that another hunt can run. After a hunt has completed, it will be added to
+            the <strong>hunt job history</strong>. Here, you can rerun a hunt on a different set of sessions, open the
+            sessions that matched the hunt, or delete the hunt job from the history.
+          </p>
+          <p>
+            Hunts add <code>huntName</code> and <code>huntId</code> fields to the sessions as they match.
+            You can search for these fields in the sessions search bar at any time. Deleting a hunt from the history
+            does not remove these fields from the sessions.
+          </p>
+          <p>
+            <strong>Info:</strong> A normal user can only view/pause/delete their own hunts, but an admin can view/pause/delete all hunts.<br>
+            <strong>Warning:</strong> The packet search will take a long time and possibly slow down viewer if you search many sessions.
+            Users will be alerted if they are trying to search for more than 100,000 sessions. Normal users cannot search more than 1,000,000
+            sessions, and admins cannot search more than 10,000,000 sessions (these values can be overwritten in the config).
+          </p>
+
+          <hr>
+
           <h3 id="files">
             <span class="fa fa-fw fa-files-o"></span>&nbsp;
             Files
@@ -528,13 +578,16 @@
               Capture Stats
             </h6>
             <p>
-              The Capture Stats tab displays a table containing the following information for each capture node:
+              The Capture Stats tab displays a table containing information for each capture node.
+              Please use the column config drop down to change which fields are shown.
             </p>
             <dl class="dl-horizontal">
               <dt>Node</dt>
               <dd>The name of the capture node</dd>
               <dt>Time</dt>
               <dd>The time reported by the capture node</dd>
+              <dt>Sessions</dt>
+              <dd>The number of sessions currently being monitored in memory</dd>
               <dt>Free Space</dt>
               <dd>Percentage of free space across all configured disks</dd>
               <dt>CPU</dt>
@@ -555,9 +608,9 @@
               <dd>Number of packets dropped because there was no packet queue that was free to process them on</dd>
               <dt>ES Drops/s</dt>
               <dd>Number of elasticsearch requests that were dropped because of queue overflow per second</dd>
-              <!-- <dt>Bits/Sec</dt>
+              <dt>Bits/Sec</dt>
               <dd>Same as Bytes/Sec but in bits per second</dd>
-              <dt>Active Sessions</dt>
+              <dt>Sessions</dt>
               <dd>Number of sessions Moloch is currently monitoring</dd>
               <dt>Active TCP Sessions</dt>
               <dd>Number of TCP sessions Moloch is currently monitoring</dd>
@@ -565,24 +618,28 @@
               <dd>Number of UDP sessions Moloch is currently monitoring</dd>
               <dt>Active ICMP Sessions</dt>
               <dd>Number of ICMP sessions Moloch is currently monitoring</dd>
-              <dt>Free Space MB</dt>
-              <dd>Free space in MB across all configured disks</dd>
+              <dt>Free Space</dt>
+              <dd>Free space across all configured disks</dd>
               <dt>Memory</dt>
               <dd>Amount of memory that Moloch is using</dd>
-              <dt>Disk Queue</dt>
+              <dt>Disk Q</dt>
               <dd>Number of blocks of data that are waiting to be written to disk</dd>
-              <dt>ES Queue</dt>
+              <dt>ES Q</dt>
               <dd>Number of elasticsearch requests that are waiting to be sent</dd>
-              <dt>Closing Queue</dt>
+              <dt>Closing Q</dt>
               <dd>Number of TCP sessions that have received a FIN and Moloch is waiting to see if actually closed</dd>
-              <dt>Waiting Queue</dt>
+              <dt>Waiting Q</dt>
               <dd>Number of sessions that are ready to be written but are waiting on an asynchronus request (wise, plugins) to finish</dd>
               <dt>Active Fragments</dt>
               <dd>Number of packets that are waiting on remaining IP fragments to show up</dd>
               <dt>Fragments Dropped/Sec</dt>
               <dd>Number of packets that were dropped because frag overload or timeouts</dd>
               <dt>Total Dropped/Sec</dt>
-              <dd>Sum of the inputs dropped and overload metrics</dd> -->
+              <dd>Sum of the inputs dropped and overload metrics</dd>
+              <dt>Written Bytes/Sec</dt>
+              <dd>The size of all the packets that Moloch is going write to disk</dd>
+              <dt>Unritten Bytes/Sec</dt>
+              <dd>The size of all the packets that Moloch isn't going to write to disk, but that we processed</dd>
             </dl>
             <p>
               <em>
@@ -595,15 +652,18 @@
               ES Nodes
             </h6>
             <p>
-              The ES Nodes tab displays a table containing the following information for each ES node:
+              The ES Nodes tab displays a table containing information for each Elasticsearch node.
+              Please use the column config drop down to change which fields are shown.
             </p>
             <dl class="dl-horizontal">
               <dt>Name</dt>
               <dd>The name of the ES node</dd>
               <dt>Documents</dt>
               <dd>The total number of documents that this node has ingested</dd>
-              <dt>Disk Storage</dt>
-              <dd>The size of the Elasticsearch store</dd>
+              <dt>Disk Used</dt>
+              <dd>The disk used for Elasticsearch store</dd>
+              <dt>Disk Free</dt>
+              <dd>The disk free for Elasticsearch store</dd>
               <dt>Heap Size</dt>
               <dd>JVM heap used in bytes</dd>
               <dt>OS Load</dt>
@@ -616,13 +676,22 @@
               <dd>The number of bytes written across all devices used by Elasticsearch per second</dd>
               <dt>Searches/s</dt>
               <dd>Current query phase operations per second</dd>
+              <dt>IP</dt>
+              <dd>IP of the node</dd>
+              <dt>IP Excluded</dt>
+              <dd>Is the node currently excluded by IP</dd>
+              <dt>Node Excluded</dt>
+              <dd>Is the node currently excluded by node name</dd>
+              <dt>Non Heap Size</dt>
+              <dd>Memory being used that isn't on the heap</dd>
             </dl>
             <h6>
               <span class="fa fa-fw fa-line-chart"></span>&nbsp;
               ES Indices
             </h6>
             <p>
-              The ES Indices tab displays a table containing the following information for each ES index:
+              The ES Indices tab displays a table containing information for each Elasticsearch index.
+              Please use the column config drop down to change which fields are shown.
             </p>
             <dl class="dl-horizontal">
               <dt>Name</dt>
@@ -643,13 +712,18 @@
               <dd>The health of the index (green, yellow, or red)</dd>
               <dt>Status</dt>
               <dd>Whether an index is open or closed</dd>
+              <dt>Create Date</dt>
+              <dd>When the index was created</dd>
+              <dt>UUID</dt>
+              <dd>The internal UUID for the index</dd>
             </dl>
             <h6>
               <span class="fa fa-fw fa-line-chart"></span>&nbsp;
               ES Tasks
             </h6>
             <p>
-              The ES Tasks tab displays a table containing the following information for each ES task:
+              The ES Task tab displays a table containing information for each Elasticsearch task.
+              Please use the column config drop down to change which fields are shown.
             </p>
             <dl class="dl-horizontal">
               <dt>Action</dt>
@@ -662,6 +736,12 @@
               <dd>The amount of time that the task has taken</dd>
               <dt>Children</dt>
               <dd>The number of child tasks associated with this task</dd>
+              <dt>Cancellable</dt>
+              <dd>Can the task be stopped</dd>
+              <dt>ID</dt>
+              <dd>The task id</dd>
+              <dt>Type</dt>
+              <dd>The type of task</dd>
             </dl>
             <p>
               <em>
@@ -685,6 +765,61 @@
               <span class="badge badge-pill badge-primary">other color</span> means it's a primary shard.
               Hover over a cell to get more information.
             </p>
+            <h6>
+              <span class="fa fa-fw fa-line-chart"></span>&nbsp;
+              ES Recoveery
+            </h6>
+            <p>
+              The ES Recovery tab displays a table containing information for each Elasticsearch index
+              recovery.  By default it only shows information about indices still waiting to be recovered.
+              It is a simple view of the <code>/_cat/recovery</code> Elasticssearch API.
+            </p>
+            <dl class="dl-horizontal">
+              <dt>Index</dt>
+              <dd>The index name</dd>
+              <dt>Shard</dt>
+              <dd>The shard number</dd>
+              <dt>Time</dt>
+              <dd>The recovery time</dd>
+              <dt>Type</dt>
+              <dd>The recovery type</dd>
+              <dt>Stage</dt>
+              <dd>The recovery stage</dd>
+              <dt>Src Host</dt>
+              <dd>The source host</dd>
+              <dt>Src Node</dt>
+              <dd>The source node name</dd>
+              <dt>Dst Host</dt>
+              <dd>The target host</dd>
+              <dt>Dst Node</dt>
+              <dd>The target node name</dd>
+              <dt>Repository</dt>
+              <dd>The repository</dd>
+              <dt>Snapshot</dt>
+              <dd>The snapshot</dd>
+              <dt>Files</dt>
+              <dd>The number of files to recover</dd>
+              <dt>Files recovered</dt>
+              <dd>The files recovered</dd>
+              <dt>Files percent</dt>
+              <dd>The percent of files recovered</dd>
+              <dt>Files total</dt>
+              <dd>The total number of files</dd>
+              <dt>Bytes</dt>
+              <dd>The number of bytes to recover</dd>
+              <dt>Bytes recovered</dt>
+              <dd>The bytes recovered</dd>
+              <dt>Bytes percent</dt>
+              <dd>The percent of bytes recovered</dd>
+              <dt>Bytes total</dt>
+              <dd>The total number of bytes</dd>
+              <dt>Translog</dt>
+              <dd>The number of translog ops to recover</dd>
+              <dt>Translog Recovered</dt>
+              <dd>The translog ops recovered</dd>
+              <dt>Translog percent</dt>
+              <dd>The percent of translog ops recovered</dd>
+            </dl>
           </div>
 
           <hr>
@@ -776,8 +911,9 @@
               Views
             </h6>
             <p>
-              Here, a user can manage their saved views by updating or deleting them.
-              They can also create a new view.
+              Here, a user can manage their saved views by updating, deleting, or sharing them.
+              Sharing a view allows all other users to use that view (only admins can edit it).
+              A user can also create a new view in this section.
               See the <a href="help#views" class="no-decoration">Views</a> section for more information.
             </p>
             <h6>
@@ -957,13 +1093,13 @@
             </transition-group>
           </table>
           <div v-if="!filteredFields || !filteredFields.length"
-            class="text-danger text-center">
+            class="text-danger text-center mb-4">
             <span class="fa fa-warning">
             </span>&nbsp;
             No results match your search
           </div>
           <div v-if="error"
-            class="alert alert-warning mt-3">
+            class="alert alert-warning mt-3 mb-4">
             <span class="fa fa-warning">
             </span>&nbsp;
             Error retrieving fields:
@@ -1025,23 +1161,7 @@ export default {
 
         this.sortFields(this.fieldQuery.sortField);
 
-        this.filteredFields = this.fields.filter((field) => {
-          let hasMatch = field.exp.toLowerCase().includes(
-            this.searchFields.toLowerCase()
-          ) ||
-          field.friendlyName.toLowerCase().includes(
-            this.searchFields.toLowerCase()
-          );
-
-          if (this.showDBFields) {
-            hasMatch = hasMatch ||
-            field.dbField.toLowerCase().includes(
-              this.searchFields.toLowerCase()
-            );
-          }
-
-          return hasMatch;
-        });
+        this.filteredFields = this.$options.filters.searchFields(this.searchFields, this.fields);
       }, 400);
     },
     toggleDBFields: function () {
