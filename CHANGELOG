@@ -14,7 +14,52 @@ Node Versions:
 
 NOTICE: Restart wiseService before capture when upgrading
 
-1.6.2 2018/11/XX
+1.7.1 2019/02/XX
+  - NOTICE: db.pl upgrade is required
+  - viewer - upgrade to d3 v5 for connections page
+  - viewer - typeahead history for spigraph/connections
+  - viewer - stats tasks page has a num item selector now
+  - viewer - welcome message for new users
+  - viewer - save the last time a user used moloch
+  - wise - support json paths
+  - wise - improve alienvault loading
+  - capture - more tcpflags fields can be matched with rules
+  - capture - print more stats at exit with --debug
+  - capture - fix small bpf memory leak
+  - capture - rules can support most .cnt fields
+  - parliament - add no alert cluster type
+  - parliament - remove selected acknowledged issues
+
+
+1.7.0 2019/01/17
+  - NOTICE: db.pl upgrade is required
+  - release - node 8.15.0, cyberchef
+  - capture - new cert remainingDays field
+  - capture - new tcp initRTT field
+  - viewer - cron query notifications (issue #489)
+  - viewer - can't use es scroll api with "from" (issue #981)
+  - viewer - Export CSV uses the columns shown
+  - viewer - field history for search expression (issue #595)
+  - viewer - fix date/time picker not using user set timezone (issue #977)
+  - viewer - don’t display undefined or empty field values
+  - viewer - fix timezone parsing in session detail date field values
+  - viewer - show error if using an outdated browser (issue #980)
+  - viewer - export results intersection
+  - viewer - add clickable labels to the info column
+  - viewer - reset the width of the session table columns when switching back to the default
+  - parliament - search and page results on the issues page (issues #982 and #983)
+  - parliament - add a length of time threshold for “low packets” issues (issue #968)
+  - capture - Fixed corrupt file sequence numbers being used when
+              when ES is under heavy load
+  - capture - Fix importing more then 256 files at once not working correctly (issue #984)
+  - all - communityId support for tcp/udp (issue #966)
+  - capture - In live capture clean up sessions even if no packets are being received
+  - db - improve expire efficiency
+  - capture - fix elasticsearch classifier
+  - capture - for offline pcap honor umask when --copy is used (issue #976)
+  - viewer - Fix some rXSS, thanks Esben Sparre Andreasen of Semmle Security Research Team
+
+1.6.2 2018/12/07
   - NOTICE: db.pl upgrade is required
   - suricata - fix crash when signature name > 128 characters long
   - suricata - fix severity parsing (again)
@@ -30,6 +75,7 @@ NOTICE: Restart wiseService before capture when upgrading
   - capture - fix tls parser inifite loop
   - viewer - can customize fields in the info column
   - viewer - new es recovery tab
+  - viewer - stats page shows when data is being loaded from server
 
 1.6.1 2018/11/06
   - NOTICE: db.pl upgrade is required

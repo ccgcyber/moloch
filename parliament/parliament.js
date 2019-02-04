@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
+const MIN_PARLIAMENT_VERSION = 2;
+
 /* dependencies ------------------------------------------------------------- */
 const express = require('express');
-const path    = require('path');
 const http    = require('http');
 const https   = require('https');
 const fs      = require('fs');
@@ -15,6 +16,7 @@ const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcrypt');
 const glob    = require('glob');
 const os      = require('os');
+const upgrade = require('./upgrade');
 
 /* app setup --------------------------------------------------------------- */
 const app     = express();
@@ -33,6 +35,7 @@ const issueTypes = {
 const settingsDefault = {
   general : {
     noPackets: 0,
+    noPacketsLength: 10,
     outOfDate: 30,
     esQueryTimeout: 5,
     removeIssuesAfter: 60,
@@ -40,6 +43,9 @@ const settingsDefault = {
   },
   notifiers: {}
 };
+
+const parliamentReadError = `\nYou must fix this before you can run Parliament.
+  Try using parliament.example.json as a starting point`;
 
 (function () { // parse arguments
   let appArgs = process.argv.slice(2);
@@ -56,7 +62,7 @@ const settingsDefault = {
   }
 
   function help () {
-    console.log('server.js [<config options>]\n');
+    console.log('parliament.js [<config options>]\n');
     console.log('Config Options:');
     console.log('  -c, --config   Parliament config file to use');
     console.log('  --pass         Password for updating the parliament');
@@ -135,11 +141,25 @@ if (app.get('regressionTests')) {
   app.post('/shutdown', function (req, res) {
     process.exit(0);
   });
-};
+}
 
-// get the parliament file or create it if it doesn't exist
+// parliament object!
 let parliament;
-try {
+
+try { // check if the file exists
+  fs.accessSync(app.get('file'), fs.constants.F_OK);
+} catch (e) { // if the file doesn't exist, create it
+  try { // write the new file
+    parliament = { version: MIN_PARLIAMENT_VERSION };
+    fs.writeFileSync(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8');
+  } catch (e) { // notify of error saving new parliament and exit
+    console.log(`Error creating new Parliament:\n\n`, e.stack);
+    console.log(parliamentReadError);
+    process.exit(1);
+  }
+}
+
+try { // get the parliament file or error out if it's unreadable
   parliament = require(`${app.get('file')}`);
   // set the password if passed in when starting the server
   // IMPORTANT! this will overwrite any password in the parliament json file
@@ -150,9 +170,9 @@ try {
     // use any existing password in the parliament json file
     app.set('password', parliament.password);
   }
-} catch (err) {
-  console.log(`Error reading ${app.get('file') || 'your parliament file'}:\n\n`, err.stack);
-  console.log('\nYou must fix this before you can run Parliament\nTry using parliament.example.json as a starting point');
+} catch (e) {
+  console.log(`Error reading ${app.get('file') || 'your parliament file'}:\n\n`, e.stack);
+  console.log(parliamentReadError);
   process.exit(1);
 }
 
@@ -176,6 +196,12 @@ try {
 let groupId = 0;
 let clusterId = 0;
 
+// save noPackets issues so that the time of issue can be compared to the
+// noPacketsLength user setting (only issue alerts when the time the issue
+// was encounterd exceeds the noPacketsLength user setting)
+let noPacketsMap = {};
+
+// super secret
 app.disable('x-powered-by');
 
 // expose vue bundles (prod)
@@ -208,7 +234,7 @@ function loadNotifiers () {
   };
 
   // look for all notifier providers and initialize them
-  let files = glob.sync(path.join(__dirname, '/notifiers/provider.*.js'));
+  let files = glob.sync(`${__dirname}/../notifiers/provider.*.js`);
   files.forEach((file) => {
     let plugin = require(file);
     plugin.init(api);
@@ -298,7 +324,7 @@ async function sendAlerts () {
           if (i === len - 1) { resolve(); }
         }, 250 * i);
       })(i);
-    };
+    }
   });
 
   promise.then(() => {
@@ -425,7 +451,12 @@ function setIssue (cluster, newIssue) {
 
       issue.lastNoticed = Date.now();
 
-      if (!issue.acknowledged && !issue.ignoreUntil && !issue.alerted) {
+      // if the issue has not been acknowledged, ignored, or alerted, or
+      // if the cluster is not a no alert cluster or multiviewer cluster,
+      // build and issue an alert
+      if (!issue.acknowledged && !issue.ignoreUntil &&
+        !issue.alerted && cluster.type !== 'noAlerts' &&
+        cluster.type !== 'multiviewer') {
         buildAlert(cluster, issue);
       }
     }
@@ -575,12 +606,24 @@ function getStats (cluster) {
             });
           }
 
+          // look for no packets issue
           if (stat.deltaPacketsPerSec <= getGeneralSetting('noPackets')) {
-            setIssue(cluster, {
-              type: 'noPackets',
-              node: stat.nodeName,
-              value: stat.deltaPacketsPerSec
-            });
+            let now = Date.now();
+            let id = cluster.title + stat.nodeName;
+
+            // only set the noPackets issue if there is a record of this cluster/node
+            // having noPackets and that issue has persisted for the set length of time
+            if (noPacketsMap[id] &&
+              now - noPacketsMap[id] >= (getGeneralSetting('noPacketsLength') * 1000)) {
+              setIssue(cluster, {
+                type: 'noPackets',
+                node: stat.nodeName,
+                value: stat.deltaPacketsPerSec
+              });
+            } else if (!noPacketsMap[id]) {
+              // if this issue has not been encountered yet, make a record of it
+              noPacketsMap[id] = Date.now();
+            }
           }
 
           if (stat.deltaESDroppedPerSec > 0) {
@@ -673,6 +716,28 @@ function describeNotifierAlerts (settings) {
 // and sets up the parliament settings
 function initializeParliament () {
   return new Promise((resolve, reject) => {
+    if (!parliament.version || parliament.version < MIN_PARLIAMENT_VERSION) {
+      // notify of upgrade
+      console.log(
+        `WARNING - Current parliament version (${parliament.version || 1}) is less then required version (${MIN_PARLIAMENT_VERSION})
+          Upgrading ${app.get('file')} file...\n`
+      );
+
+      // do the upgrade
+      parliament = upgrade.upgrade(parliament);
+
+      try { // write the upgraded file
+        fs.writeFileSync(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8');
+      } catch (e) { // notify of error saving upgraded parliament and exit
+        console.log(`Error upgrading Parliament:\n\n`, e.stack);
+        console.log(parliamentReadError);
+        process.exit(1);
+      }
+
+      // notify of upgrade success
+      console.log(`SUCCESS - Parliament upgraded to version ${MIN_PARLIAMENT_VERSION}`);
+    }
+
     if (!parliament.groups) { parliament.groups = []; }
 
     // set id for each group/cluster
@@ -699,6 +764,9 @@ function initializeParliament () {
     }
     if (!parliament.settings.general.noPackets) {
       parliament.settings.general.noPackets = settingsDefault.general.noPackets;
+    }
+    if (!parliament.settings.general.noPacketsLength) {
+      parliament.settings.general.noPacketsLength = settingsDefault.general.noPacketsLength;
     }
     if (!parliament.settings.general.esQueryTimeout) {
       parliament.settings.general.esQueryTimeout = settingsDefault.general.esQueryTimeout;
@@ -743,11 +811,11 @@ function updateParliament () {
       if (group.clusters) {
         for (let cluster of group.clusters) {
           // only get health for online clusters
-          if (!cluster.disabled) {
+          if (cluster.type !== 'disabled') {
             promises.push(getHealth(cluster));
           }
           // don't get stats for multiviewers or offline clusters
-          if (!cluster.multiviewer && !cluster.disabled) {
+          if (cluster.type !== 'multiviewer' && cluster.type !== 'disabled') {
             promises.push(getStats(cluster));
           }
         }
@@ -767,6 +835,7 @@ function updateParliament () {
             }
           );
         }
+
         // save the data created after updating the parliament
         fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
           (err) => {
@@ -826,6 +895,27 @@ function cleanUpIssues () {
   }
 
   return issuesRemoved;
+}
+
+function removeIssue (issueType, clusterId, nodeId) {
+  let foundIssue = false;
+  let len = issues.length;
+
+  while (len--) {
+    const issue = issues[len];
+    if (issue.clusterId === parseInt(clusterId) &&
+      issue.type === issueType &&
+      issue.node === nodeId) {
+      foundIssue = true;
+      issues.splice(len, 1);
+      if (issue.type === 'noPackets') {
+        // also remove it from the no packets record
+        delete noPacketsMap[issue.cluster + nodeId];
+      }
+    }
+  }
+
+  return foundIssue;
 }
 
 function getGeneralSetting (type) {
@@ -1257,9 +1347,8 @@ router.post('/groups/:id/clusters', verifyToken, (req, res, next) => {
     description : req.body.description,
     url         : req.body.url,
     localUrl    : req.body.localUrl,
-    multiviewer : req.body.multiviewer,
-    disabled    : req.body.disabled,
-    id          : clusterId++
+    id          : clusterId++,
+    type        : req.body.type || undefined
   };
 
   let foundGroup = false;
@@ -1335,18 +1424,18 @@ router.put('/groups/:groupId/clusters/:clusterId', verifyToken, (req, res, next)
     if (group.id === parseInt(req.params.groupId)) {
       for (let cluster of group.clusters) {
         if (cluster.id === parseInt(req.params.clusterId)) {
-          cluster.title           = req.body.title;
-          cluster.description     = req.body.description;
           cluster.url             = req.body.url;
+          cluster.title           = req.body.title;
           cluster.localUrl        = req.body.localUrl;
-          cluster.multiviewer     = req.body.multiviewer;
-          cluster.disabled        = req.body.disabled;
+          cluster.description     = req.body.description;
           cluster.hideDeltaBPS    = req.body.hideDeltaBPS;
           cluster.hideDataNodes   = req.body.hideDataNodes;
           cluster.hideDeltaTDPS   = req.body.hideDeltaTDPS;
           cluster.hideTotalNodes  = req.body.hideTotalNodes;
           cluster.hideMonitoring  = req.body.hideMonitoring;
           cluster.hideMolochNodes = req.body.hideMolochNodes;
+          cluster.type            = req.body.type || undefined;
+
           foundCluster = true;
           break;
         }
@@ -1371,6 +1460,18 @@ router.get('/issues', (req, res, next) => {
 
   // filter out provisional issues
   issuesClone = issuesClone.filter((issue) => !issue.provisional);
+
+  if (req.query.filter) { // simple search for issues
+    let searchTerm = req.query.filter.toLowerCase();
+    issuesClone = issuesClone.filter((issue) => {
+      return issue.severity.toLowerCase().includes(searchTerm) ||
+        (issue.node && issue.node.toLowerCase().includes(searchTerm)) ||
+        issue.cluster.toLowerCase().includes(searchTerm) ||
+        issue.message.toLowerCase().includes(searchTerm) ||
+        issue.title.toLowerCase().includes(searchTerm) ||
+        issue.text.toLowerCase().includes(searchTerm);
+    });
+  }
 
   let type = 'string';
   let sortBy = req.query.sort;
@@ -1404,7 +1505,19 @@ router.get('/issues', (req, res, next) => {
     });
   }
 
-  return res.json({ issues: issuesClone });
+  let recordsFiltered = issuesClone.length;
+
+  if (req.query.length) { // paging
+    let len = parseInt(req.query.length);
+    let start = !req.query.start ? 0 : parseInt(req.query.start);
+
+    issuesClone = issuesClone.slice(start, len + start);
+  }
+
+  return res.json({
+    issues: issuesClone,
+    recordsFiltered: recordsFiltered
+  });
 });
 
 // acknowledge one or more issues
@@ -1536,17 +1649,7 @@ router.put('/groups/:groupId/clusters/:clusterId/removeIssue', verifyToken, (req
     return next(error);
   }
 
-  let foundIssue = false;
-  let len = issues.length;
-  while (len--) {
-    const issue = issues[len];
-    if (issue.clusterId === parseInt(req.params.clusterId) &&
-      issue.type === req.body.type &&
-      issue.node === req.body.node) {
-      foundIssue = true;
-      issues.splice(len, 1);
-    }
-  }
+  let foundIssue = removeIssue(req.body.type, req.params.clusterId, req.body.node);
 
   if (!foundIssue) {
     const error = new Error('Unable to find issue to remove. Maybe it was already removed.');
@@ -1578,9 +1681,64 @@ router.put('/issues/removeAllAcknowledgedIssues', verifyToken, (req, res, next) 
     return next(error);
   }
 
-  let successObj  = { success:true, text:`Successfully removed ${count} acknowledged issues.`, issues:issues };
+  let successObj  = { success:true, text:`Successfully removed ${count} acknowledged issues.` };
   let errorText   = 'Unable to remove acknowledged issues.';
   writeIssues(req, res, next, successObj, errorText, true);
+});
+
+// remove one or more acknowledged issues
+router.put('/removeSelectedAcknowledgedIssues', verifyToken, (req, res, next) => {
+  if (!req.body.issues || !req.body.issues.length) {
+    let message = 'Must specify the acknowledged issue(s) to remove.';
+    const error = new Error(message);
+    error.httpStatusCode = 422;
+    return next(error);
+  }
+
+  let count = 0;
+
+  // mark issues to remove
+  for (let i of req.body.issues) {
+    let issue = findIssue(parseInt(i.clusterId), i.type, i.node);
+    if (issue && issue.acknowledged) {
+      count++;
+      issue.remove = true;
+    }
+  }
+
+  if (!count) {
+    const error = new Error('There are no acknowledged issues to remove.');
+    error.httpStatusCode = 400;
+    return next(error);
+  }
+
+  count = 0;
+  let len = issues.length;
+  while (len--) {
+    let issue = issues[len];
+    if (issue.remove) {
+      count++;
+      issues.splice(len, 1);
+    }
+  }
+
+  if (!count) {
+    let errorText = 'Unable to remove requested issue';
+    if (req.body.issues.length > 1) { errorText += 's'; }
+    const error = new Error(errorText);
+    error.httpStatusCode = 500;
+    return next(error);
+  }
+
+  let successText = `Successfully removed ${count} requested issue`;
+  let errorText = 'Unable to remove the requested issue';
+  if (count > 1) {
+    successText += 's';
+    errorText += 's';
+  }
+
+  let successObj = { success:true, text:successText };
+  writeIssues(req, res, next, successObj, errorText);
 });
 
 // issue a test alert to a specified notifier

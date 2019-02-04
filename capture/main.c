@@ -115,6 +115,7 @@ LOCAL  GOptionEntry entries[] =
     { "nostats",     0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,           &config.noStats,       "Don't send node stats", NULL },
     { "insecure",    0,                    0, G_OPTION_ARG_NONE,           &config.insecure,      "insecure https calls", NULL },
     { "nolockpcap",  0,                    0, G_OPTION_ARG_NONE,           &config.noLockPcap,    "Don't lock offline pcap files (ie., allow deletion)", NULL },
+    { "ignoreerrors",0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,           &config.ignoreErrors,  "Ignore most errors and continue", NULL },
     { NULL,          0, 0,                                    0,           NULL, NULL, NULL }
 };
 
@@ -161,8 +162,11 @@ void parse_args(int argc, char **argv)
     if (!config.configFile)
         config.configFile = g_strdup("/data/moloch/etc/config.ini");
 
-    if (showVersion) {
+    if (showVersion || config.debug) {
         printf("moloch-capture %s/%s session size=%d packet size=%d api=%d\n", PACKAGE_VERSION, BUILD_VERSION, (int)sizeof(MolochSession_t), (int)sizeof(MolochPacket_t), MOLOCH_API_VERSION);
+    }
+
+    if (showVersion) {
         printf("glib2: %u.%u.%u\n", glib_major_version, glib_minor_version, glib_micro_version);
         printf("libpcap: %s\n", pcap_lib_version());
         printf("curl: %s\n", curl_version());
@@ -539,9 +543,7 @@ void moloch_add_can_quit (MolochCanQuitFunc func, const char *name)
 }
 /******************************************************************************/
 /*
- * Don't actually end main loop until all tags are loaded
- * TRUE - call again
- * FALSE - don't call again
+ * Don't actually end main loop until all the various pieces are done
  */
 gboolean moloch_quit_gfunc (gpointer UNUSED(user_data))
 {
@@ -556,7 +558,9 @@ LOCAL gboolean writerExit   = TRUE;
         moloch_readers_exit();
         moloch_packet_exit();
         moloch_session_exit();
-        return TRUE;
+        if (config.debug)
+            LOG("Read exit finished");
+        return G_SOURCE_CONTINUE;
     }
 
 // Wait for all the can quits to signal all clear
@@ -567,7 +571,7 @@ LOCAL gboolean writerExit   = TRUE;
             if (config.debug && canQuitNames[i]) {
                 LOG ("Can't quit, %s is %d", canQuitNames[i], val);
             }
-            return TRUE;
+            return G_SOURCE_CONTINUE;
         }
     }
 
@@ -576,17 +580,21 @@ LOCAL gboolean writerExit   = TRUE;
         writerExit = FALSE;
         if (!config.dryRun && config.copyPcap) {
             moloch_writer_exit();
-            return TRUE;
+            if (config.debug)
+                LOG("Write exit finished");
+            return G_SOURCE_CONTINUE;
         }
     }
 
 // Can quit the main loop now
     g_main_loop_quit(mainLoop);
-    return FALSE;
+    return G_SOURCE_REMOVE;
 }
 /******************************************************************************/
 void moloch_quit()
 {
+    if (config.debug)
+        LOG("Quitting");
     config.quitting = TRUE;
     g_timeout_add(100, moloch_quit_gfunc, 0);
 }

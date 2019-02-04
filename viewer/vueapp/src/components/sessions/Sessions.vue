@@ -4,6 +4,7 @@
 
     <!-- search navbar -->
     <moloch-search
+      :fields="headers"
       :open-sessions="stickySessions"
       :num-visible-sessions="query.length"
       :num-matching-sessions="sessions.recordsFiltered"
@@ -63,7 +64,9 @@
                 no-flip
                 no-caret
                 class="col-vis-menu"
-                variant="theme-primary">
+                variant="theme-primary"
+                @show="colVisMenuOpen = true"
+                @hide="colVisMenuOpen = false">
                 <template slot="button-content">
                   <span class="fa fa-th"
                     v-b-tooltip.hover
@@ -79,7 +82,7 @@
                 </b-dropdown-header>
                 <b-dropdown-divider>
                 </b-dropdown-divider>
-                <template
+                <template v-if="colVisMenuOpen"
                   v-for="(group, key) in filteredFields">
                   <b-dropdown-header
                     :key="key"
@@ -193,7 +196,9 @@
                   no-caret
                   right
                   class="col-vis-menu info-vis-menu pull-right"
-                  variant="theme-primary">
+                  variant="theme-primary"
+                  @show="infoFieldVisMenuOpen = true"
+                  @hide="infoFieldVisMenuOpen = false">
                   <template slot="button-content">
                     <span class="fa fa-th-list"
                       v-b-tooltip.hover
@@ -217,7 +222,7 @@
                   </b-dropdown-item>
                   <b-dropdown-divider>
                   </b-dropdown-divider>
-                  <template
+                  <template v-if="infoFieldVisMenuOpen"
                     v-for="(group, key) in filteredFields">
                     <b-dropdown-header
                       :key="key"
@@ -456,7 +461,7 @@ import Sortable from 'sortablejs';
 import '../../../../public/colResizable.js';
 
 const defaultTableState = {
-  order: [['firstPacket', 'asc']],
+  order: [['firstPacket', 'desc']],
   visibleHeaders: ['firstPacket', 'lastPacket', 'src', 'srcPort', 'dst', 'dstPort', 'totPackets', 'dbby', 'node', 'info']
 };
 
@@ -474,7 +479,18 @@ let tableDestroyed;
 // window/table resize variables
 let resizeTimeout;
 let windowResizeEvent;
-let defaultInfoColWidth = 250;
+const defaultColWidths = {
+  'firstPacket': 100,
+  'lastPacket': 100,
+  'src': 140,
+  'srcPort': 100,
+  'dst': 140,
+  'dstPort': 100,
+  'totPackets': 100,
+  'dbby': 120,
+  'node': 100,
+  'info': 250
+};
 
 export default {
   name: 'Sessions',
@@ -505,7 +521,9 @@ export default {
       colQuery: '', // query for columns to toggle visibility
       newColConfigName: '', // name of new custom column config
       viewChanged: false,
-      infoFields: customCols.info.children
+      infoFields: customCols.info.children,
+      colVisMenuOpen: false,
+      infoFieldVisMenuOpen: false
     };
   },
   created: function () {
@@ -840,17 +858,25 @@ export default {
      * @param {int} index The index in the array of the column config to load
      */
     loadColumnConfiguration: function (index) {
+      $('#sessionsTable').colResizable({ disable: true });
+      colResizeInitialized = false;
+
       this.loading = true;
 
-      if (index === -1) {
+      if (index === -1) { // default columns
         this.tableState.visibleHeaders = defaultTableState.visibleHeaders.slice();
         this.tableState.order = defaultTableState.order.slice();
+        this.colWidths = {}; // clear out column widths to load defaults
+        setTimeout(() => { this.saveColumnWidths(); });
+        // reset field widths
+        for (let headerId of this.tableState.visibleHeaders) {
+          let field = this.getField(headerId);
+          if (field) { field.width = defaultColWidths[headerId] || 100; }
+        }
       } else {
         this.tableState.visibleHeaders = this.colConfigs[index].columns.slice();
         this.tableState.order = this.colConfigs[index].order.slice();
       }
-
-      this.mapHeadersToFields();
 
       this.query.sorts = this.tableState.order;
 
@@ -993,7 +1019,7 @@ export default {
       $('#sessionsTable').colResizable({ disable: true });
       colResizeInitialized = false;
 
-      let windowWidth = window.innerWidth;
+      let windowWidth = window.innerWidth - 34; // account for right and left margins
       let leftoverWidth = windowWidth - this.sumOfColWidths;
       let percentChange = 1 + (leftoverWidth / this.sumOfColWidths);
 
@@ -1280,12 +1306,11 @@ export default {
     /* Maps visible column headers to their corresponding fields */
     mapHeadersToFields: function () {
       this.headers = [];
-      this.sumOfColWidths = 80;
+      this.sumOfColWidths = 85;
 
       if (!this.colWidths) { this.colWidths = {}; }
 
-      for (let i = 0, len = this.tableState.visibleHeaders.length; i < len; ++i) {
-        let headerId = this.tableState.visibleHeaders[i];
+      for (let headerId of this.tableState.visibleHeaders) {
         let field = this.getField(headerId);
 
         if (field) {
@@ -1293,7 +1318,7 @@ export default {
           if (field.dbField === 'info') { // info column is super special
             // reset info field width to default so it can always be recalculated
             // to take up all of the rest of the space that it can
-            field.width = defaultInfoColWidth;
+            field.width = defaultColWidths['info'];
           } else { // don't account for info column's width because it changes
             this.sumOfColWidths += field.width;
           }
@@ -1303,7 +1328,7 @@ export default {
 
       this.sumOfColWidths = Math.round(this.sumOfColWidths);
 
-      this.calculateInfoColumnWidth(defaultInfoColWidth);
+      this.calculateInfoColumnWidth(defaultColWidths['info']);
     },
     /* Opens up to 10 session details in the table */
     openAll: function () {
@@ -1407,7 +1432,7 @@ export default {
     calculateInfoColumnWidth: function (infoColWidth) {
       this.showFitButton = false;
       if (!this.colWidths) { return; }
-      let windowWidth = window.innerWidth; // account for right and left margins
+      let windowWidth = window.innerWidth - 34; // account for right and left margins
       if (this.tableState.visibleHeaders.indexOf('info') >= 0) {
         let fillWithInfoCol = windowWidth - this.sumOfColWidths;
         let newTableWidth = this.sumOfColWidths;
@@ -1516,7 +1541,6 @@ form.sessions-paging {
 
 .sessions-content {
   padding-top: 115px;
-  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -1597,7 +1621,7 @@ table.sessions-table tbody tr td {
   margin-right: 4px;
 }
 .info-vis-menu {
-  margin-right: 35px;
+  margin-right: 10px;
 }
 .moloch-col-header:not(:last-child) .info-vis-menu {
   margin-right: 5px;

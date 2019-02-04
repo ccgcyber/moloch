@@ -102,7 +102,12 @@ export default {
         { id: 'ipExcluded', name: 'IP Excluded', sort: 'ipExcluded', dataField: 'ipExcluded', doStats: false, width: 100 },
         { id: 'nodeExcluded', name: 'Node Excluded', sort: 'nodeExcluded', dataField: 'nodeExcluded', doStats: false, width: 125 },
         { id: 'nonHeapSize', name: 'Non Heap Size', sort: 'nonHeapSize', dataField: 'nonHeapSize', doStats: false, width: 100, dataFunction: (val) => { return this.$options.filters.humanReadableBytes(val); } },
-        { id: 'searchesTime', name: 'Searches timeout', sort: 'searchesTime', dataField: 'searchesTime', doStats: true, width: 100, dataFunction: roundCommaString }
+        { id: 'searchesTime', name: 'Search Time', sort: 'searchesTime', dataField: 'searchesTime', doStats: true, width: 100, dataFunction: roundCommaString },
+        { id: 'writesRejected', name: 'Write Tasks Rejected', sort: 'writesRejected', dataField: 'writesRejected', doStats: true, width: 100, dataFunction: roundCommaString },
+        { id: 'writesRejectedDelta', name: 'Write Tasks Rejected/s', sort: 'writesRejectedDelta', dataField: 'writesRejectedDelta', doStats: true, width: 100, dataFunction: roundCommaString },
+        { id: 'writesCompleted', name: 'Write Tasks Completed', sort: 'writesCompleted', dataField: 'writesCompleted', doStats: true, width: 100, dataFunction: roundCommaString },
+        { id: 'writesCompletedDelta', name: 'Write Tasks Completed/s', sort: 'writesCompletedDelta', dataField: 'writesCompletedDelta', doStats: true, width: 100, dataFunction: roundCommaString },
+        { id: 'writesQueueSize', name: 'Write Tasks Q Limit', sort: 'writesQueueSize', dataField: 'writesQueueSize', doStats: true, width: 100, dataFunction: roundCommaString }
       ]
     };
   },

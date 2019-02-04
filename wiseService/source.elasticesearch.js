@@ -17,8 +17,7 @@
  */
 'use strict';
 
-var fs             = require('fs')
-  , wiseSource     = require('./wiseSource.js')
+var wiseSource     = require('./wiseSource.js')
   , util           = require('util')
   , elasticsearch  = require('elasticsearch')
   ;
@@ -44,8 +43,9 @@ function ElasticsearchSource (api, section) {
     }
   });
 
-  if (!this.type)
+  if (!this.type) {
     return;
+  }
 
   this[this.api.funcName(this.type)] = this.sendResult;
 
@@ -118,7 +118,7 @@ ElasticsearchSource.prototype.sendResult = function(key, cb) {
 exports.initSource = function(api) {
   var sections = api.getConfigSections().filter((e) => {return e.match(/^elasticsearch:/);});
   sections.forEach((section) => {
-    var source = new ElasticsearchSource(api, section);
+    return new ElasticsearchSource(api, section);
   });
 };
 

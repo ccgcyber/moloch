@@ -41,6 +41,7 @@ LOCAL MolochPacketBatch_t   batch;
 LOCAL uint8_t               readerPos;
 extern char                *readerFileName[256];
 extern MolochFieldOps_t     readerFieldOps[256];
+extern uint32_t             readerOutputIds[256];
 
 LOCAL struct {
     GRegex    *regex;
@@ -351,6 +352,7 @@ fileListsDone:
 
         if (pcapGDirLevel > 0) {
             g_free(pcapBase[pcapGDirLevel]);
+            pcapBase[pcapGDirLevel] = 0;
             pcapGDirLevel--;
             return reader_libpcapfile_next();
         } else {
@@ -413,7 +415,7 @@ LOCAL void reader_libpcapfile_pcap_cb(u_char *UNUSED(user), const struct pcap_pk
     MolochPacket_t *packet = MOLOCH_TYPE_ALLOC0(MolochPacket_t);
 
     if (unlikely(h->caplen != h->len)) {
-        if (!config.readTruncatedPackets) {
+        if (!config.readTruncatedPackets && !config.ignoreErrors) {
             LOGEXIT("ERROR - Moloch requires full packet captures caplen: %d pktlen: %d. "
                 "If using tcpdump use the \"-s0\" option, or set readTruncatedPackets in ini file",
                 h->caplen, h->len);
@@ -434,17 +436,23 @@ LOCAL gboolean reader_libpcapfile_read()
 {
     // pause reading if too many waiting disk operations
     if (moloch_writer_queue_length() > 10) {
-        return TRUE;
+        if (config.debug)
+            LOG("Waiting to start next file, write q: %d", moloch_writer_queue_length());
+        return G_SOURCE_CONTINUE;
     }
 
     // pause reading if too many waiting ES operations
-    if (moloch_http_queue_length(esServer) > 50) {
-        return TRUE;
+    if (moloch_http_queue_length(esServer) > 40) {
+        if (config.debug)
+            LOG("Waiting to start next file, es q: %d", moloch_http_queue_length(esServer));
+        return G_SOURCE_CONTINUE;
     }
 
     // pause reading if too many packets are waiting to be processed
-    if (moloch_packet_outstanding() > (int32_t)(config.maxPacketsInQueue/3)) {
-        return TRUE;
+    if (moloch_packet_outstanding() > 2048) {
+        if (config.debug)
+            LOG("Waiting to start next file, packet q: %d", moloch_packet_outstanding());
+        return G_SOURCE_CONTINUE;
     }
 
     int r;
@@ -472,17 +480,18 @@ LOCAL gboolean reader_libpcapfile_read()
         }
         pcap_close(pcap);
         if (reader_libpcapfile_next()) {
-            return FALSE;
+            return G_SOURCE_REMOVE;
         }
 
         if (config.pcapMonitor)
             g_timeout_add(100, reader_libpcapfile_monitor_gfunc, 0);
-        else
+        else {
             moloch_quit();
-        return FALSE;
+        }
+        return G_SOURCE_REMOVE;
     }
 
-    return TRUE;
+    return G_SOURCE_CONTINUE;
 }
 /******************************************************************************/
 LOCAL void reader_libpcapfile_opened()
@@ -506,16 +515,20 @@ LOCAL void reader_libpcapfile_opened()
 	if (pcap_setfilter(pcap, &bpf) == -1) {
             LOGEXIT("ERROR - Couldn't set filter: '%s' with %s", config.bpf, pcap_geterr(pcap));
         }
+        pcap_freecode(&bpf);
     }
 
     readerPos++;
-    if (readerFileName[readerPos])
-        moloch_free_later(readerFileName[readerPos], g_free);
+    // We've wrapped around all 256 reader items, clear the previous file information
+    if (readerFileName[readerPos]) {
+        g_free(readerFileName[readerPos]);
+        readerOutputIds[readerPos] = 0;
+    }
     readerFileName[readerPos] = g_strdup(offlinePcapFilename);
 
     int fd = pcap_fileno(pcap);
     if (fd == -1) {
-        g_timeout_add(0, reader_libpcapfile_read, NULL);
+        g_timeout_add(100, reader_libpcapfile_read, NULL);
     } else {
         moloch_watch_fd(fd, MOLOCH_GIO_READ_COND, reader_libpcapfile_read, NULL);
     }

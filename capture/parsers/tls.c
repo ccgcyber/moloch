@@ -447,7 +447,6 @@ LOCAL void tls_process_server_certificate(MolochSession_t *session, const unsign
         if (BSB_REMAINING(bsb)) {
             if (!(value = moloch_parsers_asn_get_tlv(&bsb, &apc, &atag, &alen)))
                 {badreason = 10; goto bad_cert;}
-            BSB tbsb;
             BSB_INIT(tbsb, value, alen);
             char lastOid[100];
             lastOid[0] = 0;
@@ -829,7 +828,13 @@ void moloch_parser_init()
 
     moloch_field_define("cert", "integer",
         "cert.validfor", "Days Valid For", "cert.validDays",
-        "Certificate is valid for this may days",
+        "Certificate is valid for this many days total",
+        0, MOLOCH_FIELD_FLAG_FAKE,
+        (char *)NULL);
+
+    moloch_field_define("cert", "integer",
+        "cert.remainingDays", "Days remaining", "cert.remainingDays",
+        "Certificate is still valid for this many days",
         0, MOLOCH_FIELD_FLAG_FAKE,
         (char *)NULL);
 

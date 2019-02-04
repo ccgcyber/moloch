@@ -195,7 +195,7 @@ export default {
       return false;
     },
     parsed: function () {
-      if (!this.field || this.value === '') { return; }
+      if (!this.field || this.value === '' || this.value === undefined) { return; }
 
       let result = {
         queryVal: this.value,
@@ -210,11 +210,12 @@ export default {
         let qVal = result[i].queryVal;
 
         switch (this.field.type) {
+          case 'date':
           case 'seconds':
             qVal = val; // save original value as the query value
             val = this.$options.filters.timezoneDateString(
               Math.floor(val / 1000),
-              this.timezone,
+              this.timezone || this.$store.state.user.settings.timezone,
               'YYYY/MM/DD HH:mm:ss z'
             );
 

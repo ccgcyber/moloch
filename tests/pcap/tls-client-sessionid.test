@@ -2,7 +2,8 @@
    "sessions2" : [
       {
          "body" : {
-            "dstASN" : "AS10913 Internap Network Services Corporation",
+            "communityId" : "1:NBhOKOiIQwnX0s0SpX7a9Om6mAo=",
+            "dstASN" : "AS10913 Internap Corporation",
             "dstBytes" : 983,
             "dstDataBytes" : 459,
             "dstGEO" : "US",
@@ -27,6 +28,7 @@
                ],
                "hostCnt" : 1
             },
+            "initRTT" : 1,
             "ipProtocol" : 6,
             "lastPacket" : 1420490708431,
             "length" : 91,

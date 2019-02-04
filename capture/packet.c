@@ -305,6 +305,11 @@ LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacke
             }
         } else {
             session->tcpFlagCnt[MOLOCH_TCPFLAG_SYN]++;
+            if (session->synTime == 0) {
+                session->synTime = (packet->ts.tv_sec - session->firstPacket.tv_sec) * 1000000 +
+                                   (packet->ts.tv_usec - session->firstPacket.tv_usec) + 1;
+                session->ackTime = 0;
+            }
         }
 
         session->haveTcpSession = 1;
@@ -331,6 +336,10 @@ LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacke
 
     if ((tcphdr->th_flags & (TH_FIN | TH_RST | TH_PUSH | TH_SYN | TH_ACK)) == TH_ACK) {
         session->tcpFlagCnt[MOLOCH_TCPFLAG_ACK]++;
+        if (session->ackTime == 0) {
+            session->ackTime = (packet->ts.tv_sec - session->firstPacket.tv_sec) * 1000000 +
+                               (packet->ts.tv_usec - session->firstPacket.tv_usec) + 1;
+        }
     }
 
     if (tcphdr->th_flags & TH_PUSH) {
@@ -500,6 +509,14 @@ LOCAL void *moloch_packet_thread(void *threadp)
             clock_gettime(CLOCK_REALTIME_COARSE, &ts);
             ts.tv_sec++;
             MOLOCH_COND_TIMEDWAIT(packetQ[thread].lock, ts);
+
+            /* If we are in live capture mode and we haven't received any packets for 10 seconds we set current time to 10
+             * seconds in the past so moloch_session_process_commands will clean things up.  10 seconds is arbitrary but
+             * we want to make sure we don't set the time ahead of any packets that are currently being read off the wire
+             */
+            if (!config.pcapReadOffline && DLL_COUNT(packet_, &packetQ[thread]) == 0 && ts.tv_sec - 10 > lastPacketSecs[thread]) {
+                lastPacketSecs[thread] = ts.tv_sec - 10;
+            }
         }
         inProgress[thread] = 1;
         DLL_POP_HEAD(packet_, &packetQ[thread], packet);
@@ -635,7 +652,7 @@ LOCAL void *moloch_packet_thread(void *threadp)
                 session->port2 = ntohs(udphdr->uh_dport);
                 break;
             case IPPROTO_ESP:
-                session->stopSaving = 2;
+                session->stopSaving = 1;
                 break;
             case IPPROTO_ICMP:
                 break;
@@ -691,7 +708,7 @@ LOCAL void *moloch_packet_thread(void *threadp)
         }
 
         /* Check if the stop saving bpf filters match */
-        if (session->packets[packet->direction] == 0 && session->stopSaving == 0) {
+        if (session->packets[packet->direction] == 0 && session->stopSaving == 0xffff) {
             moloch_rules_run_session_setup(session, packet);
         }
 
@@ -701,7 +718,7 @@ LOCAL void *moloch_packet_thread(void *threadp)
 
         uint32_t packets = session->packets[0] + session->packets[1];
 
-        if (session->stopSaving == 0 || packets < session->stopSaving) {
+        if (packets <= session->stopSaving) {
             MOLOCH_THREAD_INCR_NUM(writtenBytes, packet->pktlen);
             moloch_writer_write(session, packet);
 
@@ -1029,7 +1046,7 @@ LOCAL gboolean moloch_packet_frags_process(MolochPacket_t * const packet)
 
     // Copy payload
     DLL_FOREACH(packet_, &frags->packets, fpacket) {
-        struct ip *fip4 = (struct ip*)(fpacket->pkt + fpacket->ipOffset);
+        fip4 = (struct ip*)(fpacket->pkt + fpacket->ipOffset);
         uint16_t fip_off = ntohs(fip4->ip_off) & IP_OFFMASK;
 
         if (packet->payloadOffset+(fip_off*8) + fpacket->payloadLen <= packet->pktlen)
@@ -1125,7 +1142,7 @@ LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const pa
         }
         initialPacket = packet->ts;
         if (!config.pcapReadOffline)
-            LOG("Initial Packet = %ld Initial Dropped = %d", initialPacket.tv_sec, initialDropped);
+            LOG("Initial Packet = %ld Initial Dropped = %u", initialPacket.tv_sec, initialDropped);
     }
 
     MOLOCH_THREAD_INCR(totalPackets);
@@ -1807,7 +1824,10 @@ void moloch_packet_batch(MolochPacketBatch_t * batch, MolochPacket_t * const pac
         rc = moloch_packet_nflog(batch, packet, packet->pkt, packet->pktlen);
         break;
     default:
-        LOGEXIT("ERROR - Unsupported pcap link type %u", pcapFileHeader.linktype);
+        if (config.ignoreErrors)
+            rc = MOLOCH_PACKET_CORRUPT;
+        else
+            LOGEXIT("ERROR - Unsupported pcap link type %u", pcapFileHeader.linktype);
     }
     if (rc == MOLOCH_PACKET_CORRUPT && config.corruptSavePcap) {
         moloch_packet_save_unknown_packet(2, packet);
@@ -1988,6 +2008,18 @@ void moloch_packet_init()
     moloch_field_define("general", "integer",
         "packets.dst", "Dst Packets", "dstPackets",
         "Total number of packets sent by destination in a session",
+        0,  MOLOCH_FIELD_FLAG_FAKE,
+        (char *)NULL);
+
+    moloch_field_define("general", "integer",
+        "initRTT", "Initial RTT", "initRTT",
+        "Initial round trip time, difference between SYN and ACK timestamp divided by 2 in ms",
+        0,  MOLOCH_FIELD_FLAG_FAKE,
+        (char *)NULL);
+
+    moloch_field_define("general", "termfield",
+        "communityId", "Community Id", "communityId",
+        "Community id flow hash",
         0,  MOLOCH_FIELD_FLAG_FAKE,
         (char *)NULL);
 

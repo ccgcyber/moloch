@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div v-if="compatibleBrowser">
     <moloch-navbar></moloch-navbar>
     <router-view v-if="user" />
     <transition name="shortcuts-slide">
@@ -13,6 +13,13 @@
       </div>
     </transition>
     <moloch-footer></moloch-footer>
+    <moloch-welcome-message
+      v-if="user && (!user.welcomeMsgNum || user.welcomeMsgNum < 1)">
+    </moloch-welcome-message>
+  </div>
+  <div v-else>
+    <moloch-upgrade-browser>
+    </moloch-upgrade-browser>
   </div>
 </template>
 
@@ -20,6 +27,8 @@
 import UserService from './components/users/UserService';
 import MolochNavbar from './components/utils/Navbar';
 import MolochFooter from './components/utils/Footer';
+import MolochWelcomeMessage from './components/utils/WelcomeMessage';
+import MolochUpgradeBrowser from './components/utils/UpgradeBrowser';
 import MolochKeyboardShortcuts from './components/utils/KeyboardShortcuts';
 
 export default {
@@ -27,7 +36,14 @@ export default {
   components: {
     MolochNavbar,
     MolochFooter,
+    MolochWelcomeMessage,
+    MolochUpgradeBrowser,
     MolochKeyboardShortcuts
+  },
+  data: function () {
+    return {
+      compatibleBrowser: true
+    };
   },
   computed: {
     shiftKeyHold: {
@@ -56,6 +72,14 @@ export default {
     }
   },
   mounted: function () {
+    this.compatibleBrowser = (typeof Object['__defineSetter__'] === 'function') &&
+      !!String.prototype.includes;
+
+    if (!this.compatibleBrowser) {
+      console.log('Incompatible browser, please upgrade!');
+      return;
+    }
+
     // get the current user for the entire app
     // the rest of the app should compute the user with $store.state.user
     UserService.getCurrent()
@@ -526,5 +550,53 @@ dl.dl-horizontal.dl-horizontal-wide dd {
   position: relative;
   top: -2px;
   right: 6px;
+}
+
+/* custom font awesome icons */
+.fa.fa-venn {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  width: 1.28571429em;
+  text-align: center;
+}
+.fa.fa-venn > span.fa-circle-o {
+  position: absolute;
+  top: -7px;
+}
+.fa.fa-venn> span.fa-circle-o:first-child {
+  left: 5px;
+}
+.fa.fa-venn> span.fa-circle-o:last-child {
+  right: 6px;
+}
+
+/* info page (404 & upgrade) */
+.moloch-info {
+  margin-top: 20px;
+}
+
+.moloch-info .center-area > img {
+  z-index: 99;
+}
+
+.moloch-info .center-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  flex-direction: column;
+  min-height: 75vh;
+}
+
+.moloch-info .well {
+  margin-top: -6px;
+  min-width: 25%;
+  box-shadow: 4px 4px 10px 0 rgba(0,0,0,0.5);
+}
+
+.moloch-info .well > h1 {
+  margin-top: 0;
+  color: var(--color-primary);
 }
 </style>

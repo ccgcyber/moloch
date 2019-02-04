@@ -110,6 +110,26 @@
           </select>
         </div> <!-- /graph hide select -->
 
+        <!-- page size select -->
+        <div class="input-group input-group-sm ml-1"
+          v-if="tabIndex === 4">
+          <div class="input-group-prepend">
+            <span class="input-group-text">
+              Page Size
+            </span>
+          </div>
+          <select class="form-control input-sm"
+            v-model="pageSize"
+            v-on:change="pageSizeChange">
+            <option value="100">100 per page</option>
+            <option value="200">200 per page</option>
+            <option value="500">500 per page</option>
+            <option value="1000">1,000 per page</option>
+            <option value="5000">5,000 per page</option>
+            <option value="10000">10,000 per page (careful)</option>
+          </select>
+        </div> <!-- /page size select -->
+
         <!-- table data interval select -->
         <div class="input-group input-group-sm ml-1"
           v-if="tabIndex !== 0">
@@ -122,7 +142,7 @@
           </div>
           <select class="form-control input-sm"
             v-model="dataInterval"
-            v-on:change="dataIntervalChange" >
+            v-on:change="dataIntervalChange">
             <option value="5000">5 seconds</option>
             <option value="15000">15 seconds</option>
             <option value="30000">30 seconds</option>
@@ -131,6 +151,27 @@
             <option value="0">None</option>
           </select>
         </div> <!-- /table data interval select -->
+
+        <!-- shards show select -->
+        <div class="input-group input-group-sm ml-1"
+          v-if="tabIndex === 5">
+          <div class="input-group-prepend help-cursor"
+            v-b-tooltip.hover
+            title="Hide shards">
+           <span class="input-group-text">
+             Show
+           </span>
+         </div>
+          <select class="form-control input-sm"
+            v-model="shardsShow"
+            v-on:change="shardsShowChange">
+            <option value="all">All</option>
+            <option value="UNASSIGNED">Unassigned</option>
+            <option value="RELOCATING">Relocating</option>
+            <option value="INITIALIZING">Initializing</option>
+            <option value="notstarted">Not Started</option>
+          </select>
+        </div> <!-- /graph hide select -->
 
         <!-- recovery show select -->
         <div class="input-group input-group-sm ml-1"
@@ -295,6 +336,7 @@
             :data-interval="dataInterval"
             :refreshData="refreshData"
             :searchTerm="searchTerm"
+            :pageSize="pageSize"
             :user="user">
           </es-tasks>
         </b-tab>
@@ -302,6 +344,7 @@
           @click="tabIndexChange"
           v-if="!multiviewer">
           <es-shards v-if="user && tabIndex === 5"
+            :shards-show="shardsShow"
             :refreshData="refreshData"
             :searchTerm="searchTerm"
             :data-interval="dataInterval">
@@ -351,7 +394,9 @@ export default {
       graphHide: this.$route.query.hide || 'none',
       graphSort: this.$route.query.sort || 'asc',
       recoveryShow: this.$route.query.recoveryShow || 'notdone',
-      dataInterval: this.$route.query.refreshInterval || '5000',
+      shardsShow: this.$route.query.shardsShow || 'notstarted',
+      dataInterval: this.$route.query.refreshInterval || '15000',
+      pageSize: this.$route.query.size || '1000',
       refreshData: false,
       childError: '',
       multiviewer: this.$constants.MOLOCH_MULTIVIEWER,
@@ -400,11 +445,17 @@ export default {
     graphHideChange: function () {
       this.$router.push({ query: { ...this.$route.query, hide: this.graphHide } });
     },
+    shardsShowChange: function () {
+      this.$router.push({ query: { ...this.$route.query, shardsShow: this.shardsShow } });
+    },
     recoveryShowChange: function () {
-      this.$router.push({ query: { ...this.$route.query, hide: this.recoveryShow } });
+      this.$router.push({ query: { ...this.$route.query, recoveryShow: this.recoveryShow } });
     },
     dataIntervalChange: function () {
       this.$router.push({ query: { ...this.$route.query, refreshInterval: this.dataInterval } });
+    },
+    pageSizeChange: function () {
+      this.$router.push({ query: { ...this.$route.query, size: this.pageSize } });
     },
     tabIndexChange: function () {
       this.$router.push({ query: { ...this.$route.query, statsTab: this.tabIndex } });
@@ -424,6 +475,9 @@ export default {
       if (queryParams.graphHide) {
         this.graphHide = queryParams.graphHide;
       }
+      if (queryParams.shardsShow) {
+        this.shardsShow = queryParams.shardsShow;
+      }
       if (queryParams.recoveryShow) {
         this.recoveryShow = queryParams.recoveryShow;
       }
@@ -433,6 +487,7 @@ export default {
       if (queryParams.refreshInterval) {
         this.dataInterval = queryParams.refreshInterval;
       }
+      this.pageSize = queryParams.size || 1000;
     },
     clear: function () {
       this.searchTerm = undefined;

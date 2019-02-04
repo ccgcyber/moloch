@@ -26,8 +26,6 @@ const ini            = require('iniparser')
     , glob           = require('glob')
     , async          = require('async')
     , sprintf        = require('./sprintf.js').sprintf
-    , csv            = require('csv')
-    , request        = require('request')
     , iptrie         = require('iptrie')
     , wiseSource     = require('./wiseSource.js')
     , wiseCache      = require('./wiseCache.js')
@@ -229,6 +227,10 @@ internals.sourceApi = {
         if (!info) {
           continue;
         }
+        if (!info.db) {
+          console.log(`ERROR, missing db information for ${field}`);
+          process.exit(0);
+        }
         var parts = splitRemain(info.db, '.', 1);
         if (parts.length === 1) {
           output += `    +arrayList(session, '${parts[0]}', '${info.friendly}', '${field}')\n`;
@@ -399,8 +401,13 @@ function processQuery(req, query, cb) {
     if (query.typeName === 'ip') {
       typeInfo.excludes = new iptrie.IPTrie();
       items.split(";").map(item => item.trim()).filter(item=>item !== "").forEach((item) => {
-        var parts = item.split("/");
-        typeInfo.excludes.add(parts[0], +parts[1] || (parts[0].includes(':')?128:32), true);
+        let parts = item.split("/");
+        try {
+          typeInfo.excludes.add(parts[0], +parts[1] || (parts[0].includes(':')?128:32), true);
+        } catch (e) {
+          console.log(`Error for '${item}'`, e);
+          process.exit();
+        }
       });
     } else {
       typeInfo.excludes = items.split(";").map(item=>item.trim()).filter(item=>item !== "").map(item => RegExp.fromWildExp(item, "ailop"));
@@ -530,7 +537,7 @@ function processQueryResponse0(req, res, queries, results) {
 //////////////////////////////////////////////////////////////////////////////////
 //
 function processQueryResponse2(req, res, queries, results) {
-  var hashes = (req.query.hashes || "").split(",")
+  var hashes = (req.query.hashes || "").split(",");
 
   const sendFields = !hashes.includes(internals.fieldsMd5);
 
@@ -698,7 +705,7 @@ app.get("/bro/:type", function(req, res) {
 });
 */
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/:typeName/:value", function(req, res, next) {
+app.get("/:typeName/:value", function(req, res) {
   var query = {typeName: req.params.typeName,
                value: req.params.value};
 
