@@ -119,7 +119,7 @@ LOCAL void krb5_parse_req(MolochSession_t *session, const unsigned char *data, i
     MolochASNSeq_t seq[5];
 
     int num = moloch_parsers_asn_get_sequence(seq, 5, data, len, TRUE);
-    if (num < 3)
+    if (num < 3 || seq[0].len == 0 || seq[1].len == 0)
         return;
 
     if (!seq[0].pc || seq[0].tag != 1 || seq[0].value[seq[0].len - 1] != 5) {
@@ -258,7 +258,7 @@ LOCAL int krb5_tcp_parser(MolochSession_t *session, void *uw, const unsigned cha
 /******************************************************************************/
 LOCAL void krb5_tcp_classify(MolochSession_t *session, const unsigned char *data, int UNUSED(len), int UNUSED(which), void *UNUSED(uw))
 {
-    if (which !=0 || data[0] != 0 || data[1] != 0)
+    if (len < 2 || which != 0 || data[0] != 0 || data[1] != 0)
         return;
 
     KRB5Info_t            *krb5          = MOLOCH_TYPE_ALLOC(KRB5Info_t);

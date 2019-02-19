@@ -33,8 +33,9 @@ typedef struct {
 /******************************************************************************/
 LOCAL int quic_chlo_parser(MolochSession_t *session, BSB dbsb) {
 
-    guchar *tag = 0;
-    int     tagLen = 0;
+    guchar   *tag = 0;
+    uint16_t  tagLen = 0;
+
     BSB_LIMPORT_ptr(dbsb, tag, 4);
     BSB_LIMPORT_u16(dbsb, tagLen);
     BSB_LIMPORT_skip(dbsb, 2);
@@ -45,12 +46,12 @@ LOCAL int quic_chlo_parser(MolochSession_t *session, BSB dbsb) {
 
     moloch_session_add_protocol(session, "quic");
 
-    if (!tag || memcmp(tag, "CHLO", 4) != 0) {
+    if (!tag || memcmp(tag, "CHLO", 4) != 0 || BSB_REMAINING(dbsb) < tagLen*8 + 8) {
         return 0;
     }
 
     guchar *tagDataStart = dbsb.buf + tagLen*8 + 8;
-    uint32_t dlen = BSB_REMAINING(dbsb);
+    uint32_t dlen = BSB_SIZE(dbsb) - tagLen*8 - 8;
 
     uint32_t start = 0;
     while (!BSB_IS_ERROR(dbsb) && BSB_REMAINING(dbsb) && tagLen > 0) {
@@ -60,8 +61,9 @@ LOCAL int quic_chlo_parser(MolochSession_t *session, BSB dbsb) {
         BSB_LIMPORT_ptr(dbsb, subTag, 4);
         BSB_LIMPORT_u32(dbsb, endOffset);
 
-        if (endOffset > dlen || start > dlen || start > endOffset)
+        if (endOffset > dlen || start > dlen || start > endOffset) {
             return 1;
+        }
 
         if (!subTag)
             return 1;
@@ -86,6 +88,10 @@ LOCAL int quic_udp_parser(MolochSession_t *session, void *UNUSED(uw), const unsi
     int version = -1;
     int offset = 1;
 
+    if ( len < 9) {
+        return 0;
+    }
+
     // PUBLIC_FLAG_RESET
     if (data[0] & 0x02) {
         return 0;
@@ -94,6 +100,10 @@ LOCAL int quic_udp_parser(MolochSession_t *session, void *UNUSED(uw), const unsi
     // CID
     if (data[0] & 0x08) {
         offset += 8;
+    }
+
+    if ( len < offset+5) {
+        return 0;
     }
 
     // Get version
@@ -162,7 +172,7 @@ LOCAL int quic_udp_parser(MolochSession_t *session, void *UNUSED(uw), const unsi
         BSB_INIT(dbsb, BSB_WORK_PTR(bsb), MIN(dataLen, BSB_REMAINING(bsb)));
         BSB_IMPORT_skip(bsb, dataLen);
 
-        quic_chlo_parser(session,dbsb);
+        quic_chlo_parser(session, dbsb);
         moloch_parsers_unregister(session, uw);
         return 0;
     }
@@ -239,7 +249,15 @@ void moloch_parser_init()
         "host.quic", "Hostname", "quic.host",
         "QUIC host header field",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        "category", "host",
         "aliases", "[\"quic.host\"]",
+        (char *)NULL);
+
+    moloch_field_define("quic", "lotextfield",
+        "host.quic.tokens", "Hostname Tokens", "quic.hostTokens",
+        "QUIC host tokens header field",
+        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_FAKE,
+        "aliases", "[\"quic.host.tokens\"]",
         (char *)NULL);
 
     uaField = moloch_field_define("quic", "termfield",

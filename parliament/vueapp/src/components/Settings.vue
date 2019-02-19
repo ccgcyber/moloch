@@ -1,6 +1,6 @@
 <template>
 
-  <div>
+  <div class="settings-content">
 
     <div v-if="!dashboardOnly"
       class="container-fluid">
@@ -39,9 +39,7 @@
 
         <!-- navigation -->
         <div v-if="hasAuth && loggedIn && settings"
-          class="col-xl-2 col-lg-3 col-md-3 col-sm-4"
-          role="tablist"
-          aria-orientation="vertical">
+          class="col-xl-2 col-lg-3 col-md-3 col-sm-4">
 
           <div class="nav flex-column nav-pills">
             <a class="nav-link cursor-pointer"
@@ -394,7 +392,7 @@
             <div class="col-12 col-xl-6"
               v-for="notifier of settings.notifiers"
               :key="notifier.name">
-              <div class="card bg-light mb-3">
+              <div class="card mb-3">
                 <div class="card-body">
                   <!-- notifier title -->
                   <h4 class="mb-3">
@@ -749,3 +747,10 @@ export default {
   }
 };
 </script>
+
+<style scoped>
+.settings-content div.nav-pills {
+  position: sticky;
+  top: 70px;
+}
+</style>

@@ -98,7 +98,7 @@
         <div class="input-group input-group-sm ml-1">
           <div class="input-group-prepend help-cursor"
             v-b-tooltip.hover
-            title="Min connections">
+            title="Minimum number of sessions between nodes">
             <span class="input-group-text">
               Min. Connections
             </span>
@@ -113,6 +113,25 @@
             <option value="5">5</option>
           </select>
         </div> <!-- /min connections select -->
+
+        <!-- weight select -->
+        <div class="input-group input-group-sm ml-1">
+          <div class="input-group-prepend help-cursor"
+            v-b-tooltip.hover
+            title="Change the field that calculates the radius of nodes and the width links">
+            <span class="input-group-text">
+              Node/Link Weight
+            </span>
+          </div>
+          <select class="form-control input-sm"
+            v-model="weight"
+            @change="changeWeight">
+            <option value="sessions">Sessions</option>
+            <option value="totPackets">Packets</option>
+            <option value="totBytes">Total Raw Bytes</option>
+            <option value="totDataBytes">Total Data Bytes</option>
+          </select>
+        </div> <!-- /weight select -->
 
         <!-- unlock button-->
         <button class="btn btn-default btn-sm ml-1"
@@ -370,6 +389,15 @@ let simulation, svg, container, zoom;
 let node, nodes, link, links, nodeLabel;
 let popupTimer, popupVue;
 let draggingNode;
+let nodeMax = 1;
+let nodeMin = 1;
+let linkMax = 1;
+let linkMin = 1;
+let linkScaleFactor = 0;
+let nodeScaleFactor = 0;
+let maxLog = Math.ceil(Math.pow(Math.E, 9));
+/* eslint-disable no-useless-escape */
+let idRegex = /[\[\]:. ]/g;
 
 // drag helpers
 function dragstarted (d) {
@@ -481,7 +509,8 @@ export default {
       tertiaryColor: undefined,
       closePopups: closePopups,
       fontSize: 0.4,
-      zoomLevel: 1
+      zoomLevel: 1,
+      weight: 'sessions'
     };
   },
   computed: {
@@ -583,6 +612,18 @@ export default {
           minConn: this.query.minConn
         }
       });
+    },
+    changeWeight: function () {
+      this.getMinMaxForScale();
+
+      svg.selectAll('.node')
+        .attr('r', this.calculateNodeWeight);
+
+      svg.selectAll('.link')
+        .attr('stroke-width', this.calculateLinkWeight);
+
+      svg.selectAll('.node-label')
+        .attr('dx', this.calculateNodeLabelOffset);
     },
     changeNodeDist: function (direction) {
       this.query.nodeDist = direction > 0 ? Math.min(this.query.nodeDist + direction, 200)
@@ -802,6 +843,9 @@ export default {
       links = data.links.map(d => Object.create(d));
       nodes = data.nodes.map(d => Object.create(d));
 
+      // get the min/max values of links and nodes to scale the weight
+      this.getMinMaxForScale();
+
       // setup the force directed graph
       simulation = d3.forceSimulation(nodes)
         .force('link',
@@ -812,9 +856,7 @@ export default {
         // simulate gravity mutually amongst all nodes
         .force('charge', d3.forceManyBody().strength(-parseInt(this.query.nodeDist * 2)))
         // prevent elements from overlapping
-        .force('collision', d3.forceCollide().radius((d) => {
-          return 2 * Math.min(3 + Math.log(d.sessions), 12);
-        }))
+        .force('collision', d3.forceCollide().radius(this.calculateCollisionRadius))
         // set the graph center
         .force('center', d3.forceCenter(width / 2, height / 2))
         // positioning force along x-axis for disjoint graph
@@ -852,9 +894,7 @@ export default {
         .data(links)
         .enter().append('line')
         .attr('class', 'link')
-        .attr('stroke-width', (d) => {
-          return Math.min(1 + Math.log(d.value), 12);
-        });
+        .attr('stroke-width', this.calculateLinkWeight);
 
       // add link mouse listeners for showing popups
       link.on('mouseover', (l) => {
@@ -877,15 +917,12 @@ export default {
         .append('circle')
         .attr('class', 'node')
         .attr('id', (d) => {
-          /* eslint-disable no-useless-escape */
-          return 'id' + d.id.replace(/[\[\]:.]/g, '_');
+          return 'id' + d.id.replace(idRegex, '_');
         })
         .attr('fill', (d) => {
           return colors[d.type];
         })
-        .attr('r', (d) => {
-          return Math.min(3 + Math.log(d.sessions), 12);
-        })
+        .attr('r', this.calculateNodeWeight)
         .call(d3.drag()
           .on('start', dragstarted)
           .on('drag', dragged)
@@ -911,13 +948,9 @@ export default {
         .data(nodes)
         .enter()
         .append('text')
-        .attr('dx', (d) => {
-          // set label offset based on size of node radius
-          return 2 + Math.ceil(Math.min(3 + Math.log(d.sessions), 12));
-        })
+        .attr('dx', this.calculateNodeLabelOffset)
         .attr('id', (d) => {
-          /* eslint-disable no-useless-escape */
-          return 'id' + d.id.replace(/[\[\]:.]/g, '_') + '-label';
+          return 'id' + d.id.replace(idRegex, '_') + '-label';
         })
         .attr('dy', '2px')
         .attr('class', 'node-label')
@@ -942,6 +975,61 @@ export default {
           return 'translate(' + d.x + ',' + d.y + ')';
         });
       });
+    },
+    getMinMaxForScale: function () {
+      let weightField = this.weight;
+
+      nodeMax = 1;
+      nodeMin = 1;
+      for (let n of nodes) {
+        if (n[weightField] !== undefined) {
+          if (n[weightField] > nodeMax) {
+            nodeMax = n[weightField];
+          }
+          if (n[weightField] < nodeMin) {
+            nodeMin = n[weightField];
+          }
+        }
+      }
+
+      linkMax = 1;
+      linkMin = 1;
+      if (weightField === 'sessions') {
+        weightField = 'value';
+      }
+      for (let l of links) {
+        if (l[weightField] !== undefined) {
+          if (l[weightField] > linkMax) {
+            linkMax = l[weightField];
+          }
+          if (l[weightField] < linkMin) {
+            linkMin = l[weightField];
+          }
+        }
+      }
+
+      nodeScaleFactor = (nodeMax - nodeMin) / maxLog;
+      if (nodeScaleFactor < 1) { nodeScaleFactor = 1; }
+      linkScaleFactor = (linkMax - linkMin) / maxLog;
+      if (linkScaleFactor < 1) { linkScaleFactor = 1; }
+    },
+    calculateLinkWeight: function (l) {
+      let val = l[this.weight] || l.value;
+      val = Math.max(Math.log((val - linkMin) / linkScaleFactor), 0);
+      return 1 + val;
+    },
+    calculateNodeWeight: function (n) {
+      let val = n[this.weight] || n.sessions;
+      val = Math.max(Math.log((val - nodeMin) / nodeScaleFactor), 0);
+      return 3 + val;
+    },
+    calculateNodeLabelOffset: function (nl) {
+      let val = this.calculateNodeWeight(nl);
+      return 2 + val;
+    },
+    calculateCollisionRadius: function (n) {
+      let val = this.calculateNodeWeight(n);
+      return 2 * val;
     },
     dbField2Type: function (dbField) {
       for (let k in this.fields) {
@@ -1052,9 +1140,9 @@ export default {
           methods: {
             hideNode: function () {
               this.$parent.closePopups();
-              /* eslint-disable no-useless-escape */
-              svg.select('#id' + dataNode.id.replace(/[\[\]:.]/g, '_')).remove();
-              svg.select('#id' + dataNode.id.replace(/[\[\]:.]/g, '_') + '-label').remove();
+              let id = '#id' + dataNode.id.replace(idRegex, '_');
+              svg.select(id).remove();
+              svg.select(id + '-label').remove();
               svg.selectAll('.link')
                 .filter(function (d, i) {
                   return d.source.id === dataNode.id || d.target.id === dataNode.id;
