@@ -17,7 +17,7 @@
       </span>
 
       <moloch-paging v-if="stats"
-        class="mt-1"
+        class="mt-1 ml-2"
         :records-total="recordsTotal"
         :records-filtered="recordsFiltered"
         v-on:changePaging="changePaging"
@@ -66,6 +66,12 @@ let respondedAt; // the time that the last data load succesfully responded
 
 function roundCommaString (val) {
   let result = Vue.options.filters.commaString(Vue.options.filters.round(val, 0));
+  return result;
+};
+
+function readableTime (val) {
+  if (val === 0) { return ''; }
+  let result = Vue.options.filters.readableTimeCompact(val * 1000);
   return result;
 };
 
@@ -140,7 +146,8 @@ export default {
         { id: 'deltaSessionBytesPerSec', name: 'ES Session Bytes/Sec', sort: 'deltaSessionBytesPerSec', dataField: 'deltaSessionBytesPerSec', width: 100, dataFunction: (val) => { return this.$options.filters.humanReadableBytes(val); }, doStats: true },
         { id: 'deltaOverloadDropped', name: 'Overload Drops/s', sort: 'deltaOverloadDropped', dataField: 'deltaOverloadDroppedPerSec', width: 140, dataFunction: roundCommaString, doStats: true },
         { id: 'deltaESDropped', name: 'ES Drops/s', sort: 'deltaESDropped', dataField: 'deltaESDroppedPerSec', width: 120, dataFunction: roundCommaString, doStats: true },
-        { id: 'sessionSizePerSec', name: 'ES Session Size/Sec', sort: 'sessionSizePerSec', dataField: 'sessionSizePerSec', width: 100, dataFunction: roundCommaString, doStats: true }
+        { id: 'sessionSizePerSec', name: 'ES Session Size/Sec', sort: 'sessionSizePerSec', dataField: 'sessionSizePerSec', width: 100, dataFunction: roundCommaString, doStats: true },
+        { id: 'retention', name: 'Retention', sort: 'retention', dataField: 'retention', width: 100, dataFunction: readableTime, doStats: true }
       ]
     };
   },

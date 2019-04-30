@@ -72,6 +72,7 @@
             <tr>
               <th width="50px;">&nbsp;</th>
               <th v-for="column of columns"
+                v-if="!column.additional"
                 :key="column.name"
                 class="cursor-pointer"
                 :class="{'no-wrap':column.nowrap}"
@@ -94,7 +95,7 @@
             <tr v-if="!users.data.length"
               key="noUsers"
               class="text-danger text-center">
-              <td colspan="13"
+              <td colspan="12"
                 class="pt-2">
                 <h6>No users match your search</h6>
               </td>
@@ -104,8 +105,8 @@
               <!-- user settings -->
               <tr :key="listUser.id + 'user'">
                 <!-- /toggle settings button -->
-                <td :class="{'btn-indicator':listUser.hideStats || listUser.hideFiles || listUser.hidePcap || listUser.disablePcapDownload}">
-                  <toggle-btn v-if="listUser.hideStats || listUser.hideFiles || listUser.hidePcap || listUser.disablePcapDownload"
+                <td :class="{'btn-indicator':listUser.hideStats || listUser.hideFiles || listUser.hidePcap || listUser.disablePcapDownload || listUser.timeLimit || listUser.expression}">
+                  <toggle-btn v-if="listUser.hideStats || listUser.hideFiles || listUser.hidePcap || listUser.disablePcapDownload || listUser.timeLimit || listUser.expression"
                     :opened="listUser.expanded"
                     v-b-tooltip.hover
                     title="This user has additional restricted permissions"
@@ -125,13 +126,6 @@
                 </td>
                 <td class="no-wrap">
                   <input v-model="listUser.userName"
-                    class="form-control form-control-sm"
-                    type="text"
-                    @input="userChanged(listUser)"
-                  />
-                </td>
-                <td class="no-wrap">
-                  <input v-model="listUser.expression"
                     class="form-control form-control-sm"
                     type="text"
                     @input="userChanged(listUser)"
@@ -180,12 +174,14 @@
                   />
                 </td>
                 <td class="no-wrap">
-                  <span v-if="listUser.lastUsed">
+                  <div v-if="listUser.lastUsed"
+                    class="cell-text">
                     {{ listUser.lastUsed / 1000 | timezoneDateString(user.settings.timezone, 'YYYY/MM/DD HH:mm:ss z') }}
-                  </span>
-                  <span v-else>
+                  </div>
+                  <div v-else
+                    class="cell-text">
                     Never
-                  </span>
+                  </div>
                 </td>
                 <td class="no-wrap">
                   <span class="pull-right">
@@ -237,63 +233,120 @@
               <!-- advanced user settings -->
               <tr :key="listUser.id + 'adv'"
                 v-if="listUser.expanded">
-                <td colspan="13">
-                  <div class="form-check form-check-inline mt-1 mb-1">
-                    <strong>
-                      Configure additional user permissions:
-                    </strong>
-                    <span v-b-tooltip.hover
-                      title="Hide the Stats page from this user">
-                      <input class="form-check-input ml-3"
-                        type="checkbox"
-                        :id="listUser.id + 'stats'"
-                        v-model="listUser.hideStats"
-                        @change="userChanged(listUser)"
-                      />
-                      <label class="form-check-label"
-                        :for="listUser.id + 'stats'">
-                        Hide Stats Page
-                      </label>
-                    </span>
-                    <span v-b-tooltip.hover
-                      title="Hide the Files page from this user">
-                      <input class="form-check-input ml-3"
-                        type="checkbox"
-                        :id="listUser.id + 'files'"
-                        v-model="listUser.hideFiles"
-                        @change="userChanged(listUser)"
-                      />
-                      <label class="form-check-label"
-                        :for="listUser.id + 'files'">
-                        Hide Files Page
-                      </label>
-                    </span>
-                    <span v-b-tooltip.hover
-                      title="Hide packets from this user">
-                      <input class="form-check-input ml-3"
-                        type="checkbox"
-                        :id="listUser.id + 'pcap'"
-                        v-model="listUser.hidePcap"
-                        @change="userChanged(listUser)"
-                      />
-                      <label class="form-check-label"
-                        :for="listUser.id + 'pcap'">
-                        Hide PCAP
-                      </label>
-                    </span>
-                    <span v-b-tooltip.hover
-                      title="Disable PCAP download for this user">
-                      <input class="form-check-input ml-3"
-                        type="checkbox"
-                        :id="listUser.id + 'pcapDownload'"
-                        v-model="listUser.disablePcapDownload"
-                        @change="userChanged(listUser)"
-                      />
-                      <label class="form-check-label"
-                        :for="listUser.id + 'pcapDownload'">
-                        Disable PCAP Download
-                      </label>
-                    </span>
+                <td colspan="3">
+                  <div class="row">
+                    <div class="col mt-2">
+                      <strong>
+                        Configure additional user permissions:
+                      </strong>
+                    </div>
+                  </div>
+                </td>
+                <td colspan="9">
+                  <div class="row">
+                    <div class="col">
+                      <div class="form-check form-check-inline form-group">
+                        <span v-b-tooltip.hover
+                          :title="columns[12].help">
+                          <input class="form-check-input"
+                            type="checkbox"
+                            :id="listUser.id + 'stats'"
+                            v-model="listUser[columns[12].sort]"
+                            @change="userChanged(listUser)"
+                          />
+                          <label class="form-check-label"
+                            :for="listUser.id + 'stats'">
+                            {{ columns[12].name }}
+                          </label>
+                        </span>
+                        <span v-b-tooltip.hover
+                          :title="columns[13].help">
+                          <input class="form-check-input ml-3"
+                            type="checkbox"
+                            :id="listUser.id + 'files'"
+                            v-model="listUser[columns[13].sort]"
+                            @change="userChanged(listUser)"
+                          />
+                          <label class="form-check-label"
+                            :for="listUser.id + 'files'">
+                            {{ columns[13].name }}
+                          </label>
+                        </span>
+                        <span v-b-tooltip.hover
+                          :title="columns[14].help">
+                          <input class="form-check-input ml-3"
+                            type="checkbox"
+                            :id="listUser.id + 'pcap'"
+                            v-model="listUser[columns[14].sort]"
+                            @change="userChanged(listUser)"
+                          />
+                          <label class="form-check-label"
+                            :for="listUser.id + 'pcap'">
+                            {{ columns[14].name }}
+                          </label>
+                        </span>
+                        <span v-b-tooltip.hover
+                          :title="columns[15].help">
+                          <input class="form-check-input ml-3"
+                            type="checkbox"
+                            :id="listUser.id + 'pcapDownload'"
+                            v-model="listUser[columns[15].sort]"
+                            @change="userChanged(listUser)"
+                          />
+                          <label class="form-check-label"
+                            :for="listUser.id + 'pcapDownload'">
+                            {{ columns[15].name }}
+                          </label>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="col form-group">
+                      <div class="input-group input-group-sm">
+                        <div class="input-group-prepend cursor-help"
+                          v-b-tooltip.hover
+                          :title="columns[10].help">
+                          <span class="input-group-text">
+                          {{ columns[10].name }}
+                          </span>
+                        </div>
+                        <input v-model="listUser[columns[10].sort]"
+                          class="form-control form-control-sm"
+                          type="text"
+                          @input="userChanged(listUser)"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="col form-group">
+                      <div class="input-group input-group-sm">
+                        <div class="input-group-prepend cursor-help"
+                          v-b-tooltip.hover
+                          :title="columns[11].help">
+                          <span class="input-group-text">
+                            {{ columns[11].name }}
+                          </span>
+                        </div>
+                        <select class="form-control time-limit-select"
+                          v-model="listUser[columns[11].sort]"
+                          @change="changeTimeLimit(listUser)">
+                          <option value="1">1 hour</option>
+                          <option value="6">6 hours</option>
+                          <option value="24">24 hours</option>
+                          <option value="48">48 hours</option>
+                          <option value="72">72 hours</option>
+                          <option value="168">1 week</option>
+                          <option value="336">2 weeks</option>
+                          <option value="720">1 month</option>
+                          <option value="1440">2 months</option>
+                          <option value="4380">6 months</option>
+                          <option value="8760">1 year</option>
+                          <option value=undefined>All (careful)</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
                 </td>
               </tr> <!-- /advanced user settings -->
@@ -304,7 +357,7 @@
         <!-- new user form -->
         <div class="row new-user-form mr-1 ml-1 mt-4">
 
-          <div class="col-sm-8">
+          <div class="col-sm-7">
             <div class="row mb-3">
               <div class="col-sm-9 offset-sm-3">
                 <h3 class="mt-3">
@@ -314,48 +367,76 @@
             </div>
             <form>
               <div class="form-group row">
-                <label for="userid"
+                <label :for="columns[0].sort"
                   class="col-sm-3 col-form-label text-right">
-                  User ID
+                  {{ columns[0].name }}<sup v-if="columns[0].required">*</sup>
                 </label>
                 <div class="col-sm-9">
-                  <input id="userid"
+                  <input :id="columns[0].sort"
                     type="text"
                     class="form-control form-control-sm"
-                    v-model="newuser.userId"
+                    v-model="newuser[columns[0].sort]"
                   />
                 </div>
               </div>
               <div class="form-group row">
-                <label for="username"
+                <label :for="columns[1].sort"
                   class="col-sm-3 col-form-label text-right">
-                  User Name
+                  {{ columns[1].name }}<sup v-if="columns[1].required">*</sup>
                 </label>
                 <div class="col-sm-9">
-                  <input id="username"
+                  <input :id="columns[1].sort"
                     type="text"
                     class="form-control form-control-sm"
-                    v-model="newuser.userName"
+                    v-model="newuser[columns[1].sort]"
                   />
                 </div>
               </div>
               <div class="form-group row">
-                <label for="expression"
-                  class="col-sm-3 col-form-label text-right">
-                  Forced Expression
+                <label :for="columns[10].sort"
+                  class="col-sm-3 col-form-label text-right cursor-help"
+                  v-b-tooltip.hover
+                  :title="columns[10].help">
+                  {{ columns[10].name }}
                 </label>
                 <div class="col-sm-9">
-                  <input id="expression"
+                  <input :id="columns[10].sort"
                     type="text"
                     class="form-control form-control-sm"
-                    v-model="newuser.expression"
+                    v-model="newuser[columns[10].sort]"
                   />
+                </div>
+              </div>
+              <div class="form-group row">
+                <label :for="columns[11].sort"
+                  class="col-sm-3 col-form-label text-right cursor-help"
+                  v-b-tooltip.hover
+                  :title="columns[11].help">
+                  {{ columns[11].name }}
+                </label>
+                <div class="col-sm-9">
+                  <select :id="columns[11].sort"
+                    class="form-control form-control-sm"
+                    v-model="newuser[columns[11].sort]">
+                    <option value="1">1 hour</option>
+                    <option value="6">6 hours</option>
+                    <option value="24">24 hours</option>
+                    <option value="48">48 hours</option>
+                    <option value="72">72 hours</option>
+                    <option value="168">1 week</option>
+                    <option value="336">2 weeks</option>
+                    <option value="720">1 month</option>
+                    <option value="1440">2 months</option>
+                    <option value="4380">6 months</option>
+                    <option value="8760">1 year</option>
+                    <option value=undefined selected>All (careful)</option>
+                  </select>
                 </div>
               </div>
               <div class="form-group row">
                 <label for="password"
                   class="col-sm-3 col-form-label text-right">
-                  Password
+                  Password<sup>*</sup>
                 </label>
                 <div class="col-sm-9">
                   <input id="password"
@@ -382,8 +463,7 @@
               </div>
             </form>
           </div>
-
-          <div class="col-sm-4">
+          <div class="col-sm-3">
             <div class="row mb-3">
               <div class="col-sm-12">
                 <h3 class="mt-2">&nbsp;</h3>
@@ -393,9 +473,9 @@
               <div class="form-group form-group-sm offset-sm-1 col-sm-11">
                 <div class="checkbox">
                   <label v-b-tooltip.hover
-                    :title="columns[3].help">
+                    :title="columns[2].help">
                     <input type="checkbox"
-                      v-model="newuser.enabled"
+                      v-model="newuser[columns[2].sort]"
                     />
                     Enabled
                   </label>
@@ -404,9 +484,9 @@
               <div class="form-group form-group-sm offset-sm-1 col-sm-11">
                 <div class="checkbox">
                   <label v-b-tooltip.hover
-                    :title="columns[4].help">
+                    :title="columns[3].help">
                     <input type="checkbox"
-                      v-model="newuser.createEnabled"
+                      v-model="newuser[columns[3].sort]"
                     />
                     Admin
                   </label>
@@ -415,9 +495,9 @@
               <div class="form-group form-group-sm offset-sm-1 col-sm-11">
                 <div class="checkbox">
                   <label v-b-tooltip.hover
-                    :title="columns[5].help">
+                    :title="columns[4].help">
                     <input type="checkbox"
-                      v-model="newuser.webEnabled"
+                      v-model="newuser[columns[4].sort]"
                     />
                     Web Interface
                   </label>
@@ -426,9 +506,9 @@
               <div class="form-group form-group-sm offset-sm-1 col-sm-11">
                 <div class="checkbox">
                   <label v-b-tooltip.hover
-                    :title="columns[6].help">
+                    :title="columns[5].help">
                     <input type="checkbox"
-                      v-model="newuser.headerAuthEnabled"
+                      v-model="newuser[columns[5].sort]"
                     />
                     Web Auth Header
                   </label>
@@ -437,9 +517,9 @@
               <div class="form-group form-group-sm offset-sm-1 col-sm-11">
                 <div class="checkbox">
                   <label v-b-tooltip.hover
-                    :title="columns[7].help">
+                    :title="columns[6].help">
                     <input type="checkbox"
-                      v-model="newuser.emailSearch"
+                      v-model="newuser[columns[6].sort]"
                     />
                     Email Search
                   </label>
@@ -448,9 +528,9 @@
               <div class="form-group form-group-sm offset-sm-1 col-sm-11">
                 <div class="checkbox">
                   <label v-b-tooltip.hover
-                    :title="columns[8].help">
+                    :title="columns[7].help">
                     <input type="checkbox"
-                      v-model="newuser.removeEnabled"
+                      v-model="newuser[columns[7].sort]"
                     />
                     Can Remove Data
                   </label>
@@ -459,11 +539,64 @@
               <div class="form-group form-group-sm offset-sm-1 col-sm-11">
                 <div class="checkbox">
                   <label v-b-tooltip.hover
-                    :title="columns[9].help">
+                    :title="columns[8].help">
                     <input type="checkbox"
-                      v-model="newuser.packetSearch"
+                      v-model="newuser[columns[8].sort]"
                     />
                     Packet Search
+                  </label>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div class="col-sm-2">
+            <div class="row mb-3">
+              <div class="col-sm-12">
+                <h3 class="mt-2">&nbsp;</h3>
+              </div>
+            </div>
+            <form>
+              <div class="form-group form-group-sm">
+                <div class="checkbox">
+                  <label v-b-tooltip.hover
+                    :title="columns[12].help">
+                    <input type="checkbox"
+                      v-model="newuser[columns[12].sort]"
+                    />
+                    {{ columns[12].name }}
+                  </label>
+                </div>
+              </div>
+              <div class="form-group form-group-sm">
+                <div class="checkbox">
+                  <label v-b-tooltip.hover
+                    :title="columns[13].help">
+                    <input type="checkbox"
+                      v-model="newuser[columns[13].sort]"
+                    />
+                    {{ columns[13].name }}
+                  </label>
+                </div>
+              </div>
+              <div class="form-group form-group-sm">
+                <div class="checkbox">
+                  <label v-b-tooltip.hover
+                    :title="columns[14].help">
+                    <input type="checkbox"
+                      v-model="newuser[columns[14].sort]"
+                    />
+                    {{ columns[14].name }}
+                  </label>
+                </div>
+              </div>
+              <div class="form-group form-group-sm">
+                <div class="checkbox">
+                  <label v-b-tooltip.hover
+                    :title="columns[15].help">
+                    <input type="checkbox"
+                      v-model="newuser[columns[15].sort]"
+                    />
+                    {{ columns[15].name }}
                   </label>
                 </div>
               </div>
@@ -519,9 +652,8 @@ export default {
         desc: false
       },
       columns: [
-        { name: 'User ID', sort: 'userId', nowrap: true, help: 'The id used for login, can not be changed once created' },
-        { name: 'User Name', sort: 'userName', nowrap: true, help: 'Friendly name for user' },
-        { name: 'Forced Expression', sort: 'expression', nowrap: true, help: 'A moloch expression that is silently added to all queries. Useful to limit what data a user can access (ex what nodes or ips)' },
+        { name: 'User ID', sort: 'userId', nowrap: true, required: true, help: 'The id used for login, can not be changed once created' },
+        { name: 'User Name', sort: 'userName', nowrap: true, required: true, help: 'Friendly name for user' },
         { name: 'Enabled', sort: 'enabled', nowrap: true, help: 'Is the account currently enabled for anything?' },
         { name: 'Admin', sort: 'createEnabled', nowrap: true, help: 'Can create new accounts and change the settings for other accounts' },
         { name: 'Web Interface', sort: 'webEnabled', help: 'Can access the web interface. When off only APIs can be used' },
@@ -529,7 +661,13 @@ export default {
         { name: 'Email Search', sort: 'emailSearch', help: 'Can perform email searches' },
         { name: 'Can Remove Data', sort: 'removeEnabled', help: 'Can delete tags or delete/scrub pcap data' },
         { name: 'Can Search Packets', sort: 'packetSearch', help: 'Can create a packet search job (hunt)' },
-        { name: 'Last Used', sort: 'lastUsed', help: 'The last time this user used Moloch' }
+        { name: 'Last Used', sort: 'lastUsed', help: 'The last time this user used Moloch' },
+        { additional: true, name: 'Forced Expression', sort: 'expression', help: 'A Moloch search expression that is silently added to all queries. Useful to limit what data a user can access (e.g. which nodes or IPs)' },
+        { additional: true, name: 'Query Time Limit', sort: 'timeLimit', help: 'Restrict the maximum time window of a user\'s query' },
+        { additional: true, name: 'Hide Stats Page', sort: 'hideStats', help: 'Hide the Stats page from this user' },
+        { additional: true, name: 'Hide Files Page', sort: 'hideFiles', help: 'Hide the Files page from this user' },
+        { additional: true, name: 'Hide PCAP', sort: 'hidePcap', help: 'Hide PCAP (and only show metadata/session detail) for this user when they open a Session' },
+        { additional: true, name: 'Disable PCAP Download', sort: 'disablePcapDownload', help: 'Do not allow this user to download PCAP files' }
       ]
     };
   },
@@ -590,6 +728,14 @@ export default {
       this.msg = null;
       this.msgType = null;
     },
+    changeTimeLimit: function (user) {
+      if (user.timeLimit === 'undefined') {
+        delete user.timeLimit;
+      } else {
+        user.timeLimit = parseInt(user.timeLimit);
+      }
+      this.userChanged(user);
+    },
     userChanged: function (user) {
       this.$set(user, 'changed', true);
     },
@@ -608,6 +754,8 @@ export default {
                 this.user[field] = user[field];
               }
             }
+            // time limit is special because it can be undefined
+            this.user.timeLimit = user.timeLimit || undefined;
           }
           this.$set(user, 'changed', false);
         }, (error) => {
@@ -646,7 +794,7 @@ export default {
 
       this.$http.post('user/create', this.newuser)
         .then((response) => {
-          this.newuser = { enabled: true };
+          this.newuser = { enabled: true, packetSearch: true };
           this.loadData();
 
           this.msg = response.data.text;
@@ -782,5 +930,15 @@ td input[type="checkbox"] {
 /* indication that a user has additional permissions set */
 .btn-indicator .btn-toggle-user.btn-success {
   background: linear-gradient(135deg, #28a745 1%, #28a745 75%, #28a745 75%, #1c7730 77%, #1c7730 100%);
+}
+
+.form-control.time-limit-select {
+  -webkit-appearance: none;
+  border-radius: 0 4px 4px 0;
+  max-width: 120px;
+}
+
+.form-check-inline {
+  white-space: nowrap;
 }
 </style>

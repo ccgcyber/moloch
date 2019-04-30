@@ -33,7 +33,8 @@
         :graph-data="graphData"
         :map-data="mapData"
         :primary="true"
-        :timezone="user.settings.timezone">
+        :timezone="user.settings.timezone"
+        @fetchMapData="loadData">
       </moloch-visualizations> <!-- /session visualizations -->
 
       <!-- sticky (opened) sessions -->
@@ -349,7 +350,7 @@
         </thead>
         <tbody class="small">
           <!-- session + detail -->
-          <template v-for="session of sessions.data">
+          <template v-for="(session, index) of sessions.data">
             <tr :key="session.id"
               :id="'session'+session.id">
               <!-- toggle button and ip protocol -->
@@ -407,6 +408,7 @@
               <td :colspan="headers.length + 1">
                 <moloch-session-detail
                   :session="session"
+                  :session-index="index"
                   @toggleColVis="toggleColVis"
                   @toggleInfoVis="toggleInfoVis">
                 </moloch-session-detail>

@@ -143,7 +143,7 @@ LOCAL void *reader_tpacketv3_thread(gpointer infov)
         for (p = 0; p < tbd->hdr.bh1.num_pkts; p++) {
             if (unlikely(th->tp_snaplen != th->tp_len)) {
                 LOGEXIT("ERROR - Moloch requires full packet captures caplen: %d pktlen: %d\n"
-                    "See https://github.com/aol/moloch/wiki/FAQ#Moloch_requires_full_packet_captures_error",
+                    "See https://molo.ch/faq#moloch_requires_full_packet_captures_error",
                     th->tp_snaplen, th->tp_len);
             }
 
@@ -176,7 +176,7 @@ void reader_tpacketv3_start() {
     for (i = 0; i < MAX_INTERFACES && config.interface[i]; i++) {
         for (t = 0; t < numThreads; t++) {
             snprintf(name, sizeof(name), "moloch-af3%d-%d", i, t);
-            g_thread_new(name, &reader_tpacketv3_thread, (gpointer)(long)i);
+            g_thread_unref(g_thread_new(name, &reader_tpacketv3_thread, (gpointer)(long)i));
         }
     }
 }

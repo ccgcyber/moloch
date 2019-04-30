@@ -321,7 +321,7 @@ LOCAL uint64_t tls_parse_time(MolochSession_t *session, int tag, unsigned char* 
         }
     gtdone:
         if (pos == len) {
-            val = mktime(&tm);
+            val = timegm(&tm);
         } else {
             if (pos + 5 < len && (value[pos] == '+' || value[pos] == '-')) {
                 offset = str2num(value+pos+1) * 60 +  str2num(value+pos+3);
@@ -843,37 +843,37 @@ void moloch_parser_init()
     verField = moloch_field_define("tls", "termfield",
         "tls.version", "Version", "tls.version",
         "SSL/TLS version field",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 
     cipherField = moloch_field_define("tls", "uptermfield",
         "tls.cipher", "Cipher", "tls.cipher",
         "SSL/TLS cipher field",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 
     ja3Field = moloch_field_define("tls", "lotermfield",
         "tls.ja3", "JA3", "tls.ja3",
         "SSL/TLS JA3 field",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 
     ja3sField = moloch_field_define("tls", "lotermfield",
         "tls.ja3s", "JA3S", "tls.ja3s",
         "SSL/TLS JA3S field",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 
     dstIdField = moloch_field_define("tls", "lotermfield",
         "tls.sessionid.dst", "Dst Session Id", "tls.dstSessionId",
         "SSL/TLS Dst Session Id",
-        MOLOCH_FIELD_TYPE_STR_HASH,  0,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  0,
         (char *)NULL);
 
     srcIdField = moloch_field_define("tls", "lotermfield",
         "tls.sessionid.src", "Src Session Id", "tls.srcSessionId",
         "SSL/TLS Src Session Id",
-        MOLOCH_FIELD_TYPE_STR_HASH,  0,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  0,
         (char *)NULL);
 
     moloch_field_define("general", "lotermfield",

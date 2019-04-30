@@ -139,7 +139,7 @@ Vue.filter('timezoneDateString', (seconds, timezone, format) => {
   let time = 1000 * seconds;
 
   if (timezone === 'gmt') {
-    return moment.tz(time, 'gmt').format(format);
+    return moment.tz(time, 'utc').format(format);
   } else if (timezone === 'localtz') {
     return moment.tz(time, Intl.DateTimeFormat().resolvedOptions().timeZone).format(format);
   }
@@ -208,21 +208,52 @@ Vue.filter('readableTime', function (ms) {
 });
 
 /**
+ * Turns milliseconds into a human readable time range
+ *
+ * @example
+ * '{{ 1524680821790 | readableTime }}'
+ * this.$options.filters.timezoneDateString(1524680821790);
+ *
+ * @param {int} ms    The time in ms from epoch
+ * @returns {string}  The human readable time range
+ *                    Output example: 1 day 10:42:01
+ */
+Vue.filter('readableTimeCompact', function (ms) {
+  if (isNaN(ms)) { return '?'; }
+
+  let hours = parseInt((ms / (1000 * 60 * 60)) % 24);
+  let days = parseInt((ms / (1000 * 60 * 60 * 24)));
+
+  let result = '';
+
+  if (days) {
+    result += days + 'd ';
+  }
+  result += hours + 'h';
+  return result;
+});
+
+/**
  * Searches fields for a term
  * Looks for the term in field friendlyName, exp, and aliases
  *
  * @example
- * '{{ searchTerm | searchFields(fields) }}'
- * this.$options.filters.searchFields('test', this.fields);
+ * '{{ searchTerm | searchFields(fields, true) }}'
+ * this.$options.filters.searchFields('test', this.fields, true);
  *
- * @param {string} searchTerm The string to search for within the fields
- * @param {array} fields      The list of fields to search
- * @returns {array}           An array of fields that match the search term
+ * @param {string} searchTerm     The string to search for within the fields
+ * @param {array} fields          The list of fields to search
+ * @param {boolean} excludeTokens Whether to exclude token fields
+ * @returns {array}               An array of fields that match the search term
  */
-Vue.filter('searchFields', function (searchTerm, fields) {
+Vue.filter('searchFields', function (searchTerm, fields, excludeTokens) {
   if (!searchTerm) { searchTerm = ''; }
   return fields.filter((field) => {
     if (field.regex !== undefined || field.noFacet === 'true') {
+      return false;
+    }
+
+    if (excludeTokens && field.type && field.type.includes('textfield')) {
       return false;
     }
 

@@ -1,4 +1,4 @@
-use Test::More tests => 88;
+use Test::More tests => 91;
 use Cwd;
 use URI::Escape;
 use MolochTest;
@@ -25,7 +25,7 @@ my $pwd = "*/pcap";
     $users = viewerPost("/user/list", "");
     is (@{$users->{data}}, 1, "Check add #1");
     is (!exists $users->{data}->[0]->{lastUsed}, 1, "last used doesn't exist #1");
-    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": false, "userId": "test1", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName", "id": "test1", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0}', {relaxed => 1}), "Test User Add", { context => 3 });
+    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": false, "userId": "test1", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName", "id": "test1", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Add", { context => 3 });
 
 
     # This will set a lastUsed time, make sure DB is updated with sleep
@@ -39,7 +39,7 @@ my $pwd = "*/pcap";
     my $lastUsedTimestamp1 = $users->{data}->[0]->{lastUsed};
     delete $users->{data}->[0]->{lastUsed};
 
-    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": false, "userId": "test1", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName", "id": "test1", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0}', {relaxed => 1}), "Test User Add", { context => 3 });
+    eq_or_diff($users->{data}->[0], from_json('{"createEnabled": false, "userId": "test1", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName", "id": "test1", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Add", { context => 3 });
 
 
 # Update User Server 1
@@ -69,11 +69,11 @@ my $pwd = "*/pcap";
 
     $users = viewerPost("/user/list", "");
     is (@{$users->{data}}, 2, "Check second add #1");
-    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName2", "id": "test2", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0}', {relaxed => 1}), "Test User Add", { context => 3 });
+    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName2", "id": "test2", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Add", { context => 3 });
 
     $users = viewerPost2("/user/list", "");
     is (@{$users->{data}}, 2, "Check second add #2");
-    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName2", "id": "test2", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0}', {relaxed => 1}), "Test User Add", { context => 3 });
+    eq_or_diff($users->{data}->[1], from_json('{"createEnabled": false, "userId": "test2", "removeEnabled": false, "expression": "", "headerAuthEnabled": false, "userName": "UserName2", "id": "test2", "emailSearch": false, "enabled": true, "webEnabled": false, "packetSearch": false, "welcomeMsgNum": 0, "disablePcapDownload": false, "hideFiles": false, "hidePcap": false, "hideStats": false}', {relaxed => 1}), "Test User Add", { context => 3 });
 
 # Filter
     $users = viewerPost("/user/list", "filter=test");
@@ -244,6 +244,15 @@ my $pwd = "*/pcap";
     ok($info->{success}, "update welcome message number");
     $info = viewerGet("/user/current?molochRegressionUser=test1");
     eq_or_diff($info->{welcomeMsgNum}, 2, "welcome message number is correct");
+
+# user time limit
+    $json = viewerPostToken2("/user/update", '{"userId":"test2", "timeLimit":"72"}', $token2);
+    $users = viewerPost("/user/list", "");
+    eq_or_diff($users->{data}->[1]->{timeLimit}, 72, "time limit updated");
+    $json = viewerGet("/sessions.json?molochRegressionUser=test2&date=-1");
+    eq_or_diff($json->{bsqErr}, "User time limit (72 hours) exceeded", "user can't exceed their time limit");
+    $json = viewerGet("/sessions.json?molochRegressionUser=test2&date=72");
+    is (exists $json->{data}, 1, "user can make a query within their time range");
 
 # Delete Users
     $json = viewerPostToken("/user/delete", "userId=test1", $token);

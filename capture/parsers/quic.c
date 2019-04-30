@@ -61,7 +61,7 @@ LOCAL int quic_chlo_parser(MolochSession_t *session, BSB dbsb) {
         BSB_LIMPORT_ptr(dbsb, subTag, 4);
         BSB_LIMPORT_u32(dbsb, endOffset);
 
-        if (endOffset > dlen || start > dlen || start > endOffset) {
+        if (endOffset > dlen || start > dlen || start >= endOffset) {
             return 1;
         }
 
@@ -163,10 +163,13 @@ LOCAL int quic_udp_parser(MolochSession_t *session, void *UNUSED(uw), const unsi
         int dataLen = BSB_REMAINING(bsb);
         if (type & 0x20) {
             BSB_LIMPORT_u16(bsb, dataLen);
+            if (dataLen == 4) // Sometimes dataLen is BE, not sure why
+                dataLen = 1024;
         }
 
-        if (BSB_IS_ERROR(bsb))
+        if (BSB_IS_ERROR(bsb)) {
             return 0;
+        }
 
         BSB dbsb;
         BSB_INIT(dbsb, BSB_WORK_PTR(bsb), MIN(dataLen, BSB_REMAINING(bsb)));
@@ -248,7 +251,7 @@ void moloch_parser_init()
     hostField = moloch_field_define("quic", "lotermfield",
         "host.quic", "Hostname", "quic.host",
         "QUIC host header field",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         "category", "host",
         "aliases", "[\"quic.host\"]",
         (char *)NULL);
@@ -256,19 +259,19 @@ void moloch_parser_init()
     moloch_field_define("quic", "lotextfield",
         "host.quic.tokens", "Hostname Tokens", "quic.hostTokens",
         "QUIC host tokens header field",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_FAKE,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_FAKE,
         "aliases", "[\"quic.host.tokens\"]",
         (char *)NULL);
 
     uaField = moloch_field_define("quic", "termfield",
         "quic.user-agent", "User-Agent", "quic.useragent",
         "User-Agent",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 
     versionField = moloch_field_define("quic", "termfield",
         "quic.version", "Version", "quic.version",
         "QUIC Version",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 }

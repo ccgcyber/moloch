@@ -28,7 +28,7 @@ sub doGeo {
     }
 
     if (! -f "oui.txt") {
-        system("wget -O oui.txt https://raw.githubusercontent.com/wireshark/wireshark/master/manuf");
+        system("wget --no-check-certificate -O oui.txt https://raw.githubusercontent.com/wireshark/wireshark/master/manuf");
     }
 
     if (! -f "GeoLite2-Country.mmdb") {
@@ -359,7 +359,7 @@ while (scalar (@ARGV) > 0) {
     } elsif ($ARGV[0] =~ /^--(viewer|fix|make|capture|viewernostart|viewerstart|viewerhang|viewerload|help|reip|fuzz)$/) {
         $main::cmd = $ARGV[0];
         shift @ARGV;
-    } elsif ($ARGV[0] =~ /^-/) {
+    } elsif ($ARGV[0] =~ /^--/) {
         print "Unknown option $ARGV[0]\n";
         $main::cmd = "--help";
         last;

@@ -162,14 +162,11 @@ LOCAL int64_t moloch_packet_sequence_diff (int64_t a, int64_t b)
 void moloch_packet_process_data(MolochSession_t *session, const uint8_t *data, int len, int which)
 {
     int i;
-    int totConsumed = 0;
-    int consumed = 0;
 
     for (i = 0; i < session->parserNum; i++) {
         if (session->parserInfo[i].parserFunc) {
-            consumed = session->parserInfo[i].parserFunc(session, session->parserInfo[i].uw, data, len, which);
+            int consumed = session->parserInfo[i].parserFunc(session, session->parserInfo[i].uw, data, len, which);
             if (consumed) {
-                totConsumed += consumed;
                 session->consumed[which] += consumed;
             }
 
@@ -778,12 +775,13 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
 #ifndef FUZZLOCH
 LOCAL void *moloch_packet_thread(void *threadp)
 {
-    MolochPacket_t  *packet;
     int thread = (long)threadp;
     const uint32_t maxPackets75 = config.maxPackets*0.75;
     uint32_t skipCount = 0;
 
     while (1) {
+        MolochPacket_t  *packet;
+
         MOLOCH_LOCK(packetQ[thread].lock);
         inProgress[thread] = 0;
         if (DLL_COUNT(packet_, &packetQ[thread]) == 0) {
@@ -1077,10 +1075,12 @@ LOCAL void moloch_packet_frags4(MolochPacketBatch_t *batch, MolochPacket_t * con
     MolochFrags_t *frags;
 
     // ALW - Should change frags_process to make the copy when needed
-    uint8_t *pkt = malloc(packet->pktlen);
-    memcpy(pkt, packet->pkt, packet->pktlen);
-    packet->pkt = pkt;
-    packet->copied = 1;
+    if (!packet->copied) {
+        uint8_t *pkt = malloc(packet->pktlen);
+        memcpy(pkt, packet->pkt, packet->pktlen);
+        packet->pkt = pkt;
+        packet->copied = 1;
+    }
 
     MOLOCH_LOCK(frags);
     // Remove expired entries
@@ -1136,6 +1136,10 @@ LOCAL void moloch_packet_log(int ses)
       packetStats[MOLOCH_PACKET_UNKNOWN],
       packetStats[MOLOCH_PACKET_IPPORT_DROPPED]
       );
+
+      if (config.debug > 0) {
+          moloch_rules_stats();
+      }
 }
 /******************************************************************************/
 LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const packet, const char * const sessionId)
@@ -1539,7 +1543,15 @@ LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const 
 
     packet->protocol = nxt;
     packet->payloadOffset = packet->ipOffset + ip_hdr_len;
+
+    if (ip_len + (int)sizeof(struct ip6_hdr) < ip_hdr_len) {
+#ifdef DEBUG_PACKET
+        LOG ("ERROR - %d + %ld < %d", ip_len, sizeof(struct ip6_hdr), ip_hdr_len);
+#endif
+        return MOLOCH_PACKET_CORRUPT;
+    }
     packet->payloadLen = ip_len + sizeof(struct ip6_hdr) - ip_hdr_len;
+
     if (packet->pktlen < packet->payloadOffset + packet->payloadLen) {
 #ifdef DEBUG_PACKET
         LOG ("ERROR - %d < %d + %d", packet->pktlen, packet->payloadOffset, packet->payloadLen);
@@ -1857,6 +1869,9 @@ void moloch_packet_batch(MolochPacketBatch_t * batch, MolochPacket_t * const pac
     case 127: // radiotap
         rc = moloch_packet_radiotap(batch, packet, packet->pkt, packet->pktlen);
         break;
+    case 228: //RAW IPv4
+        rc = moloch_packet_ip4(batch, packet, packet->pkt, packet->pktlen);
+        break;
     case 239: // NFLOG
         rc = moloch_packet_nflog(batch, packet, packet->pkt, packet->pktlen);
         break;
@@ -2068,7 +2083,7 @@ void moloch_packet_init()
         MOLOCH_COND_INIT(packetQ[t].lock);
         snprintf(name, sizeof(name), "moloch-pkt%d", t);
 #ifndef FUZZLOCH
-        g_thread_new(name, &moloch_packet_thread, (gpointer)(long)t);
+        g_thread_unref(g_thread_new(name, &moloch_packet_thread, (gpointer)(long)t));
 #endif
     }
 

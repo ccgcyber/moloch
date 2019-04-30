@@ -19,7 +19,8 @@
 
     <!-- detail -->
     <div class="detail-container"
-      ref="detailContainer">
+      :ref="`detailContainer-${sessionIndex}`"
+      :id="`detailContainer-${sessionIndex}`">
     </div> <!-- /detail -->
 
     <!-- packet options -->
@@ -71,6 +72,30 @@
                 </b-radio>
               </b-form-radio-group>
             </b-form-group>
+            <div class="btn-group mr-1 mb-1">
+              <button type="button"
+                class="btn btn-secondary btn-checkbox btn-sm"
+                :class="{'active':params.showSrc}"
+                @click="toggleShowSrc"
+                v-b-tooltip
+                title="Toggle source packet visibility">
+                Src
+              </button>
+              <button type="button"
+                class="btn btn-secondary btn-checkbox btn-sm"
+                :class="{'active':params.showDst}"
+                @click="toggleShowDst"
+                v-b-tooltip
+                title="Toggle destination packet visibility">
+                Dst
+              </button>
+            </div>
+            <button type="button"
+              class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
+              :class="{'active':params.showFrames}"
+              @click="toggleShowFrames">
+              Show Packets
+            </button>
             <button type="button"
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
               :disabled="params.base !== 'hex'"
@@ -82,6 +107,7 @@
             </button>
             <button type="button"
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
+              :disabled="params.showFrames"
               :class="{'active':params.gzip}"
               @click="toggleCompression">
               <span class="fa fa-file-archive-o">
@@ -90,6 +116,7 @@
             </button>
             <button type="button"
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
+              :disabled="params.showFrames"
               :class="{'active':params.image}"
               @click="toggleImages">
               <span class="fa fa-file-image-o">
@@ -100,9 +127,9 @@
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
               :class="{'active':params.ts}"
               @click="toggleTimestamps">
-              <span class="fa fa-clock-o">
+              <span class="fa fa-info-circle">
               </span>&nbsp;
-              Show Timestamps
+              Show Info
             </button>
             <!-- decodings -->
             <div class="btn-group mr-1 mb-1"
@@ -112,6 +139,7 @@
                 type="button"
                 class="btn btn-secondary btn-checkbox btn-sm"
                 v-b-tooltip.hover
+                :disabled="params.showFrames"
                 :title="value.name + 'Decoding'"
                 :class="{'active':params.decode[key]}"
                 @click="toggleDecoding(key)">
@@ -140,11 +168,11 @@
       </form>
       <!-- decoding form -->
       <div v-if="decodingForm">
-        <form class="form-inline well well-sm mt-1">
+        <form class="form-inline well well-sm mt-1 mb-1">
           <span v-for="field in decodings[decodingForm].fields"
             :key="field.name"
             v-if="!field.disabled">
-            <div class="form-group mr-1 mt-1">
+            <div class="form-group mr-1">
               <div class="input-group input-group-sm">
                 <span class="input-group-prepend">
                   <span class="input-group-text">
@@ -158,7 +186,7 @@
               </div>
             </div>
           </span>
-          <div class="btn-group btn-group-sm pull-right mt-1 mb-1">
+          <div class="btn-group btn-group-sm pull-right">
             <button type="button"
               class="btn btn-warning"
               title="cancel"
@@ -230,7 +258,7 @@
       class="inner packet-container mr-1 ml-1"
       v-html="packetHtml"
       ref="packetContainer"
-      :class="{'show-ts':params.ts === true}">
+      :class="{'show-ts':params.ts,'hide-src':!params.showSrc,'hide-dst':!params.showDst}">
     </div> <!-- packets -->
 
     <!-- packet options -->
@@ -284,6 +312,12 @@
             </b-form-group>
             <button type="button"
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
+              :class="{'active':params.showFrames}"
+              @click="toggleShowFrames">
+              Show Packets
+            </button>
+            <button type="button"
+              class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
               :disabled="params.base !== 'hex'"
               :class="{'active':params.line && params.base === 'hex'}"
               @click="toggleLineNumbers">
@@ -293,6 +327,7 @@
             </button>
             <button type="button"
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
+              :disabled="params.showFrames"
               :class="{'active':params.gzip}"
               @click="toggleCompression">
               <span class="fa fa-file-archive-o">
@@ -301,6 +336,7 @@
             </button>
             <button type="button"
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
+              :disabled="params.showFrames"
               :class="{'active':params.image}"
               @click="toggleImages">
               <span class="fa fa-file-image-o">
@@ -311,9 +347,9 @@
               class="btn btn-secondary btn-checkbox btn-sm mr-1 mb-1"
               :class="{'active':params.ts}"
               @click="toggleTimestamps">
-              <span class="fa fa-clock-o">
+              <span class="fa fa-info-circle">
               </span>&nbsp;
-              Show Timestamps
+              Show Info
             </button>
             <!-- decodings -->
             <div class="btn-group mr-1 mb-1"
@@ -323,6 +359,7 @@
                 type="button"
                 class="btn btn-secondary btn-checkbox btn-sm"
                 v-b-tooltip.hover
+                :disabled="params.showFrames"
                 :title="value.name + 'Decoding'"
                 :class="{'active':params.decode[key]}"
                 @click="toggleDecoding(key)">
@@ -408,8 +445,7 @@ import ConfigService from '../utils/ConfigService';
 import SessionsService from './SessionsService';
 import FieldService from '../search/FieldService';
 import MolochTagSessions from '../sessions/Tags';
-import MolochDeleteSessions from '../sessions/Delete';
-import MolochScrubPcap from '../sessions/Scrub';
+import MolochRemoveData from '../sessions/Remove';
 import MolochSendSessions from '../sessions/Send';
 import MolochExportPcap from '../sessions/ExportPcap';
 import MolochToast from '../utils/Toast';
@@ -422,9 +458,13 @@ const defaultUserSettings = {
 
 export default {
   name: 'MolochSessionDetail',
-  props: [ 'session' ],
+  props: [
+    'session',
+    'sessionIndex'
+  ],
   data: function () {
     return {
+      component: undefined,
       error: '',
       loading: true,
       hidePackets: true,
@@ -444,7 +484,10 @@ export default {
         gzip: false,
         ts: false,
         decode: {},
-        packets: 200
+        packets: 200,
+        showFrames: false,
+        showSrc: true,
+        showDst: true
       }
     };
   },
@@ -473,6 +516,26 @@ export default {
         this.loadingPackets = false;
         this.errorPackets = 'Request canceled';
       }
+    },
+    toggleShowFrames: function () {
+      this.params.showFrames = !this.params.showFrames;
+
+      if (this.params.showFrames) {
+        // show timestamps and info by default for show frames option
+        this.params.ts = true;
+        // disable other options
+        this.params.gzip = false;
+        this.params.image = false;
+        this.params.decode = {};
+      }
+
+      this.getPackets();
+    },
+    toggleShowSrc: function () {
+      this.params.showSrc = !this.params.showSrc;
+    },
+    toggleShowDst: function () {
+      this.params.showDst = !this.params.showDst;
     },
     toggleLineNumbers: function () {
       // can only have line numbers in hex mode
@@ -554,12 +617,18 @@ export default {
      * Gets the session detail from the server
      * @param {string} message An optional message to display to the user
      */
-    getDetailData: function (message) {
+    getDetailData: function (message, messageType) {
       this.loading = true;
 
       let p1 = FieldService.get();
       let p2 = ConfigService.getMolochClusters();
       let p3 = SessionsService.getDetail(this.session.id, this.session.node);
+
+      if (this.component) {
+        this.component.$destroy(true);
+        this.component.$el.parentNode.removeChild(this.component.$el);
+        this.component = undefined;
+      }
 
       Promise.all([p1, p2, p3])
         .then((responses) => {
@@ -571,7 +640,7 @@ export default {
           }
           this.fields = responses[0];
 
-          new Vue({
+          this.component = new Vue({
             // template string here
             template: responses[2].data,
             // makes $parent work
@@ -589,8 +658,8 @@ export default {
               return {
                 form: undefined,
                 cluster: undefined,
-                message: undefined,
-                messageType: undefined
+                message: message,
+                messageType: messageType
               };
             },
             computed: {
@@ -619,11 +688,19 @@ export default {
                 return this.$parent.fields[expr];
               },
               actionFormDone: function (message, success, reload) {
+                this.form = undefined; // clear the form
+                const messageType = success ? 'success' : 'warning';
+
+                if (reload) {
+                  this.$parent.getDetailData(message, messageType);
+                  this.getPackets();
+                  return;
+                }
+
                 if (message) {
                   this.message = message;
-                  this.messageType = success ? 'success' : 'warning';
+                  this.messageType = messageType;
                 }
-                this.form = undefined;
               },
               messageDone: function () {
                 this.message = undefined;
@@ -638,11 +715,8 @@ export default {
               exportPCAP: function () {
                 this.form = 'export:pcap';
               },
-              scrubPCAP: function () {
-                this.form = 'scrub:pcap';
-              },
-              deleteSession: function () {
-                this.form = 'delete:session';
+              removeData: function () {
+                this.form = 'remove:data';
               },
               sendSession: function (cluster) {
                 this.form = 'send:session';
@@ -728,13 +802,14 @@ export default {
             },
             components: {
               MolochTagSessions,
-              MolochDeleteSessions,
-              MolochScrubPcap,
+              MolochRemoveData,
               MolochSendSessions,
               MolochExportPcap,
               MolochToast
             }
-          }).$mount(this.$refs.detailContainer);
+          }).$mount();
+
+          $(`#detailContainer-${this.sessionIndex}`).append(this.component.$el);
         })
         .catch((error) => {
           this.loading = false;
@@ -865,7 +940,7 @@ export default {
             allowedTags: [ 'h3', 'h4', 'h5', 'h6', 'a', 'b', 'i', 'strong', 'em', 'div', 'pre', 'span', 'br', 'img' ],
             allowedClasses: {
               'div': [ 'row', 'col-md-6', 'offset-md-6', 'sessionsrc', 'sessiondst', 'session-detail-ts', 'alert', 'alert-danger' ],
-              'span': [ 'pull-right', 'dstcol', 'srccol', 'fa', 'fa-info-circle', 'fa-lg', 'fa-exclamation-triangle', 'sessionln', 'src-col-tip', 'dst-col-tip' ],
+              'span': [ 'pull-right', 'small', 'dstcol', 'srccol', 'fa', 'fa-info-circle', 'fa-lg', 'fa-exclamation-triangle', 'sessionln', 'src-col-tip', 'dst-col-tip' ],
               'em': [ 'ts-value' ],
               'h5': [ 'text-theme-quaternary' ],
               'a': [ 'imagetag', 'file' ]
@@ -1058,6 +1133,22 @@ export default {
 }
 .packet-container.show-ts .session-detail-ts {
   display: block !important;
+}
+
+/* src/dst packet visiblity */
+.packet-container .sessionsrc {
+  visibility: visible;
+}
+.packet-container .sessiondst {
+  visibility: visible;
+}
+.packet-container.hide-src .sessionsrc {
+  height: 0px;
+  visibility: hidden;
+}
+.packet-container.hide-dst .sessiondst {
+  height: 0px;
+  visibility: hidden;
 }
 
 /* packets */

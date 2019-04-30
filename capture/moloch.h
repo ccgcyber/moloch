@@ -262,7 +262,7 @@ typedef struct {
 
 /* You are probably looking here because you think 24 is too low, really it isn't.
  * Instead, increase the number of threads used for reading packets.
- * https://github.com/aol/moloch/wiki/FAQ#why-am-i-dropping-packets
+ * https://molo.ch/faq#why-am-i-dropping-packets
  */
 #define MOLOCH_MAX_PACKET_THREADS 24
 
@@ -1208,6 +1208,7 @@ void moloch_rules_session_create(MolochSession_t *session);
 void moloch_rules_run_session_setup(MolochSession_t *session, MolochPacket_t *packet);
 void moloch_rules_run_after_classify(MolochSession_t *session);
 void moloch_rules_run_before_save(MolochSession_t *session, int final);
+void moloch_rules_stats();
 void moloch_rules_exit();
 
 /******************************************************************************/

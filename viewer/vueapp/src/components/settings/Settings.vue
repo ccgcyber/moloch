@@ -146,7 +146,7 @@
                     <b-radio value="gmt"
                       v-b-tooltip.hover
                       class="btn-radio">
-                      GMT
+                      UTC
                     </b-radio>
                   </b-form-radio-group>
                 </b-form-group>
@@ -732,14 +732,17 @@
                     v-b-tooltip.hover
                     title="Start processing cron query since">
                     <option value="0">Now</option>
-                    <option value="1">1 hr ago</option>
-                    <option value="6">6 hrs ago</option>
-                    <option value="24">24 hrs ago</option>
-                    <option value="48">48 hrs ago</option>
-                    <option value="72">3 days ago</option>
+                    <option value="1">1 hour ago</option>
+                    <option value="6">6 hours ago</option>
+                    <option value="24">24 hours ago</option>
+                    <option value="48">48 hours ago</option>
+                    <option value="72">72 hours ago</option>
                     <option value="168">1 week ago</option>
+                    <option value="336">2 weeks ago</option>
                     <option value="720">1 month ago</option>
+                    <option value="1440">2 months ago</option>
                     <option value="4380">6 months ago</option>
+                    <option value="8760">1 year ago</option>
                     <option value="-1">All (careful)</option>
                   </select>
                 </td>
@@ -1615,7 +1618,7 @@
               @click="createNewNotifier(notifier)">
               <span class="fa fa-plus-circle">
               </span>&nbsp;
-              Create {{ notifier.type }} Notifier
+              Create {{ notifier.name }} Notifier
             </button>
           </h3>
 
@@ -1646,7 +1649,7 @@
                 <div class="card-body">
                   <!-- newNotifier title -->
                   <h4 class="mb-3">
-                    {{ newNotifier.type }}
+                    Create new {{ newNotifier.type }} notifier
                     <span v-if="newNotifierError"
                       class="alert alert-sm alert-danger pull-right pr-2">
                       {{ newNotifierError }}
@@ -1656,7 +1659,7 @@
                     </span>
                   </h4> <!-- /new notifier title -->
                   <!-- new notifier name -->
-                  <div class="input-group">
+                  <div class="input-group mb-2">
                     <span class="input-group-prepend cursor-help"
                       :title="`Give your ${newNotifier.type} notifier a unique name`"
                       v-b-tooltip.hover.bottom-left>
@@ -1669,9 +1672,7 @@
                       v-model="newNotifier.name"
                       type="text"
                     />
-                  </div>
-                  <!-- /new notifier name -->
-                  <hr>
+                  </div> <!-- /new notifier name -->
                   <!-- new notifier fields -->
                   <div v-for="field of newNotifier.fields"
                     :key="field.name">
@@ -1746,7 +1747,7 @@
                     {{ notifier.type }} Notifier
                   </h4> <!-- /notifier title -->
                   <!-- notifier name -->
-                  <div class="input-group">
+                  <div class="input-group mb-2">
                     <span class="input-group-prepend cursor-help"
                       :title="`Give your notifier a unique name`"
                       v-b-tooltip.hover.bottom-left>
@@ -1759,9 +1760,7 @@
                       v-model="notifier.name"
                       type="text"
                     />
-                  </div>
-                  <!-- /notifier name -->
-                  <hr>
+                  </div> <!-- /notifier name -->
                   <!-- notifier fields -->
                   <div v-for="field of notifier.fields"
                     :key="field.name">
@@ -2595,7 +2594,7 @@ export default {
     /* NOTIFIERS --------------------------------------- */
     /* opens the form to create a new notifier */
     createNewNotifier: function (notifier) {
-      this.newNotifier = notifier;
+      this.newNotifier = JSON.parse(JSON.stringify(notifier));
     },
     /* gets the type of input associated with a field */
     getFieldInputType: function (field) {

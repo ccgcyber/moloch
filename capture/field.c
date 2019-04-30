@@ -329,7 +329,7 @@ int moloch_field_define(char *group, char *kind, char *expression, char *friendl
     if (flags & MOLOCH_FIELD_FLAG_NODB)
         return minfo->pos;
 
-    MolochFieldInfo_t *info = 0;
+    MolochFieldInfo_t *info;
     if (flags & MOLOCH_FIELD_FLAG_CNT) {
         snprintf(dbField2, sizeof(dbField2), "%sCnt", dbField);
         HASH_FIND(d_, fieldsByDb, dbField2, info);
@@ -551,12 +551,14 @@ const char *moloch_field_string_add(int pos, MolochSession_t *session, const cha
         HASH_ADD(s_, *(field->shash), hstring->str, hstring);
         goto added;
     case MOLOCH_FIELD_TYPE_STR_GHASH:
-        if (g_hash_table_lookup(field->ghash, string)) {
-            field->jsonSize -= (6 + 2*len);
-            return NULL;
-        }
         if (copy)
             string = g_strndup(string, len);
+        if (g_hash_table_lookup(field->ghash, string)) {
+            field->jsonSize -= (6 + 2*len);
+            if (copy)
+                g_free((gpointer)string);
+            return NULL;
+        }
         g_hash_table_add(field->ghash, (gpointer)string);
         goto added;
     default:
@@ -1461,7 +1463,7 @@ void moloch_field_init()
 /******************************************************************************/
 void moloch_field_exit()
 {
-    MolochFieldInfo_t *info = 0;
+    MolochFieldInfo_t *info;
 
     HASH_FORALL_POP_HEAD(d_, fieldsByDb, info,
         g_free(info->dbFieldFull);

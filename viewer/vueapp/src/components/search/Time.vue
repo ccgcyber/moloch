@@ -26,14 +26,50 @@
           @blur="onOffTimeRangeFocus"
           v-focus-input="focusTimeRange">
           <option value="1">Last hour</option>
-          <option value="6">Last 6 hours</option>
-          <option value="24">Last 24 hours</option>
-          <option value="48">Last 48 hours</option>
-          <option value="72">Last 72 hours</option>
-          <option value="168">Last week</option>
-          <option value="720">Last month</option>
-          <option value="4380">Last 6 months</option>
-          <option value="-1">All (careful)</option>
+          <option value="6"
+            v-if="!user.timeLimit || user.timeLimit >= 6">
+            Last 6 hours
+          </option>
+          <option value="24"
+            v-if="!user.timeLimit || user.timeLimit >= 24">
+            Last 24 hours
+          </option>
+          <option value="48"
+            v-if="!user.timeLimit || user.timeLimit >= 48">
+            Last 48 hours
+          </option>
+          <option value="72"
+            v-if="!user.timeLimit || user.timeLimit >= 72">
+            Last 72 hours
+          </option>
+          <option value="168"
+            v-if="!user.timeLimit || user.timeLimit >= 168">
+            Last week
+          </option>
+          <option value="336"
+            v-if="!user.timeLimit || user.timeLimit >= 336">
+            Last 2 weeks
+          </option>
+          <option value="720"
+            v-if="!user.timeLimit || user.timeLimit >= 720">
+            Last month
+          </option>
+          <option value="1440"
+            v-if="!user.timeLimit || user.timeLimit >= 1440">
+            Last 2 months
+          </option>
+          <option value="4380"
+            v-if="!user.timeLimit || user.timeLimit >= 4380">
+            Last 6 months
+          </option>
+          <option value="8760"
+            v-if="!user.timeLimit || user.timeLimit >= 8760">
+            Last year
+          </option>
+          <option value="-1"
+            v-if="!user.timeLimit || user.timeLimit > 8760">
+            All (careful)
+          </option>
           <option value="0" disabled>Custom</option>
         </select>
       </div>
@@ -59,6 +95,34 @@
           id="startTime"
           tabindex="4">
         </date-picker>
+        <span class="input-group-append cursor-pointer"
+          id="prevStartTime"
+          @click="prevTime('start')">
+          <div class="input-group-text">
+            <span class="fa fa-step-backward">
+            </span>
+          </div>
+        </span>
+        <b-tooltip
+          v-if="isStartOfDay(time.startTime)"
+          target="prevStartTime">
+          Beginning of previous day
+        </b-tooltip>
+        <b-tooltip
+          v-else
+          target="prevStartTime">
+          Beginning of this day
+        </b-tooltip>
+        <span class="input-group-append cursor-pointer"
+          placement="topright"
+          v-b-tooltip.hover
+          title="Beginning of next day"
+          @click="nextTime('start')">
+          <div class="input-group-text">
+            <span class="fa fa-step-forward">
+            </span>
+          </div>
+        </span>
       </div>
     </div> <!-- /start time -->
 
@@ -82,6 +146,34 @@
           id="stopTime"
           tabindex="5">
         </date-picker>
+        <span class="input-group-append cursor-pointer"
+          placement="topright"
+          v-b-tooltip.hover
+          title="End of previous day"
+          @click="prevTime('stop')">
+          <div class="input-group-text">
+            <span class="fa fa-step-backward">
+            </span>
+          </div>
+        </span>
+        <span class="input-group-append cursor-pointer"
+          id="nextStopTime"
+          @click="nextTime('stop')">
+          <div class="input-group-text">
+            <span class="fa fa-step-forward">
+            </span>
+          </div>
+        </span>
+        <b-tooltip
+          v-if="isEndOfDay(time.stopTime)"
+          target="prevStartTime">
+          End of next day
+        </b-tooltip>
+        <b-tooltip
+          v-else
+          target="nextStopTime">
+          End of this day
+        </b-tooltip>
       </div>
     </div> <!-- /stop time -->
 
@@ -191,13 +283,47 @@ export default {
       datePickerOptions: {
         useCurrent: false,
         format: 'YYYY/MM/DD HH:mm:ss',
-        timeZone: this.timezone === 'local' || this.timezone === 'localtz' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'GMT',
+        timeZone: this.timezone === 'local' || this.timezone === 'localtz' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC',
         showClose: true,
         focusOnShow: false,
         showTodayButton: true,
-        allowInputToggle: true
+        allowInputToggle: true,
+        minDate: moment(0),
+        keyBinds: null // disable all key binds and manually monitor enter and escape
       }
     };
+  },
+  computed: {
+    user: function () {
+      return this.$store.state.user;
+    },
+    time: {
+      get: function () {
+        return this.$store.state.time;
+      },
+      set: function (newValue) {
+        this.$store.commit('setTime', newValue);
+      }
+    },
+    timeRange: {
+      get: function () {
+        return this.$store.state.timeRange;
+      },
+      set: function (newValue) {
+        this.$store.commit('setTimeRange', newValue);
+      }
+    },
+    focusTimeRange: {
+      get: function () {
+        return this.$store.state.focusTimeRange;
+      },
+      set: function (newValue) {
+        this.$store.commit('setFocusTimeRange', newValue);
+      }
+    },
+    shiftKeyHold: function () {
+      return this.$store.state.shiftKeyHold;
+    }
   },
   watch: {
     // watch for the date, startTime, stopTime, interval, and bounding
@@ -247,35 +373,14 @@ export default {
       this.$route.query.startTime,
       this.$route.query.stopTime
     );
-  },
-  computed: {
-    time: {
-      get: function () {
-        return this.$store.state.time;
-      },
-      set: function (newValue) {
-        this.$store.commit('setTime', newValue);
-      }
-    },
-    timeRange: {
-      get: function () {
-        return this.$store.state.timeRange;
-      },
-      set: function (newValue) {
-        this.$store.commit('setTimeRange', newValue);
-      }
-    },
-    focusTimeRange: {
-      get: function () {
-        return this.$store.state.focusTimeRange;
-      },
-      set: function (newValue) {
-        this.$store.commit('setFocusTimeRange', newValue);
-      }
-    },
-    shiftKeyHold: function () {
-      return this.$store.state.shiftKeyHold;
-    }
+
+    // register key up event listeners on start and stop time
+    // to close the datetimepickers because keyBinds for this
+    // component have been removed because of usability issues
+    setTimeout(() => { // wait for datetimepicker to load
+      $('#stopTime').on('keyup', this.stopDatePickerClose);
+      $('#startTime').on('keyup', this.startDatePickerClose);
+    });
   },
   methods: {
     /* exposed page functions ------------------------------------ */
@@ -288,6 +393,13 @@ export default {
       this.deltaTime = null;
       this.timeError = '';
       this.focusTimeRange = false;
+
+      if (this.user.timeLimit) {
+        if (this.timeRange > this.user.timeLimit ||
+          (this.timeRange === '-1' && this.user.timeLimit)) {
+          this.timeRange = this.user.timeLimit;
+        }
+      }
 
       this.$router.push({
         query: {
@@ -307,7 +419,6 @@ export default {
     closePicker: function () {
       // start or stop time was udpated, so set the timerange to custom
       this.timeRange = '0';
-      this.validateDate();
     },
     /* Fired when start datetime is changed */
     changeStartTime: function (event) {
@@ -318,8 +429,70 @@ export default {
     /* Fired when stop datetime is changed */
     changeStopTime: function (event) {
       let msDate = event.date.valueOf();
-      this.time.stopTime = Math.ceil(msDate / 1000);
+      this.time.stopTime = Math.floor(msDate / 1000);
       this.validateDate();
+    },
+    /**
+     * Determines whether the supplied time is the start of a day
+     * Fired from the previous start time button to determine tooltip text
+     * @param {number} time date in seconds from 1970
+     */
+    isStartOfDay: function (time) {
+      const currentTime = moment(time * 1000);
+      const startOfDayTime = moment(time * 1000).startOf('day');
+      return startOfDayTime.isSame(currentTime, 'seconds');
+    },
+    /**
+     * Determines whether the supplied time is the end of a day
+     * Fired from the next end time button to determine tooltip text
+     * @param {number} time date in seconds from 1970
+     */
+    isEndOfDay: function (time) {
+      const currentTime = moment(time * 1000);
+      const endOfDayTime = moment(time * 1000).endOf('day');
+      return endOfDayTime.isSame(currentTime, 'seconds');
+    },
+    /**
+     * Fired when clicking the previous time button on a time input
+     * @param {string} startOrStop whether to update the start time or stop time
+     */
+    prevTime: function (startOrStop) {
+      if (startOrStop === 'start') {
+        let newTime = moment(this.time.startTime * 1000).startOf('day');
+        if (this.isStartOfDay(this.time.startTime)) {
+          // it's the beginning of the day, so go to the beginning of the PREV day
+          newTime = newTime.subtract(1, 'days');
+        }
+        this.localStartTime = newTime;
+        this.time.startTime = Math.floor(this.localStartTime.valueOf() / 1000);
+      } else {
+        // stop time always goes to end of day of the previous day
+        let newTime = moment(this.time.stopTime * 1000).endOf('day');
+        newTime = newTime.subtract(1, 'days');
+        this.localStopTime = newTime;
+        this.time.stopTime = Math.floor(this.localStopTime.valueOf() / 1000);
+      }
+    },
+    /**
+     * Fired when clicking the next time button on a time input
+     * @param {string} startOrStop whether to update the start time or stop time
+     */
+    nextTime: function (startOrStop) {
+      if (startOrStop === 'start') {
+        // start time always goes to the beginning of the next day
+        let newTime = moment(this.time.startTime * 1000).startOf('day');
+        newTime = newTime.add(1, 'days');
+        this.localStartTime = newTime;
+        this.time.startTime = Math.floor(this.localStartTime.valueOf() / 1000);
+      } else {
+        let newTime = moment(this.time.stopTime * 1000).endOf('day');
+        if (this.isEndOfDay(this.time.stopTime)) {
+          // it's the end of the day, so go to the end of the NEXT day
+          newTime = newTime.add(1, 'days');
+        }
+        this.localStopTime = newTime;
+        this.time.stopTime = Math.floor(this.localStopTime.valueOf() / 1000);
+      }
     },
     /**
      * Fired when change bounded select box is changed
@@ -372,12 +545,43 @@ export default {
       }
 
       // update the displayed time range
-      this.deltaTime = stopSec - startSec;
+      let deltaTime = stopSec - startSec;
+
+      // make sure the time range does not exceed the user setting
+      if (this.user.timeLimit) {
+        let deltaTimeHrs = deltaTime / 3600;
+        if (deltaTimeHrs > this.user.timeLimit) {
+          this.timeError = `Your query cannot exceed ${this.user.timeLimit} hours`;
+          return;
+        }
+      }
+
+      this.deltaTime = deltaTime;
     },
     onOffTimeRangeFocus: function () {
       this.focusTimeRange = false;
     },
     /* helper functions ------------------------------------------ */
+    /**
+     * Fired when a key is released from the start time input
+     * Closes the start datetimepicker if the key pressed is enter or escape
+     * @param {object} key The keyup event
+     */
+    startDatePickerClose: function (key) {
+      if (key.keyCode === 13 || key.keyCode === 27) {
+        this.$refs.startTime.dp.hide();
+      }
+    },
+    /**
+     * Fired when a key is released from the stop time input
+     * Closes the stop datetimepicker if the key pressed is enter or escape
+     * @param {object} key The keyup event
+     */
+    stopDatePickerClose: function (key) {
+      if (key.keyCode === 13 || key.keyCode === 27) {
+        this.$refs.stopTime.dp.hide();
+      }
+    },
     /* Sets the current time in seconds */
     setCurrentTime: function () {
       currentTimeSec = Math.floor(new Date().getTime() / 1000);
@@ -413,6 +617,13 @@ export default {
      */
     setupTimeParams: function (date, startTime, stopTime) {
       if (date) { // time range is available
+        // make sure the time range does not exceed the user setting
+        if (this.user.timeLimit) {
+          if (date > this.user.timeLimit ||
+            (date === '-1' && this.user.timeLimit)) {
+            date = this.user.timeLimit;
+          }
+        }
         this.timeRange = date;
         if (parseInt(this.timeRange, 10) === -1) { // all time
           this.localStartTime = moment(0);
@@ -431,13 +642,6 @@ export default {
         let start = startTime;
 
         if (stop && start && !isNaN(stop) && !isNaN(start)) {
-          // if we can parse start and stop time, set them
-          this.timeRange = '0'; // custom time range
-          this.localStopTime = moment(stop * 1000);
-          this.time.stopTime = stop;
-          this.localStartTime = moment(start * 1000);
-          this.time.startTime = start;
-
           stop = parseInt(stop, 10);
           start = parseInt(start, 10);
 
@@ -446,7 +650,25 @@ export default {
           }
 
           // update the displayed time range
-          this.deltaTime = stop - start;
+          let deltaTime = stop - start;
+
+          // make sure the time range does not exceed the user setting
+          let deltaTimeHrs = deltaTime / 3600;
+          if (this.user.timeLimit) {
+            if (deltaTimeHrs > this.user.timeLimit) {
+              start = stop - (this.user.timeLimit * 3600);
+              deltaTime = stop - start;
+            }
+          }
+
+          this.deltaTime = deltaTime;
+
+          // if we can parse start and stop time, set them
+          this.timeRange = '0'; // custom time range
+          this.localStopTime = moment(stop * 1000);
+          this.time.stopTime = stop;
+          this.localStartTime = moment(start * 1000);
+          this.time.startTime = start;
         } else { // if we can't parse stop or start time, set default
           this.timeRange = '1'; // default to 1 hour
         }
@@ -472,26 +694,54 @@ export default {
       if (newParams.date !== oldParams.date) {
         change = true;
         if (newParams.date !== this.timeRange) {
+          // don't allow the time range to exceed the user setting
+          if (this.user.timeLimit) {
+            if (newParams.date > this.user.timeLimit ||
+              (newParams.date === '-1' && this.user.timeLimit)) {
+              newParams.date = this.user.timeLimit;
+            }
+          }
           this.timeRange = newParams.date || 0;
         }
         // calculate the new stop/start times because the range changed
         this.updateStartStopTime();
       }
 
+      let stopTimeChanged = false;
+      let startTimeChanged = false;
       if (newParams.stopTime && newParams.stopTime !== oldParams.stopTime) {
         change = true;
-        this.time.stopTime = newParams.stopTime;
-        this.localStopTime = moment(newParams.stopTime * 1000);
+        stopTimeChanged = true;
       }
 
       if (newParams.startTime && newParams.startTime !== oldParams.startTime) {
         change = true;
-        this.time.startTime = newParams.startTime;
-        this.localStartTime = moment(newParams.startTime * 1000);
+        startTimeChanged = true;
+      }
+
+      if (stopTimeChanged || startTimeChanged) {
+        // make sure the time window does not exceed the user setting
+        let deltaTime = newParams.stopTime - newParams.startTime;
+
+        let deltaTimeHrs = deltaTime / 3600;
+        if (!this.user.timeLimit || deltaTimeHrs <= this.user.timeLimit) {
+          if (startTimeChanged) {
+            this.time.startTime = newParams.startTime;
+            this.localStartTime = moment(newParams.startTime * 1000);
+          }
+          if (stopTimeChanged) {
+            this.time.stopTime = newParams.stopTime;
+            this.localStopTime = moment(newParams.stopTime * 1000);
+          }
+        }
       }
 
       if (change) { this.$emit('timeChange'); }
     }
+  },
+  beforeDestroy: function () {
+    $('#stopTime').off('keyup', this.stopDatePickerClose);
+    $('#startTime').off('keyup', this.startDatePickerClose);
   }
 };
 </script>
@@ -507,15 +757,7 @@ export default {
   font-size: 12px;
 }
 
-select.form-control {
-  font-size: var(--px-lg);
-}
-
 .time-range-control {
   -webkit-appearance: none;
-}
-
-.input-group-time input.form-control {
-  font-size: 75%;
 }
 </style>

@@ -63,6 +63,7 @@ LOCAL struct timespec startHealthCheck;
 LOCAL uint64_t        esHealthMS;
 
 LOCAL int             dbExit;
+LOCAL char            enablePacketLen;
 
 /******************************************************************************/
 extern MolochConfig_t        config;
@@ -193,11 +194,11 @@ end:
 /******************************************************************************/
 void moloch_db_geo_lookup6(MolochSession_t *session, struct in6_addr addr, char **g, char **as, char **rir, int *asFree)
 {
-    MolochIpInfo_t *ii = 0;
     *g = *as = *rir = 0;
     *asFree = 0;
 
     if (ipTree4) {
+        MolochIpInfo_t *ii;
         if ((ii = moloch_db_get_local_ip6(session, &addr))) {
             *g = ii->country;
             *as = ii->asn;
@@ -665,13 +666,15 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     }
     BSB_EXPORT_cstr(jbsb, "],");
 
-    BSB_EXPORT_cstr(jbsb, "\"packetLen\":[");
-    for(i = 0; i < session->fileLenArray->len; i++) {
-        if (i != 0)
-            BSB_EXPORT_u08(jbsb, ',');
-        BSB_EXPORT_sprintf(jbsb, "%u", (uint16_t)g_array_index(session->fileLenArray, uint16_t, i));
+    if (enablePacketLen) {
+        BSB_EXPORT_cstr(jbsb, "\"packetLen\":[");
+        for(i = 0; i < session->fileLenArray->len; i++) {
+            if (i != 0)
+                BSB_EXPORT_u08(jbsb, ',');
+            BSB_EXPORT_sprintf(jbsb, "%u", (uint16_t)g_array_index(session->fileLenArray, uint16_t, i));
+        }
+        BSB_EXPORT_cstr(jbsb, "],");
     }
-    BSB_EXPORT_cstr(jbsb, "],");
 
     BSB_EXPORT_cstr(jbsb, "\"fileId\":[");
     for (i = 0; i < session->fileNumArray->len; i++) {
@@ -1152,7 +1155,7 @@ LOCAL uint64_t moloch_db_used_space()
             if (dir)
                 g_dir_close(dir);
             if (error) {
-                g_free(error);
+                g_error_free(error);
             }
             continue;
         }
@@ -1866,11 +1869,10 @@ LOCAL void moloch_db_load_geo_country(char *name)
         LOGEXIT("Couldn't initialize Country file %s error %s", name, MMDB_strerror(status));
 
     }
-    if (geoCountry)
+    if (geoCountry) {
         LOG("Loading new version of country file");
-
-    if (geoCountry)
         moloch_free_later(geoCountry, (GDestroyNotify) moloch_db_free_mmdb);
+    }
     geoCountry = country;
 }
 /******************************************************************************/
@@ -1882,11 +1884,10 @@ LOCAL void moloch_db_load_geo_asn(char *name)
         LOGEXIT("Couldn't initialize ASN file %s error %s", name, MMDB_strerror(status));
 
     }
-    if (geoASN)
+    if (geoASN) {
         LOG("Loading new version of asn file");
-
-    if (geoASN)
         moloch_free_later(geoASN, (GDestroyNotify) moloch_db_free_mmdb);
+    }
     geoASN = asn;
 }
 /******************************************************************************/
@@ -2324,7 +2325,7 @@ void moloch_db_init()
     if (!config.dryRun) {
         int t = 0;
         if (!config.noStats) {
-            g_thread_new("moloch-stats", &moloch_db_stats_thread, NULL);
+            g_thread_unref(g_thread_new("moloch-stats", &moloch_db_stats_thread, NULL));
         }
         timers[t++] = g_timeout_add_seconds(  1, moloch_db_flush_gfunc, 0);
         if (moloch_config_boolean(NULL, "dbEsHealthCheck", TRUE)) {
@@ -2335,6 +2336,8 @@ void moloch_db_init()
     for (thread = 0; thread < config.packetThreads; thread++) {
         MOLOCH_LOCK_INIT(dbInfo[thread].lock);
     }
+
+    enablePacketLen = moloch_config_boolean(NULL, "enablePacketLen", FALSE);
 }
 /******************************************************************************/
 void moloch_db_exit()

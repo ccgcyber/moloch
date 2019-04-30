@@ -39,6 +39,8 @@ LOCAL int radius_udp_parser(MolochSession_t *session, void *UNUSED(uw), const un
     while (BSB_REMAINING(bsb) > 2) {
         BSB_IMPORT_u08(bsb, type);
         BSB_IMPORT_u08(bsb, length);
+        if (length < 3)
+            break;
         length -= 2; // length includes the type/length
         BSB_IMPORT_ptr(bsb, value, length);
         if (BSB_IS_ERROR(bsb)) {
@@ -106,14 +108,14 @@ void moloch_parser_init()
     userField = moloch_field_define("radius", "termfield",
         "radius.user", "User", "radius.user",
         "RADIUS user",
-        MOLOCH_FIELD_TYPE_STR_HASH,  0,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  0,
         "category", "user",
         (char *)NULL);
 
     macField = moloch_field_define("radius", "lotermfield",
         "radius.mac", "MAC", "radius.mac",
         "Radius Mac",
-        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        MOLOCH_FIELD_TYPE_STR_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 
     endpointIpField = moloch_field_define("radius", "ip",
