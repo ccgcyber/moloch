@@ -17,6 +17,25 @@ Vue.filter('commaString', (input) => {
 });
 
 /**
+ * Rounds a number then adds commas so it's easier to read
+ *
+ * @example
+ * '{{ 123456789 | roundCommaString }}'
+ * this.$options.filters.roundCommaString(123456789);
+ *
+ * @param {int} input     The number to add commas to
+ * @param {int} decimals  The number of decimals to preserve, default = 0
+ * @returns {string}      The number string with commas
+ */
+Vue.filter('roundCommaString', (input, decimals) => {
+  if (isNaN(input)) { return 0; }
+
+  if (!decimals) { decimals = 0; }
+
+  return Vue.options.filters.commaString(Vue.options.filters.round(input, decimals));
+});
+
+/**
  * Parses ipv6
  *
  * @example
@@ -125,26 +144,25 @@ Vue.filter('humanReadableNumber', (num) => {
  * Parses date to string and applies the selected timezone
  *
  * @example
- * '{{ 1524680821 | timezoneDateString("local", "YYYY/MM/DD HH:mm:ss z") }}'
- * this.$options.filters.timezoneDateString(1524680821, "local", "YYYY/MM/DD HH:mm:ss z");
+ * '{{ 1524680821 | timezoneDateString("local", false) }}'
+ * this.$options.filters.timezoneDateString(1524680821, "local", false);
  *
- * @param {int} seconds      The time in seconds from epoch
+ * @param {int} ms           The time in milliseconds from epoch
  * @param {string} timezone  The timezone to use ('gmt', 'local', or 'localtz'), default = 'local'
- * @param {string} format    The format to display the date string, default = 'YYYY/MM/DD HH:mm:ss z'
  * @returns {string}         The date formatted and converted to the requested timezone
  */
-Vue.filter('timezoneDateString', (seconds, timezone, format) => {
-  if (!format) { format = 'YYYY/MM/DD HH:mm:ss z'; }
+Vue.filter('timezoneDateString', (ms, timezone, showMs) => {
+  let format = 'YYYY/MM/DD HH:mm:ss z';
 
-  let time = 1000 * seconds;
+  if (showMs) { format = 'YYYY/MM/DD HH:mm:ss.SSS z'; }
 
   if (timezone === 'gmt') {
-    return moment.tz(time, 'utc').format(format);
+    return moment.tz(ms, 'utc').format(format);
   } else if (timezone === 'localtz') {
-    return moment.tz(time, Intl.DateTimeFormat().resolvedOptions().timeZone).format(format);
+    return moment.tz(ms, Intl.DateTimeFormat().resolvedOptions().timeZone).format(format);
   }
 
-  return moment(time).format(format);
+  return moment(ms).format(format);
 });
 
 /**
@@ -171,7 +189,7 @@ Vue.filter('round', function (value, decimals) {
  *
  * @example
  * '{{ 1524680821790 | readableTime }}'
- * this.$options.filters.timezoneDateString(1524680821790);
+ * this.$options.filters.readableTime(1524680821790);
  *
  * @param {int} ms    The time in ms from epoch
  * @returns {string}  The human readable time range
@@ -212,7 +230,7 @@ Vue.filter('readableTime', function (ms) {
  *
  * @example
  * '{{ 1524680821790 | readableTime }}'
- * this.$options.filters.timezoneDateString(1524680821790);
+ * this.$options.filters.readableTimeCompact(1524680821790);
  *
  * @param {int} ms    The time in ms from epoch
  * @returns {string}  The human readable time range
@@ -264,4 +282,28 @@ Vue.filter('searchFields', function (searchTerm, fields, excludeTokens) {
         return item.toLowerCase().includes(searchTerm);
       }));
   });
+});
+
+/**
+ * Builds an expression for search.
+ * Stringifies necessary values and escapes necessary characters
+ *
+ * @example
+ * '{{ 'ip.dst' | buildExpression('10.0.0.1', '==') }}'
+ * this.$options.filters.buildExpression('ip.dst', '10.0.0.1', '==');
+ *
+ * @param {string} field  The field name
+ * @param {string} value  The field value
+ * @param {string} op     The relational operator
+ * @returns {string}      The fully built expression
+ */
+Vue.filter('buildExpression', function (field, value, op) {
+  // for values required to be strings in the search expression
+  const str = /[^(EXISTS!)-+a-zA-Z0-9_.@:*?/]+/.test(value);
+
+  // escape unescaped quotes
+  value = value.toString().replace(/\\([\s\S])|(")/g, '\\$1$2');
+  if (str) { value = `"${value}"`; }
+
+  return `${field} ${op} ${value}`;
 });

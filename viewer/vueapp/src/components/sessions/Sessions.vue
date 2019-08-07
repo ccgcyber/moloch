@@ -42,6 +42,7 @@
         <moloch-sticky-sessions
           class="sticky-sessions"
           v-if="stickySessions.length"
+          :ms="user.settings.ms"
           :sessions="stickySessions"
           :timezone="user.settings.timezone"
           @closeSession="closeSession"
@@ -91,18 +92,23 @@
                     class="group-header">
                     {{ key }}
                   </b-dropdown-header>
-                  <!-- TODO fix tooltip placement -->
-                  <!-- https://github.com/bootstrap-vue/bootstrap-vue/issues/1352 -->
-                  <b-dropdown-item
-                    v-for="(field, k) in group"
-                    :key="key + k"
-                    :class="{'active':isColVisible(field.dbField) >= 0}"
-                    @click.stop.prevent="toggleColVis(field.dbField)"
-                    v-b-tooltip.hover.top
-                    :title="field.help">
-                    {{ field.friendlyName }}
-                    <small>({{ field.exp }})</small>
-                  </b-dropdown-item>
+                  <template v-for="(field, k) in group">
+                    <b-dropdown-item
+                      :id="key + k + 'item'"
+                      :key="key + k + 'item'"
+                      :class="{'active':isColVisible(field.dbField) >= 0}"
+                      @click.stop.prevent="toggleColVis(field.dbField)">
+                      {{ field.friendlyName }}
+                      <small>({{ field.exp }})</small>
+                    </b-dropdown-item>
+                    <b-tooltip v-if="field.help"
+                      :key="key + k + 'tooltip'"
+                      :target="key + k + 'item'"
+                      placement="right"
+                      boundary="window">
+                      {{ field.help }}
+                    </b-tooltip>
+                  </template>
                 </template>
               </b-dropdown> <!-- /column visibility button -->
               <!-- column save button -->
@@ -131,9 +137,7 @@
                       <button type="button"
                         class="btn btn-theme-secondary"
                         :disabled="!newColConfigName"
-                        @click="saveColumnConfiguration"
-                        v-b-tooltip.hover
-                        title="Save this custom column configuration">
+                        @click="saveColumnConfiguration">
                         <span class="fa fa-save">
                         </span>
                       </button>
@@ -152,12 +156,18 @@
                   class="text-success">
                   {{ colConfigSuccess }}
                 </b-dropdown-item>
-                <b-dropdown-item
-                  v-b-tooltip.hover
-                  @click.stop.prevent="loadColumnConfiguration(-1)"
-                  title="Reset table to default columns">
-                  Moloch Default
-                </b-dropdown-item>
+                <template>
+                  <b-dropdown-item
+                    id="coldefault"
+                    @click.stop.prevent="loadColumnConfiguration(-1)">
+                    Moloch Default
+                  </b-dropdown-item>
+                  <b-tooltip target="coldefault"
+                    placement="right"
+                    boundary="window">
+                    Reset table to default columns
+                  </b-tooltip>
+                </template>
                 <b-dropdown-item
                   v-for="(config, key) in colConfigs"
                   :key="key"
@@ -215,12 +225,18 @@
                   </b-dropdown-header>
                   <b-dropdown-divider>
                   </b-dropdown-divider>
-                  <b-dropdown-item
-                    @click.stop.prevent="resetInfoVisibility"
-                    v-b-tooltip.hover.top
-                    title="Reset info column to default fields">
-                    Moloch Default
-                  </b-dropdown-item>
+                  <template>
+                    <b-dropdown-item
+                      id="infodefault"
+                      @click.stop.prevent="resetInfoVisibility">
+                      Moloch Default
+                    </b-dropdown-item>
+                    <b-tooltip target="infodefault"
+                      placement="left"
+                      boundary="window">
+                      Reset info column to default fields
+                    </b-tooltip>
+                  </template>
                   <b-dropdown-divider>
                   </b-dropdown-divider>
                   <template v-if="infoFieldVisMenuOpen"
@@ -231,18 +247,23 @@
                       class="group-header">
                       {{ key }}
                     </b-dropdown-header>
-                    <!-- TODO fix tooltip placement -->
-                    <!-- https://github.com/bootstrap-vue/bootstrap-vue/issues/1352 -->
-                    <b-dropdown-item
-                      v-for="(field, k) in group"
-                      :key="key + k"
-                      :class="{'active':isInfoVisible(field.dbField) >= 0}"
-                      @click.stop.prevent="toggleInfoVis(field.dbField)"
-                      v-b-tooltip.hover.top
-                      :title="field.help">
-                      {{ field.friendlyName }}
-                      <small>({{ field.exp }})</small>
-                    </b-dropdown-item>
+                    <template v-for="(field, k) in group">
+                      <b-dropdown-item
+                        :id="key + k + 'infoitem'"
+                        :key="key + k + 'infoitem'"
+                        :class="{'active':isInfoVisible(field.dbField) >= 0}"
+                        @click.stop.prevent="toggleInfoVis(field.dbField)">
+                        {{ field.friendlyName }}
+                        <small>({{ field.exp }})</small>
+                      </b-dropdown-item>
+                      <b-tooltip v-if="field.help"
+                        :key="key + k + 'infotooltip'"
+                        :target="key + k + 'infoitem'"
+                        placement="left"
+                        boundary="window">
+                        {{ field.help }}
+                      </b-tooltip>
+                    </template>
                   </template>
                 </b-dropdown> <!-- /info field visibility button -->
               </span> <!-- /non-sortable column -->
@@ -282,6 +303,10 @@
                     @click="openSpiGraph(header.dbField)">
                     Open {{ header.friendlyName }} in SPI Graph
                   </b-dropdown-item>
+                  <b-dropdown-item
+                    @click="fieldExists(header.exp, '==')">
+                    Add {{ header.friendlyName }} EXISTS! to query
+                  </b-dropdown-item>
                 </template> <!-- /single field column -->
                 <!-- multiple field column -->
                 <template v-else-if="header.children && header.type !== 'seconds'">
@@ -311,6 +336,10 @@
                     <b-dropdown-item
                       @click="openSpiGraph(child.dbField)">
                       Open {{ child.friendlyName }} in SPI Graph
+                    </b-dropdown-item>
+                    <b-dropdown-item
+                      @click="fieldExists(child.exp, '==')">
+                      Add {{ child.friendlyName }} EXISTS! to query
                     </b-dropdown-item>
                   </span>
                 </template> <!-- /multiple field column -->
@@ -560,6 +589,14 @@ export default {
         expression: this.$store.state.expression || undefined
       };
     },
+    sorts: {
+      get: function () {
+        return this.$store.state.sorts || 'firstPacket:desc';
+      },
+      set: function (newValue) {
+        this.$store.commit('setSorts', newValue);
+      }
+    },
     user: function () {
       return this.$store.state.user;
     },
@@ -689,7 +726,7 @@ export default {
         }
       }
 
-      this.query.sorts = this.tableState.order;
+      this.sorts = this.tableState.order;
 
       this.saveTableState();
 
@@ -763,8 +800,8 @@ export default {
           this.tableState.order.splice(sortIndex, 1);
         }
 
-        // update the query
-        this.query.sorts = this.tableState.order;
+        // update the sorts
+        this.sorts = this.tableState.order;
       }
 
       return updated;
@@ -880,7 +917,7 @@ export default {
         this.tableState.order = this.colConfigs[index].order.slice();
       }
 
-      this.query.sorts = this.tableState.order;
+      this.sorts = this.tableState.order;
 
       this.saveTableState();
 
@@ -1054,6 +1091,15 @@ export default {
     exportUnique: function (exp, counts) {
       SessionsService.exportUniqueValues(exp, counts, this.$route.query);
     },
+    /**
+     * Adds field == EXISTS! to the search expression
+     * @param {string} field  The field name
+     * @param {string} op     The relational operator
+     */
+    fieldExists: function (field, op) {
+      const fullExpression = this.$options.filters.buildExpression(field, 'EXISTS!', op);
+      this.$store.commit('addToExpression', { expression: fullExpression });
+    },
 
     /* helper functions ---------------------------------------------------- */
     reloadTable: function () {
@@ -1086,7 +1132,7 @@ export default {
           }
 
           // update the sort order for the session table query
-          this.query.sorts = this.tableState.order;
+          this.sorts = this.tableState.order;
 
           FieldService.get()
             .then((result) => {
@@ -1116,8 +1162,8 @@ export default {
       // exists in the table headers, apply it
       if (this.user.settings && this.user.settings.sortColumn !== 'last' &&
          this.tableState.visibleHeaders.indexOf(this.user.settings.sortColumn) > -1) {
-        this.query.sorts = [[this.user.settings.sortColumn, this.user.settings.sortDirection]];
-        this.tableState.order = this.query.sorts;
+        this.sorts = [[this.user.settings.sortColumn, this.user.settings.sortDirection]];
+        this.tableState.order = this.sorts;
       }
 
       // if user had infoFields set, update the info fields and custom info column
@@ -1156,14 +1202,14 @@ export default {
         expandedSessions.push(session.id);
       }
 
-      this.query.sorts = this.tableState.order || JSON.parse(JSON.stringify(defaultTableState.order));
+      this.sorts = this.tableState.order || JSON.parse(JSON.stringify(defaultTableState.order));
 
       if (this.viewChanged && this.views) {
         for (let view in this.views) {
           if (view === this.query.view && this.views[view].sessionsColConfig) {
             this.tableState = JSON.parse(JSON.stringify(this.views[view].sessionsColConfig));
             this.mapHeadersToFields();
-            this.query.sorts = this.tableState.order;
+            this.sorts = this.tableState.order;
             this.saveTableState();
           }
         }

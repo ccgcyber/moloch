@@ -149,8 +149,16 @@ my $pwd = "*/pcap";
     $info = viewerGet("/user/columns?molochRegressionUser=test1");
     eq_or_diff($info, from_json('[{"name":"column1","order":[["lastPacket","asc"]],"columns":["srcIp","dstIp"]}]'), "column: 1 item");
 
+    sleep 2;
+    esGet("/_flush");
+    esGet("/_refresh");
+
     $info = viewerPostToken("/user/columns/delete?molochRegressionUser=test1", 'name=column1', $test1Token);
     ok($info->{success}, "column: delete found");
+
+    sleep 2;
+    esGet("/_flush");
+    esGet("/_refresh");
 
     $info = viewerGet("/user/columns?molochRegressionUser=test1");
     eq_or_diff($info, from_json("[]"), "column: empty");
@@ -180,8 +188,14 @@ my $pwd = "*/pcap";
     $info = viewerGet("/user/spiview/fields?molochRegressionUser=test1");
     eq_or_diff($info, from_json('[{"name":"sfields1","fields":["srcIp","dstIp"]}]'), "spiview fields: 1 item");
 
+    sleep(1);
+    esGet("/_refresh");
+
     $info = viewerPostToken("/user/spiview/fields/delete?molochRegressionUser=test1", 'name=sfields1', $test1Token);
     ok($info->{success}, "spiview fields: delete found");
+
+    sleep(1);
+    esGet("/_refresh");
 
     $info = viewerGet("/user/spiview/fields?molochRegressionUser=test1");
     eq_or_diff($info, from_json("[]"), "spiview fields: empty");

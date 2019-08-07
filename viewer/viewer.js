@@ -17,7 +17,7 @@
  */
 'use strict';
 
-var MIN_DB_VERSION = 60;
+const MIN_DB_VERSION = 62;
 
 //// Modules
 //////////////////////////////////////////////////////////////////////////////////
@@ -83,12 +83,25 @@ var internals = {
                20,                                // Transmit and extra time
 
 //http://garethrees.org/2007/11/14/pngcrush/
-  emptyPNG: new Buffer("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==", 'base64'),
+  emptyPNG: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==", 'base64'),
   PNG_LINE_WIDTH: 256,
   runningHuntJob: undefined,
   proccessHuntJobsInitialized: false,
-  notifiers: undefined
+  notifiers: undefined,
+  prefix: Config.get('prefix', ''),
+  lookupTypeMap: {
+    ip: 'ip',
+    integer: 'number',
+    termfield: 'string',
+    uptermfield: 'string',
+    lotermfield: 'string'
+  }
 };
+
+// make sure there's an _ after the prefix
+if (internals.prefix && !internals.prefix.endsWith('_')) {
+  internals.prefix = `${internals.prefix}_`;
+}
 
 if (Config.get("uploadFileSizeLimit")) {
   internals.uploadLimits.fileSize = parseInt(Config.get("uploadFileSizeLimit"));
@@ -321,6 +334,15 @@ if (Config.get("passwordSecret")) {
     });
   });
 }
+
+// add lookups for queries
+app.use(function (req, res, next) {
+  if (!req.user) { return next(); }
+  Db.getLookupsCache(req.user.userId, (err, lookupsMap) => {
+    req.lookups = lookupsMap || {};
+    return next();
+  });
+});
 
 app.use(function(req, res, next) {
   if (!req.user || !req.user.userId) {
@@ -2640,7 +2662,7 @@ function buildSessionQuery (req, buildCb) {
   if ((req.query.date && req.query.date === '-1') ||
       (req.query.segments && req.query.segments === "all")) {
     interval = 60*60; // Hour to be safe
-  } else if (req.query.startTime && req.query.stopTime) {
+  } else if (req.query.startTime !== undefined && req.query.stopTime) {
     switch (req.query.bounding) {
     case "first":
       query.query.bool.filter.push({range: {firstPacket: {gte: req.query.startTime*1000, lte: req.query.stopTime*1000}}});
@@ -2734,6 +2756,8 @@ function buildSessionQuery (req, buildCb) {
       aggregations: {
         srcDataBytes: { sum: { field: 'srcDataBytes' } },
         dstDataBytes: { sum: { field: 'dstDataBytes' } },
+        srcBytes: { sum: { field: 'srcBytes' } },
+        dstBytes: { sum: { field: 'dstBytes' } },
         srcPackets: { sum: { field: 'srcPackets' } },
         dstPackets: { sum: { field: 'dstPackets' } }
       }
@@ -2754,10 +2778,17 @@ function buildSessionQuery (req, buildCb) {
 
   addSortToQuery(query, req.query, 'firstPacket');
 
-  var err = null;
-  molochparser.parser.yy = {emailSearch: req.user.emailSearch === true,
-                                  views: req.user.views,
-                              fieldsMap: Config.getFieldsMap()};
+  let err = null;
+
+  molochparser.parser.yy = {
+    views: req.user.views,
+    fieldsMap: Config.getFieldsMap(),
+    prefix: internals.prefix,
+    emailSearch: req.user.emailSearch === true,
+    lookups: req.lookups,
+    lookupTypeMap: internals.lookupTypeMap
+  };
+
   if (req.query.expression) {
     //req.query.expression = req.query.expression.replace(/\\/g, "\\\\");
     try {
@@ -3173,7 +3204,10 @@ app.get('/eshealth.json', noCacheJson, function(req, res) {
 app.get('/esindices/list', recordResponseTime, function(req, res) {
   if (req.user.hideStats) { return res.molochError(403, 'Need permission to view stats'); }
 
-  Db.indicesCache(function (err, indices) {
+  async.parallel({
+    indices: Db.indicesCache,
+    indicesSettings: Db.indicesSettingsCache
+  }, function (err, results) {
     if (err) {
       console.log ('ERROR -  /esindices/list', err);
       return res.send({
@@ -3182,6 +3216,9 @@ app.get('/esindices/list', recordResponseTime, function(req, res) {
         data: []
       });
     }
+
+    const indices = results.indices;
+    const indicesSettings = results.indicesSettings;
 
     let findices = [];
 
@@ -3194,6 +3231,22 @@ app.get('/esindices/list', recordResponseTime, function(req, res) {
       }
     } else {
       findices = indices;
+    }
+
+    // Add more fields from indicesSettings
+    for (const index of findices) {
+      if (!indicesSettings[index.index]) { continue; }
+
+      if (indicesSettings[index.index].settings['index.routing.allocation.require.molochtype']) {
+        index.molochtype = indicesSettings[index.index].settings['index.routing.allocation.require.molochtype'];
+      }
+
+      if (indicesSettings[index.index].settings['index.routing.allocation.total_shards_per_node']) {
+        index.shardsPerNode = indicesSettings[index.index].settings['index.routing.allocation.total_shards_per_node'];
+      }
+
+      index.creationDate = parseInt(indicesSettings[index.index].settings['index.creation_date']);
+      index.versionCreated = parseInt(indicesSettings[index.index].settings['index.version.created']);
     }
 
     // sorting
@@ -3212,6 +3265,7 @@ app.get('/esindices/list', recordResponseTime, function(req, res) {
       }
     }
 
+    // send result
     return res.send({
       recordsTotal: indices.length,
       recordsFiltered: findices.length,
@@ -3240,7 +3294,7 @@ app.post('/esindices/:index/optimize', logAction(), checkCookieToken, function(r
   if (!req.user.createEnabled) { return res.molochError(403, 'Need admin privileges'); }
 
   if (!req.params.index) {
-    return res.molochError(403, 'Missing index to delete');
+    return res.molochError(403, 'Missing index to optimize');
   }
 
   Db.optimizeIndex([req.params.index], {}, (err, result) => {
@@ -3250,6 +3304,39 @@ app.post('/esindices/:index/optimize', logAction(), checkCookieToken, function(r
   });
 
   // Always return right away, optimizeIndex might block
+  return res.send(JSON.stringify({ success: true, text: {} }));
+});
+
+app.post('/esindices/:index/close', logAction(), checkCookieToken, function(req, res) {
+  if (!req.user.createEnabled) { return res.molochError(403, 'Need admin privileges'); }
+
+  if (!req.params.index) {
+    return res.molochError(403, 'Missing index to close');
+  }
+
+  Db.closeIndex([req.params.index], {}, (err, result) => {
+    if (err) {
+      res.status(404);
+      return res.send(JSON.stringify({ success:false, text:'Error closing index' }));
+    }
+    return res.send(JSON.stringify({ success: true, text: result }));
+  });
+});
+
+app.post('/esindices/:index/open', logAction(), checkCookieToken, function(req, res) {
+  if (!req.user.createEnabled) { return res.molochError(403, 'Need admin privileges'); }
+
+  if (!req.params.index) {
+    return res.molochError(403, 'Missing index to open');
+  }
+
+  Db.openIndex([req.params.index], {}, (err, result) => {
+    if (err) {
+      console.log ("ERROR -", req.params.index, "open failed", err);
+    }
+  });
+
+  // Always return right away, openIndex might block
   return res.send(JSON.stringify({ success: true, text: {} }));
 });
 
@@ -3310,8 +3397,8 @@ app.get('/estask/list', recordResponseTime, function(req, res) {
     }
 
     let size = parseInt(req.query.size) || 1000;
-    if (tasks.length > size) {
-      tasks = tasks.slice(0, size);
+    if (rtasks.length > size) {
+      rtasks = rtasks.slice(0, size);
     }
 
     return res.send({
@@ -3526,6 +3613,7 @@ app.get('/esstats.json', recordResponseTime, noCacheJson, function(req, res) {
                Db.getClusterSettings({flatSettings: true})
              ])
   .then(([nodesStats, nodesInfo, health, settings]) => {
+
     let ipExcludes = [];
     if (settings.persistent['cluster.routing.allocation.exclude._ip']) {
       ipExcludes = settings.persistent['cluster.routing.allocation.exclude._ip'].split(',');
@@ -3567,15 +3655,21 @@ app.get('/esstats.json', recordResponseTime, noCacheJson, function(req, res) {
 
         let writeInfoOld = oldnode.thread_pool.bulk || oldnode.thread_pool.write;
 
-        completed = Math.max(0, Math.ceil((writeInfo.completed - writeInfoOld.completed)/timediffsec*1024));
-        rejected = Math.max(0, Math.ceil((writeInfo.rejected - writeInfoOld.rejected)/timediffsec*1024));
+        completed = Math.max(0, Math.ceil((writeInfo.completed - writeInfoOld.completed)/timediffsec));
+        rejected = Math.max(0, Math.ceil((writeInfo.rejected - writeInfoOld.rejected)/timediffsec));
       }
 
       const ip = (node.ip ? node.ip.split(':')[0] : node.host);
 
       let threadpoolInfo;
+      let version = "";
+      let molochtype;
       if (nodesInfo.nodes[nodeKeys[n]]) {
         threadpoolInfo = nodesInfo.nodes[nodeKeys[n]].thread_pool.bulk || nodesInfo.nodes[nodeKeys[n]].thread_pool.write;
+        version = nodesInfo.nodes[nodeKeys[n]].version;
+        if (nodesInfo.nodes[nodeKeys[n]].attributes) {
+          molochtype = nodesInfo.nodes[nodeKeys[n]].attributes.molochtype;
+        }
       } else {
         threadpoolInfo = { queue_size: 0 };
       }
@@ -3600,19 +3694,21 @@ app.get('/esstats.json', recordResponseTime, noCacheJson, function(req, res) {
         writesRejectedDelta: rejected,
         writesCompletedDelta: completed,
         writesQueueSize: threadpoolInfo.queue_size,
-        load: node.os.load_average !== undefined ? /* ES 2*/ node.os.load_average : /*ES 5*/ node.os.cpu.load_average["5m"]
+        load: node.os.load_average !== undefined ? /* ES 2*/ node.os.load_average : /*ES 5*/ node.os.cpu.load_average["5m"],
+        version: version,
+        molochtype: molochtype
       });
     }
 
-    if (req.query.sortField) {
-      if (req.query.sortField === 'nodeName') {
+    if (req.query.sortField && stats.length > 1) {
+      let field = req.query.sortField === 'nodeName'?'name':req.query.sortField;
+      if (typeof(stats[0][field]) === 'string') {
         if (req.query.desc === 'true') {
-          stats = stats.sort(function(a,b){ return b.name.localeCompare(a.name); });
+          stats = stats.sort(function(a,b){ return b[field].localeCompare(a[field]); });
         } else {
-          stats = stats.sort(function(a,b){ return a.name.localeCompare(b.name); });
+          stats = stats.sort(function(a,b){ return a[field].localeCompare(b[field]); });
         }
       } else {
-        var field = req.query.sortField;
         if (req.query.desc === 'true') {
           stats = stats.sort(function(a,b){ return b[field] - a[field]; });
         } else {
@@ -3986,6 +4082,8 @@ function graphMerge(req, query, aggregations) {
     db2Histo: [],
     pa1Histo: [],
     pa2Histo: [],
+    by1Histo: [],
+    by2Histo: [],
     xmin: req.query.startTime * 1000|| null,
     xmax: req.query.stopTime * 1000 || null,
     interval: query.aggregations?query.aggregations.dbHisto.histogram.interval / 1000 || 60 : 60
@@ -4004,6 +4102,8 @@ function graphMerge(req, query, aggregations) {
     graph.pa2Histo.push([key, item.dstPackets.value]);
     graph.db1Histo.push([key, item.srcDataBytes.value]);
     graph.db2Histo.push([key, item.dstDataBytes.value]);
+    graph.by1Histo.push([key, item.srcBytes.value]);
+    graph.by2Histo.push([key, item.dstBytes.value]);
   });
 
   return graph;
@@ -4132,6 +4232,7 @@ app.get('/sessions.json', logAction('sessions'), recordResponseTime, noCacheJson
       res.send(r);
       return;
     }
+
     let addMissing = false;
     if (req.query.fields) {
       query._source = queryValueToArray(req.query.fields);
@@ -4310,11 +4411,13 @@ app.get('/spigraph.json', logAction('spigraph'), fieldToExp, recordResponseTime,
           results.items.push(r);
           r.lpHisto = 0.0;
           r.dbHisto = 0.0;
+          r.byHisto = 0.0;
           r.paHisto = 0.0;
           var graph = r.graph;
           for (let i = 0; i < graph.lpHisto.length; i++) {
             r.lpHisto += graph.lpHisto[i][1];
             r.dbHisto += graph.db1Histo[i][1] + graph.db2Histo[i][1];
+            r.byHisto += graph.by1Histo[i][1] + graph.by2Histo[i][1];
             r.paHisto += graph.pa1Histo[i][1] + graph.pa2Histo[i][1];
           }
           if (results.items.length === result.responses.length) {
@@ -4433,6 +4536,7 @@ app.get('/spiview.json', logAction('spiview'), recordResponseTime, noCacheJson, 
             });
 
             delete result.aggregations.dbHisto;
+            delete result.aggregations.byHisto;
             delete result.aggregations.mapG1;
             delete result.aggregations.mapG2;
             delete result.aggregations.mapG3;
@@ -4965,7 +5069,7 @@ app.get('/unique.txt', logAction(), fieldToExp, function(req, res) {
     delete query.sort;
     delete query.aggregations;
 
-    if (req.query.field.match(/(ip.src:port.src|a1:p1|srcIp:srtPort|ip.src:srcPort)/)) {
+    if (req.query.field.match(/(ip.src:port.src|a1:p1|srcIp:srcPort|ip.src:srcPort)/)) {
       query.aggregations = {field: { terms : {field : "srcIp", size: aggSize}, aggregations: {field2: {terms: {field: "srcPort", size: 100}}}}};
     } else if (req.query.field.match(/(ip.dst:port.dst|a2:p2|dstIp:dstPort|ip.dst:dstPort)/)) {
       query.aggregations = {field: { terms : {field : "dstIp", size: aggSize}, aggregations: {field2: {terms: {field: "dstPort", size: 100}}}}};
@@ -5487,7 +5591,7 @@ function reqGetRawBody(req, cb) {
       if (err) {
         return cb(err);
       }
-      if (items === undefined || items.length === 0) {
+      if (items === undefined || items.length === 0) {
         return cb("No match");
       }
       cb(err, items[0].data);
@@ -6214,96 +6318,46 @@ app.get('/state/:name', function(req, res) {
 //////////////////////////////////////////////////////////////////////////////////
 //// Session Add/Remove Tags
 //////////////////////////////////////////////////////////////////////////////////
+function addTagsList (allTagNames, sessionList, doneCb) {
+  if (!sessionList.length) {
+    console.log('No sessions to add tags to');
+    return doneCb(null);
+  }
 
-function addTagsList(allTagNames, list, doneCb) {
-  async.eachLimit(list, 10, function(session, nextCb) {
-    var fields = session._source || session.fields;
-
-    if (!fields) {
-      console.log("No Fields", session);
+  async.eachLimit(sessionList, 10, function (session, nextCb) {
+    if (!session._source && !session.fields) {
+      console.log('No Fields', session);
       return nextCb(null);
     }
 
-    if (fields.tags === undefined) {
-      fields.tags = [];
-    }
+    let node = (Config.get('multiES', false) && session._node) ? session._node : undefined;
 
-
-    for (let i = 0, ilen = allTagNames.length; i < ilen; i++) {
-      if (fields.tags.indexOf(allTagNames[i]) === -1) {
-        fields.tags.push(allTagNames[i]);
-      }
-    }
-
-    // Do the ES update
-    var document = {
-      doc: {
-        tags: fields.tags,
-        tagsCnt: fields.tags.length
-      }
-    };
-
-    if (Config.get('multiES', false) && session._node) {
-      document._node = session._node;  // add tag to a session using MultiES
-    }
-
-    Db.update(session._index, 'session', session._id, document, function(err, data) {
-      if (err) {
-        console.log("addTagsList error", session, err, data);
-      }
+    Db.addTagsToSession(session._index, session._id, allTagNames, node, function (err, data) {
+      if (err) { console.log('addTagsList error', session, err, data); }
       nextCb(null);
     });
   }, doneCb);
 }
 
-function removeTagsList(res, allTagNames, list) {
-  if (!list.length) {
+function removeTagsList(res, allTagNames, sessionList) {
+  if (!sessionList.length) {
     return res.molochError(200, 'No sessions to remove tags from');
   }
 
-  async.eachLimit(list, 10, function(session, nextCb) {
-    var fields = session._source || session.fields;
-
-    if (!fields || !fields.tags) {
+  async.eachLimit(sessionList, 10, function(session, nextCb) {
+    if (!session._source && !session.fields) {
+      console.log('No Fields', session);
       return nextCb(null);
     }
 
-    for (let i = 0, ilen = allTagNames.length; i < ilen; i++) {
-      let pos = fields.tags.indexOf(allTagNames[i]);
-      if (pos !== -1) {
-        fields.tags.splice(pos, 1);
-      }
-    }
+    let node = (Config.get('multiES', false) && session._node) ? session._node : undefined;
 
-    let document;
-    if (fields.tags.length === 0) {
-      // Remove fields if there are no tags, so tags.cnt == EXISTS! query still behaves normally
-      document = {
-        script: "ctx._source.remove(\"tags\");ctx._source.remove(\"tagsCnt\");"
-      };
-    } else {
-      // Do the ES update
-      document = {
-        doc: {
-          tags: fields.tags,
-          tagsCnt: fields.tags.length
-        }
-      };
-
-    }
-
-    if (Config.get('multiES', false) && session._node) {
-      document._node = session._node; // remove tag from a session using MultiES
-    }
-
-    Db.update(session._index, 'session', session._id, document, function(err, data) {
-      if (err) {
-        console.log("removeTagsList error", err);
-      }
+    Db.removeTagsFromSession(session._index, session._id, allTagNames, node, function (err, data) {
+      if (err) { console.log('removeTagsList error', session, err, data); }
       nextCb(null);
     });
   }, function (err) {
-    return res.send(JSON.stringify({success: true, text: "Tags removed successfully"}));
+    return res.send(JSON.stringify({success: true, text: 'Tags removed successfully'}));
   });
 }
 
@@ -6466,8 +6520,16 @@ function sessionHunt (sessionId, options, cb) {
   }
 }
 
-function pauseHuntJobWithError (huntId, hunt, error) {
-  if (error) { console.log(error.value); }
+function pauseHuntJobWithError (huntId, hunt, error, node) {
+  let errorMsg = `${hunt.name} (${huntId}) hunt ERROR: ${error.value}.`;
+  if (node) {
+    errorMsg += ` On ${node} node`;
+    error.node = node;
+  }
+
+  console.log(errorMsg);
+
+  error.time = Math.floor(Date.now() / 1000);
 
   hunt.status = 'paused';
 
@@ -6529,28 +6591,8 @@ function updateHuntStats (hunt, huntId, session, searchedSessions, cb) {
 }
 
 function updateSessionWithHunt (session, sessionId, hunt, huntId) {
-  if (session.huntId === undefined) {
-    session.huntId = [];
-  }
-  if (session.huntName === undefined) {
-    session.huntName = [];
-  }
-
-  session.huntId.push(huntId);
-  session.huntName.push(hunt.name);
-
-  // Do the ES update
-  let document = {
-    doc: {
-      huntId: session.huntId,
-      huntName: session.huntName
-    }
-  };
-
-  Db.update(Db.sid2Index(sessionId), 'session', Db.sid2Id(sessionId), document, function (err, data) {
-    if (err) {
-      console.log('add hunt info error', session, err, data);
-    }
+  Db.addHuntToSession(Db.sid2Index(sessionId), Db.sid2Id(sessionId), huntId, hunt.name, (err, data) => {
+    if (err) { console.log('add hunt info error', session, err, data); }
   });
 }
 
@@ -6565,7 +6607,11 @@ function buildHuntOptions (hunt) {
   };
 
   if (hunt.searchType === 'regex' || hunt.searchType === 'hexregex') {
-    options.regex = new RegExp(hunt.search);
+    try {
+      options.regex = new RegExp(hunt.search);
+    } catch (e) {
+      pauseHuntJobWithError(hunt.huntId, hunt, { value: `Hunt error with regex: ${e}` });
+    }
   }
 
   return options;
@@ -6602,7 +6648,7 @@ function runHuntJob (huntId, hunt, query, user) {
       isLocalView(node, function () {
         sessionHunt(sessionId, options, function (err, matched) {
           if (err) {
-            return pauseHuntJobWithError(huntId, hunt, { value: `Hunt error searching session (${sessionId}): ${err}` });
+            return pauseHuntJobWithError(huntId, hunt, { value: `Hunt error searching session (${sessionId}): ${err}` }, node);
           }
 
           if (matched) {
@@ -6618,12 +6664,12 @@ function runHuntJob (huntId, hunt, query, user) {
 
         makeRequest (node, path, user, (err, response) => {
           if (err) {
-            return pauseHuntJobWithError(huntId, hunt, { value: `Error hunting on remote viewer: ${err}` });
+            return pauseHuntJobWithError(huntId, hunt, { value: `Error hunting on remote viewer: ${err}` }, node);
           }
           let json = JSON.parse(response);
           if (json.error) {
             console.log(`Error hunting on remote viewer: ${json.error} - ${path}`);
-            return pauseHuntJobWithError(huntId, hunt, { value: `Error hunting on remote viewer: ${json.error}` });
+            return pauseHuntJobWithError(huntId, hunt, { value: `Error hunting on remote viewer: ${json.error}` }, node);
           }
           if (json.matched) { hunt.matchedSessions++; }
           return updateHuntStats(hunt, huntId, session, searchedSessions, cb);
@@ -6696,64 +6742,69 @@ function processHuntJob (huntId, hunt) {
 
     user = user._source;
 
-    molochparser.parser.yy = {
-      emailSearch: user.emailSearch === true,
-      fieldsMap: Config.getFieldsMap()
-    };
-
-    // build session query
-    var query = {
-      from: 0,
-      size: 100, // Only fetch 100 items at a time
-      query: { bool: { must: [{ exists: { field: 'fileId' } }], filter: [{}] } },
-      _source: ['_id', 'node'],
-      sort: { lastPacket: { order: 'asc' } }
-    };
-
-    // get the size of the query if it is being restarted
-    if (hunt.lastPacketTime) {
-      query.size = hunt.totalSessions - hunt.searchedSessions;
-    }
-
-    if (hunt.query.expression) {
-      try {
-        query.query.bool.filter.push(molochparser.parse(hunt.query.expression));
-      } catch (e) {
-        pauseHuntJobWithError(huntId, hunt, { value: `Couldn't compile hunt query expression: ${e}` });
-        return;
-      }
-    }
-
-    if (user.expression && user.expression.length > 0) {
-      try {
-        // Expression was set by admin, so assume email search ok
-        molochparser.parser.yy.emailSearch = true;
-        var userExpression = molochparser.parse(user.expression);
-        query.query.bool.filter.push(userExpression);
-      } catch (e) {
-        pauseHuntJobWithError(huntId, hunt, { value: `Couldn't compile user forced expression (${user.expression}): ${e}` });
-        return;
-      }
-    }
-
-    lookupQueryItems(query.query.bool.filter, function (lerr) {
-      query.query.bool.filter[0] = {
-        range: {
-          lastPacket: {
-            gte: hunt.lastPacketTime || hunt.query.startTime * 1000,
-            lt: hunt.query.stopTime * 1000
-          }
-        }
+    Db.getLookupsCache(hunt.userId, (err, lookups) => {
+      molochparser.parser.yy = {
+        emailSearch: user.emailSearch === true,
+        fieldsMap: Config.getFieldsMap(),
+        prefix: internals.prefix,
+        lookups: lookups || {},
+        lookupTypeMap: internals.lookupTypeMap
       };
 
-      query._source = ['lastPacket', 'node', 'huntId', 'huntName'];
+      // build session query
+      let query = {
+        from: 0,
+        size: 100, // Only fetch 100 items at a time
+        query: { bool: { must: [{ exists: { field: 'fileId' } }], filter: [{}] } },
+        _source: ['_id', 'node'],
+        sort: { lastPacket: { order: 'asc' } }
+      };
 
-      if (Config.debug > 2) {
-        console.log('HUNT', hunt.name, hunt.userId, '- start:', new Date(hunt.lastPacketTime || hunt.query.startTime * 1000), 'stop:', new Date(hunt.query.stopTime * 1000));
+      // get the size of the query if it is being restarted
+      if (hunt.lastPacketTime) {
+        query.size = hunt.totalSessions - hunt.searchedSessions;
       }
 
-      // do sessions query
-      runHuntJob(huntId, hunt, query, user);
+      if (hunt.query.expression) {
+        try {
+          query.query.bool.filter.push(molochparser.parse(hunt.query.expression));
+        } catch (e) {
+          pauseHuntJobWithError(huntId, hunt, { value: `Couldn't compile hunt query expression: ${e}` });
+          return;
+        }
+      }
+
+      if (user.expression && user.expression.length > 0) {
+        try {
+          // Expression was set by admin, so assume email search ok
+          molochparser.parser.yy.emailSearch = true;
+          var userExpression = molochparser.parse(user.expression);
+          query.query.bool.filter.push(userExpression);
+        } catch (e) {
+          pauseHuntJobWithError(huntId, hunt, { value: `Couldn't compile user forced expression (${user.expression}): ${e}` });
+          return;
+        }
+      }
+
+      lookupQueryItems(query.query.bool.filter, function (lerr) {
+        query.query.bool.filter[0] = {
+          range: {
+            lastPacket: {
+              gte: hunt.lastPacketTime || hunt.query.startTime * 1000,
+              lt: hunt.query.stopTime * 1000
+            }
+          }
+        };
+
+        query._source = ['lastPacket', 'node', 'huntId', 'huntName'];
+
+        if (Config.debug > 2) {
+          console.log('HUNT', hunt.name, hunt.userId, '- start:', new Date(hunt.lastPacketTime || hunt.query.startTime * 1000), 'stop:', new Date(hunt.query.stopTime * 1000));
+        }
+
+        // do sessions query
+        runHuntJob(huntId, hunt, query, user);
+      });
     });
   });
 }
@@ -6857,7 +6908,7 @@ app.post('/hunt', logAction('hunt'), checkCookieToken, function (req, res) {
     return res.molochError(403, 'The hunt must search source or destination packets (or both)');
   }
   if (!req.body.hunt.query) { return res.molochError(403, 'Missing query'); }
-  if (!req.body.hunt.query.startTime || !req.body.hunt.query.stopTime) {
+  if (req.body.hunt.query.startTime === undefined || req.body.hunt.query.stopTime === undefined) {
     return res.molochError(403, 'Missing fully formed query (must include start time and stop time)');
   }
 
@@ -6940,19 +6991,27 @@ app.get('/hunt/list', recordResponseTime, function (req, res) {
     .then(([hunts, total]) => {
       if (hunts.error) { throw hunts.error; }
 
-      var results = { total:hunts.hits.total, results:[] };
+      let runningJob;
+
+      let results = { total: hunts.hits.total, results: [] };
       for (let i = 0, ilen = hunts.hits.hits.length; i < ilen; i++) {
-        var hit = hunts.hits.hits[i];
-        var hunt = hit._source;
+        const hit = hunts.hits.hits[i];
+        let hunt = hit._source;
         hunt.id = hit._id;
         hunt.index = hit._index;
+        // don't add the running job to the queue
+        if (internals.runningHuntJob && hunt.status === 'running') {
+          runningJob = hunt;
+          continue;
+        }
         results.results.push(hunt);
       }
 
-      var r = {
+      const r = {
         recordsTotal: total.count,
         recordsFiltered: results.total,
-        data: results.results
+        data: results.results,
+        runningJob: runningJob
       };
 
       res.send(r);
@@ -7018,6 +7077,230 @@ app.get('/:nodeName/hunt/:huntId/remote/:sessionId', function (req, res) {
       console.log('ERROR - hunt/remote', err);
       res.send({ matched: false, error: err });
     });
+});
+
+
+//////////////////////////////////////////////////////////////////////////////////
+//// Lookups
+//////////////////////////////////////////////////////////////////////////////////
+app.get('/lookups', getSettingUser, recordResponseTime, function (req, res) {
+  // return nothing if we can't find the user
+  const user = req.settingUser;
+  if (!user) { return res.send({}); }
+
+  const map = req.query.map && req.query.map === 'true';
+
+  // only get lookups for setting user or shared
+  let query = {
+    query: {
+      bool: {
+        should: [
+          { term: { shared: true } },
+          { term: { userId: req.settingUser.userId } }
+        ]
+      }
+    },
+    sort: { name: { order: 'asc' } }
+  };
+
+  // if fieldType exists, filter it
+  if (req.query.fieldType) {
+    const fieldType = internals.lookupTypeMap[req.query.fieldType];
+
+    if (fieldType) {
+      query.query.bool.must = [{
+        exists: { field: fieldType }
+      }];
+    }
+  }
+
+  Db.searchLookups(query)
+    .then((lookups) => {
+      if (lookups.error) { throw lookups.error; }
+
+      let results = { list: [], map: {} };
+      for (const hit of lookups.hits.hits) {
+        let lookup = hit._source;
+        lookup.id = hit._id;
+
+        if (lookup.number) {
+          lookup.type = 'number';
+        } else if (lookup.ip) {
+          lookup.type = 'ip';
+        } else {
+          lookup.type = 'string';
+        }
+
+        const values = lookup[lookup.type];
+
+        if (req.query.fieldFormat && req.query.fieldFormat === 'true') {
+          const name = `$${lookup.name}`;
+          lookup.exp = name;
+          lookup.dbField = name;
+          lookup.help = lookup.description ?
+            `${lookup.description}: ${values.join(', ')}` :
+            `${values.join(',')}`;
+        }
+
+        lookup.value = values.join('\n');
+        delete lookup[lookup.type];
+
+        if (map) {
+          results.map[lookup.id] = lookup;
+        } else {
+          results.list.push(lookup);
+        }
+      }
+
+      const sendResults = map ? results.map : results.list;
+      res.send(sendResults);
+    }).catch((err) => {
+      console.log('ERROR - /lookups', err);
+      return res.molochError(500, 'Error retrieving lookups - ' + err);
+    });
+});
+
+function createLookupsArray (lookupsString) {
+  // split string on commas and newlines
+  let values = lookupsString.split(/[,\n]+/g);
+
+  // remove any empty values
+  values = values.filter(function (val) {
+    return val !== '';
+  });
+
+  return values;
+}
+
+app.post('/lookups', getSettingUser, logAction('lookups'), checkCookieToken, function (req, res) {
+  // make sure all the necessary data is included in the post body
+  if (!req.body.var) { return res.molochError(403, 'Missing shortcut'); }
+  if (!req.body.var.name) { return res.molochError(403, 'Missing shortcut name'); }
+  if (!req.body.var.type) { return res.molochError(403, 'Missing shortcut type'); }
+  if (!req.body.var.value) { return res.molochError(403, 'Missing shortcut value'); }
+
+  req.body.var.name = req.body.var.name.replace(/[^-a-zA-Z0-9_]/g, '');
+
+  // return nothing if we can't find the user
+  const user = req.settingUser;
+  if (!user) { return res.send({}); }
+
+  const query = {
+    query: {
+      bool: {
+        must: [
+          { term: { name: req.body.var.name } }
+        ]
+      }
+    }
+  };
+
+  Db.searchLookups(query)
+    .then((lookups) => {
+      // search for lookup name collision
+      for (const hit of lookups.hits.hits) {
+        let lookup = hit._source;
+        if (lookup.name === req.body.var.name) {
+          return res.molochError(403, `A shortcut with the name, ${req.body.var.name}, already exists`);
+        }
+      }
+
+      let variable = req.body.var;
+      variable.userId = user.userId;
+
+      // comma/newline separated value -> array of values
+      const values = createLookupsArray(variable.value);
+      variable[variable.type] = values;
+
+      const type = variable.type;
+      delete variable.type;
+      delete variable.value;
+
+      Db.createLookup(variable, user.userId, function (err, result) {
+        if (err) {
+          console.log('shortcut create failed', err, result);
+          return res.molochError(500, 'Creating shortcut failed');
+        }
+        variable.id = result._id;
+        variable.type = type;
+        variable.value = values.join('\n');
+        delete variable.ip;
+        delete variable.string;
+        delete variable.number;
+        return res.send(JSON.stringify({ success: true, var: variable }));
+      });
+    }).catch((err) => {
+      console.log('ERROR - /lookups', err);
+      return res.molochError(500, 'Error creating lookup - ' + err);
+    });
+});
+
+app.put('/lookups/:id', getSettingUser, logAction('lookups/:id'), checkCookieToken, function (req, res) {
+  // make sure all the necessary data is included in the post body
+  if (!req.body.var) { return res.molochError(403, 'Missing shortcut'); }
+  if (!req.body.var.name) { return res.molochError(403, 'Missing shortcut name'); }
+  if (!req.body.var.type) { return res.molochError(403, 'Missing shortcut type'); }
+  if (!req.body.var.value) { return res.molochError(403, 'Missing shortcut value'); }
+
+  let sentVar = req.body.var;
+
+  Db.getLookup(req.params.id, (err, fetchedVar) => { // fetch variable
+    if (err) {
+      console.log('fetching shortcut to update failed', err, fetchedVar);
+      return res.molochError(500, 'Fetching shortcut to update failed');
+    }
+
+    // only allow admins or lookup creator to update lookup item
+    if (!req.user.createEnabled && req.settingUser.userId !== fetchedVar._source.userId) {
+      return res.molochError(403, 'Permission denied');
+    }
+
+    // comma/newline separated value -> array of values
+    const values = createLookupsArray(sentVar.value);
+    sentVar[sentVar.type] = values;
+    sentVar.userId = fetchedVar._source.userId;
+
+    delete sentVar.type;
+    delete sentVar.value;
+
+    Db.setLookup(req.params.id, fetchedVar.userId, sentVar, (err, info) => {
+      if (err) {
+        console.log('shortcut update failed', err, info);
+        return res.molochError(500, 'Updating shortcut failed');
+      }
+
+      sentVar.value = values.join('\n');
+
+      return res.send(JSON.stringify({
+        success : true,
+        var     : sentVar,
+        text    : 'Successfully updated shortcut'
+      }));
+    });
+  });
+});
+
+app.delete('/lookups/:id', getSettingUser, logAction('lookups/:id'), checkCookieToken, function (req, res) {
+  Db.getLookup(req.params.id, (err, variable) => { // fetch variable
+    if (err) {
+      console.log('fetching shortcut to delete failed', err, variable);
+      return res.molochError(500, 'Fetching shortcut to delete failed');
+    }
+
+    // only allow admins or lookup creator to delete lookup item
+    if (!req.user.createEnabled && req.settingUser.userId !== variable._source.userId) {
+      return res.molochError(403, 'Permission denied');
+    }
+
+    Db.deleteLookup(req.params.id, variable.userId, function (err, result) {
+      if (err || result.error) {
+        console.log('ERROR - deleting shortcut', err || result.error);
+        return res.molochError(500, 'Error deleting shortcut');
+      } else {
+        res.send(JSON.stringify({success: true, text: 'Deleted shortcut successfully'}));
+      }
+    });
+  });
 });
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -7920,13 +8203,13 @@ function processCronQueries() {
           cluster = cq.action.substring(8);
         }
 
-        Db.getUserCache(cq.creator, function(err, user) {
+        Db.getUserCache(cq.creator, function (err, user) {
           if (err && !user) {return forQueriesCb();}
           if (!user || !user.found) {console.log("User", cq.creator, "doesn't exist"); return forQueriesCb(null);}
           if (!user._source.enabled) {console.log("User", cq.creator, "not enabled"); return forQueriesCb();}
           user = user._source;
 
-          var options = {
+          let options = {
             user: user,
             cluster: cluster,
             saveId: Config.nodeName() + "-" + new Date().getTime().toString(36),
@@ -7934,66 +8217,74 @@ function processCronQueries() {
             qid: qid
           };
 
-          molochparser.parser.yy = {emailSearch: user.emailSearch === true,
-                                      fieldsMap: Config.getFieldsMap()};
+          Db.getLookupsCache(cq.creator, (err, lookups) => {
+            molochparser.parser.yy = {
+              emailSearch: user.emailSearch === true,
+              fieldsMap: Config.getFieldsMap(),
+              prefix: internals.prefix,
+              lookups: lookups,
+              lookupTypeMap: internals.lookupTypeMap
+            };
 
-          var query = {from: 0,
-                       size: 1000,
-                       query: {bool: {filter: [{}]}},
-                       _source: ["_id", "node"]
-                      };
+            let query = {
+              from: 0,
+              size: 1000,
+              query: {bool: {filter: [{}]}},
+              _source: ["_id", "node"]
+            };
 
-          try {
-            query.query.bool.filter.push(molochparser.parse(cq.query));
-          } catch (e) {
-            console.log("Couldn't compile cron query expression", cq, e);
-            return forQueriesCb();
-          }
-
-          if (user.expression && user.expression.length > 0) {
             try {
-              // Expression was set by admin, so assume email search ok
-              molochparser.parser.yy.emailSearch = true;
-              var userExpression = molochparser.parse(user.expression);
-              query.query.bool.filter.push(userExpression);
+              query.query.bool.filter.push(molochparser.parse(cq.query));
             } catch (e) {
-              console.log("Couldn't compile user forced expression", user.expression, e);
+              console.log("Couldn't compile cron query expression", cq, e);
               return forQueriesCb();
             }
-          }
 
-          lookupQueryItems(query.query.bool.filter, function (lerr) {
-            processCronQuery(cq, options, query, endTime, function (count, lpValue) {
-              if (Config.debug > 1) {
-                console.log("CRON - setting lpValue", new Date(lpValue*1000));
+            if (user.expression && user.expression.length > 0) {
+              try {
+                // Expression was set by admin, so assume email search ok
+                molochparser.parser.yy.emailSearch = true;
+                var userExpression = molochparser.parse(user.expression);
+                query.query.bool.filter.push(userExpression);
+              } catch (e) {
+                console.log("Couldn't compile user forced expression", user.expression, e);
+                return forQueriesCb();
               }
-              // Do the ES update
-              let document = {
-                doc: {
-                  lpValue: lpValue,
-                  lastRun: Math.floor(Date.now()/1000),
-                  count: (queries[qid].count || 0) + count
+            }
+
+            lookupQueryItems(query.query.bool.filter, function (lerr) {
+              processCronQuery(cq, options, query, endTime, function (count, lpValue) {
+                if (Config.debug > 1) {
+                  console.log("CRON - setting lpValue", new Date(lpValue*1000));
                 }
-              };
+                // Do the ES update
+                let document = {
+                  doc: {
+                    lpValue: lpValue,
+                    lastRun: Math.floor(Date.now()/1000),
+                    count: (queries[qid].count || 0) + count
+                  }
+                };
 
-              function continueProcess () {
-                Db.update('queries', 'query', qid, document, { refresh: true }, function () {
-                  // If there is more time to catch up on, repeat the loop, although other queries
-                  // will get processed first to be fair
-                  if (lpValue !== endTime) { repeat = true; }
-                  return forQueriesCb();
-                });
-              }
+                function continueProcess () {
+                  Db.update('queries', 'query', qid, document, { refresh: true }, function () {
+                    // If there is more time to catch up on, repeat the loop, although other queries
+                    // will get processed first to be fair
+                    if (lpValue !== endTime) { repeat = true; }
+                    return forQueriesCb();
+                  });
+                }
 
-              // issue alert via notifier if the count has changed and it has been at least 10 minutes
-              if (cq.notifier && count && queries[qid].count !== document.doc.count &&
-                (!cq.lastNotified || (Math.floor(Date.now()/1000) - cq.lastNotified >= 600))) {
-                let newMatchCount = document.doc.lastNotifiedCount ? (document.doc.count - document.doc.lastNotifiedCount) : document.doc.count;
-                let message = `*${cq.name}* cron query match alert:\n*${newMatchCount} new* matches\n*${document.doc.count} total* matches`;
-                issueAlert(cq.notifier, message, continueProcess);
-              } else {
-                return continueProcess();
-              }
+                // issue alert via notifier if the count has changed and it has been at least 10 minutes
+                if (cq.notifier && count && queries[qid].count !== document.doc.count &&
+                  (!cq.lastNotified || (Math.floor(Date.now()/1000) - cq.lastNotified >= 600))) {
+                  let newMatchCount = document.doc.lastNotifiedCount ? (document.doc.count - document.doc.lastNotifiedCount) : document.doc.count;
+                  let message = `*${cq.name}* cron query match alert:\n*${newMatchCount} new* matches\n*${document.doc.count} total* matches`;
+                  issueAlert(cq.notifier, message, continueProcess);
+                } else {
+                  return continueProcess();
+                }
+              });
             });
           });
         });
@@ -8100,6 +8391,9 @@ Db.initialize({host: internals.elasticBase,
                usersHost: Config.get("usersElasticsearch")?Config.get("usersElasticsearch").split(","):undefined,
                usersPrefix: Config.get("usersPrefix"),
                nodeName: Config.nodeName(),
+               esClientKey: Config.get("esClientKey", null),
+               esClientCert: Config.get("esClientCert", null),
+               esClientKeyPass: Config.get("esClientKeyPass", null),
                dontMapTags: Config.get("multiES", false),
                insecure: Config.insecure,
                ca: loadCaTrust(internals.nodeName),

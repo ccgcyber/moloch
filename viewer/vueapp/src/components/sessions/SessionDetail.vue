@@ -723,8 +723,11 @@ export default {
                 this.cluster = cluster;
               },
               openPermalink: function () {
+                const id = this.session.id.split(':');
+                const prefixlessId = id.length > 1 ? id[1] : id[0];
+
                 let params = {
-                  expression: `id == ${this.session.id}`,
+                  expression: `id == ${prefixlessId}`,
                   startTime: Math.floor(this.session.firstPacket / 1000),
                   stopTime: Math.ceil(this.session.lastPacket / 1000),
                   openAll: 1
@@ -798,6 +801,15 @@ export default {
                */
               toggleInfoVis: function (fieldID) {
                 this.$parent.toggleInfoVis(fieldID);
+              },
+              /**
+               * Adds field == EXISTS! to the search expression
+               * @param {string} field  The field name
+               * @param {string} op     The relational operator
+               */
+              fieldExists: function (field, op) {
+                const fullExpression = this.$options.filters.buildExpression(field, 'EXISTS!', op);
+                this.$store.commit('addToExpression', { expression: fullExpression });
               }
             },
             components: {
@@ -962,9 +974,9 @@ export default {
               timeEl = timeEl.getElementsByClassName('ts-value');
               if (!isNaN(value)) { // only parse value if it's a number (ms from 1970)
                 let time = this.$options.filters.timezoneDateString(
-                  Math.floor(value / 1000),
+                  parseInt(value),
                   this.user.settings.timezone,
-                  'YYYY/MM/DD HH:mm:ss.sss z'
+                  this.user.settings.ms
                 );
                 timeEl[0].innerHTML = time;
               }

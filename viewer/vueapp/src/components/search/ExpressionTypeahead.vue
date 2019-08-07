@@ -41,41 +41,59 @@
       </span>
     </div> <!-- /typeahead input -->
 
-    <!-- TODO fix tooltip placement issues -->
-    <!-- https://github.com/bootstrap-vue/bootstrap-vue/issues/1352 -->
     <!-- results dropdown -->
     <div id="typeahead-results"
       ref="typeaheadResults"
       class="dropdown-menu typeahead-results"
       v-show="expression && results && results.length">
       <template v-if="autocompletingField">
-        <a v-for="(value, key) in fieldHistoryResults"
-          :key="key+'-history'"
+        <template v-for="(value, key) in fieldHistoryResults">
+          <a :id="key+'history'"
+            :key="key+'history'"
+            class="dropdown-item cursor-pointer"
+            :class="{'active':key === activeIdx,'last-history-item':key === fieldHistoryResults.length-1}"
+            @click="addToQuery(value)">
+            <span class="fa fa-history"></span>&nbsp;
+            <strong v-if="value.exp">{{ value.exp }}</strong>
+            <strong v-if="!value.exp">{{ value }}</strong>
+            <span v-if="value.friendlyName">- {{ value.friendlyName }}</span>
+            <span class="fa fa-close pull-right mt-1"
+              @click.stop.prevent="removeFromFieldHistory(value)">
+            </span>
+          </a>
+          <b-tooltip v-if="value.help"
+            :key="key+'historytooltip'"
+            :target="key+'history'"
+            placement="right"
+            boundary="window">
+            {{ value.help.substring(0, 100) }}
+            <span v-if="value.help.length > 100">
+              ...
+            </span>
+          </b-tooltip>
+        </template>
+      </template>
+      <template v-for="(value, key) in results">
+        <a :id="key+'item'"
+          :key="key+'item'"
           class="dropdown-item cursor-pointer"
-          :class="{'active':key === activeIdx,'last-history-item':key === fieldHistoryResults.length-1}"
-          @click="addToQuery(value)"
-          v-b-tooltip.hover.top
-          :title="value.help">
-          <span class="fa fa-history"></span>&nbsp;
+          :class="{'active':key+fieldHistoryResults.length === activeIdx}"
+          @click="addToQuery(value)">
           <strong v-if="value.exp">{{ value.exp }}</strong>
           <strong v-if="!value.exp">{{ value }}</strong>
           <span v-if="value.friendlyName">- {{ value.friendlyName }}</span>
-          <span class="fa fa-close pull-right mt-1"
-            @click.stop.prevent="removeFromFieldHistory(value)">
-          </span>
         </a>
+        <b-tooltip v-if="value.help"
+          :key="key+'tooltip'"
+          :target="key+'item'"
+          placement="right"
+          boundary="window">
+          {{ value.help.substring(0, 100) }}
+          <span v-if="value.help.length > 100">
+            ...
+          </span>
+        </b-tooltip>
       </template>
-      <a v-for="(value, key) in results"
-        :key="key"
-        class="dropdown-item cursor-pointer"
-        :class="{'active':key+fieldHistoryResults.length === activeIdx}"
-        @click="addToQuery(value)"
-        v-b-tooltip.hover.top
-        :title="value.help">
-        <strong v-if="value.exp">{{ value.exp }}</strong>
-        <strong v-if="!value.exp">{{ value }}</strong>
-        <span v-if="value.friendlyName">- {{ value.friendlyName }}</span>
-      </a>
     </div> <!-- /results dropdown -->
 
     <!-- error -->
@@ -538,6 +556,26 @@ export default {
         return;
       }
 
+      // autocomplete variables
+      if (/^(\$)/.test(lastToken)) {
+        this.loadingValues = true;
+        let url = 'lookups?fieldFormat=true&map=true';
+        if (field && field.type) {
+          url += `&fieldType=${field.type}`;
+        }
+        this.$http.get(url)
+          .then((response) => {
+            this.loadingValues = false;
+            let escapedToken = lastToken.replace('$', '\\$');
+            this.results = this.findMatch(escapedToken, response.data);
+          }, (error) => {
+            this.loadingValues = false;
+            this.loadingError = error.text || error;
+          });
+
+        return;
+      }
+
       // autocomplete other values after 2 chars
       if (lastToken.trim().length >= 2) {
         let params = { // build parameters for getting value(s)
@@ -547,7 +585,8 @@ export default {
 
         if (this.$route.query.date) {
           params.date = this.$route.query.date;
-        } else if (this.$route.query.startTime && this.$route.query.stopTime) {
+        } else if (this.$route.query.startTime !== undefined &&
+          this.$route.query.stopTime !== undefined) {
           params.startTime = this.$route.query.startTime;
           params.stopTime = this.$route.query.stopTime;
         }
@@ -749,7 +788,7 @@ export default {
   overflow-y: auto;
   overflow-x: hidden;
   max-height: 500px;
-  margin-left: 30px;
+  margin-left: 35px;
 }
 
 .typeahead-results a.last-history-item {

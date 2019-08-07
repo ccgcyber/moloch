@@ -149,7 +149,7 @@
                   :session-btn="true">
                 </moloch-session-field>
               </strong>
-              <sup>({{ item.count }})</sup>
+              <sup>({{ item.count | commaString }})</sup>
             </div>
           </div>
         </div> <!-- /field value -->
@@ -229,7 +229,7 @@ export default {
       recordsFiltered: 0,
       items: [],
       showDropdown: false,
-      fieldTypeahead: undefined,
+      fieldTypeahead: 'node',
       sortBy: this.$route.query.sort || 'graph'
     };
   },

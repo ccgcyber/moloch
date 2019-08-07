@@ -19,6 +19,7 @@
 #include "patricia.h"
 #include <inttypes.h>
 #include <arpa/inet.h>
+#include <errno.h>
 
 //#define DEBUG_PACKET
 
@@ -184,7 +185,7 @@ LOCAL void moloch_packet_tcp_finish(MolochSession_t *session)
     MolochTcpDataHead_t * const tcpData = &session->tcpData;
 
 #ifdef DEBUG_PACKET
-    LOG("START");
+    LOG("START %u %u", session->tcpSeq[0], session->tcpSeq[1]);
     DLL_FOREACH(td_, tcpData, ftd) {
         LOG("dir: %d seq: %8u ack: %8u len: %4u", ftd->packet->direction, ftd->seq, ftd->ack, ftd->len);
     }
@@ -194,7 +195,18 @@ LOCAL void moloch_packet_tcp_finish(MolochSession_t *session)
         const int which = ftd->packet->direction;
         const uint32_t tcpSeq = session->tcpSeq[which];
 
-        if (tcpSeq >= ftd->seq && tcpSeq < (ftd->seq + ftd->len)) {
+        /* The sequence number we are looking for is past the start of the packet */
+        if (tcpSeq >= ftd->seq) {
+
+            /* The sequence number we are looking for is past the end of the packet, free it */
+            if (tcpSeq >= ftd->seq + ftd->len) {
+                DLL_REMOVE(td_, tcpData, ftd);
+                moloch_packet_free(ftd->packet);
+                MOLOCH_TYPE_FREE(MolochTcpData_t, ftd);
+                continue;
+            }
+
+            /* This packet has the sequence number we are looking for */
             const int offset = tcpSeq - ftd->seq;
             const uint8_t *data = ftd->packet->pkt + ftd->dataOffset + offset;
             const int len = ftd->len - offset;
@@ -406,7 +418,7 @@ LOCAL int moloch_packet_process_tcp(MolochSession_t * const session, MolochPacke
     td->dataOffset = packet->payloadOffset + 4*tcphdr->th_off;
 
 #ifdef DEBUG_PACKET
-    LOG("dir: %d seq: %u ack: %u len: %d diff0: %ld", packet->direction, seq, ack, len, diff);
+    LOG("dir: %d seq: %u ack: %u len: %d diff0: %lld", packet->direction, seq, ack, len, diff);
 #endif
 
     if (DLL_COUNT(td_, tcpData) == 0) {
@@ -643,7 +655,7 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
         packet->direction = (dir &&
                              session->port1 == ntohs(udphdr->uh_sport) &&
                              session->port2 == ntohs(udphdr->uh_dport))?0:1;
-        session->databytes[packet->direction] += (packet->pktlen - 8);
+        session->databytes[packet->direction] += (packet->pktlen -packet->payloadOffset - 8);
         break;
     case IPPROTO_SCTP:
         udphdr = (struct udphdr *)(packet->pkt + packet->payloadOffset);
@@ -660,6 +672,10 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
         session->tcp_flags |= tcphdr->th_flags;
         break;
     case IPPROTO_ICMP:
+    case IPPROTO_ICMPV6:
+        packet->direction = (dir)?0:1;
+        session->databytes[packet->direction] += (packet->pktlen -packet->payloadOffset);
+        break;
     case IPPROTO_ESP:
         packet->direction = (dir)?0:1;
         break;
@@ -684,24 +700,38 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
         MOLOCH_THREAD_INCR_NUM(writtenBytes, packet->pktlen);
         moloch_writer_write(session, packet);
 
+        // If the last fileNum used in the session isn't the same as the
+        // lastest packets fileNum then we need to add to the filePos and
+        // fileNum arrays.
         int16_t len;
         if (session->lastFileNum != packet->writerFileNum) {
             session->lastFileNum = packet->writerFileNum;
             g_array_append_val(session->fileNumArray, packet->writerFileNum);
             int64_t pos = -1LL * packet->writerFileNum;
             g_array_append_val(session->filePosArray, pos);
-            len = 0;
-            g_array_append_val(session->fileLenArray, len);
+
+            if (config.enablePacketLen) {
+                len = 0;
+                g_array_append_val(session->fileLenArray, len);
+            }
         }
 
         g_array_append_val(session->filePosArray, packet->writerFilePos);
-        len = 16 + packet->pktlen;
-        g_array_append_val(session->fileLenArray, len);
+
+        if (config.enablePacketLen) {
+            len = 16 + packet->pktlen;
+            g_array_append_val(session->fileLenArray, len);
+        }
 
         if (packets >= config.maxPackets || session->midSave) {
             moloch_session_mid_save(session, packet->ts.tv_sec);
         }
     } else {
+        // If we hit stopSaving for this session and try and save 1 more packet then
+        // add truncated-pcap tag to the session
+        if (packets - 1 == session->stopSaving) {
+            moloch_session_add_tag(session, "truncated-pcap");
+        }
         MOLOCH_THREAD_INCR_NUM(unwrittenBytes, packet->pktlen);
     }
 
@@ -724,9 +754,10 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
                 n += 4;
             }
 
-            if (packet->vlan)
-                moloch_field_int_add(vlanField, session, packet->vlan);
         }
+
+        if (packet->vlan)
+            moloch_field_int_add(vlanField, session, packet->vlan);
 
         if (packet->tunnel & MOLOCH_PACKET_TUNNEL_GRE) {
             ip4 = (struct ip*)(packet->pkt + packet->vpnIpOffset);
@@ -735,20 +766,24 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
             moloch_session_add_protocol(session, "gre");
         }
 
-        if (packet->tunnel &  MOLOCH_PACKET_TUNNEL_PPPOE) {
+        if (packet->tunnel & MOLOCH_PACKET_TUNNEL_PPPOE) {
             moloch_session_add_protocol(session, "pppoe");
         }
 
-        if (packet->tunnel &  MOLOCH_PACKET_TUNNEL_PPP) {
+        if (packet->tunnel & MOLOCH_PACKET_TUNNEL_PPP) {
             moloch_session_add_protocol(session, "ppp");
         }
 
-        if (packet->tunnel &  MOLOCH_PACKET_TUNNEL_MPLS) {
+        if (packet->tunnel & MOLOCH_PACKET_TUNNEL_MPLS) {
             moloch_session_add_protocol(session, "mpls");
         }
 
-        if (packet->tunnel &  MOLOCH_PACKET_TUNNEL_GTP) {
+        if (packet->tunnel & MOLOCH_PACKET_TUNNEL_GTP) {
             moloch_session_add_protocol(session, "gtp");
+        }
+
+        if (packet->tunnel & MOLOCH_PACKET_TUNNEL_VXLAN) {
+            moloch_session_add_protocol(session, "vxlan");
         }
     }
 
@@ -835,6 +870,14 @@ LOCAL void moloch_packet_save_unknown_packet(int type, MolochPacket_t * const pa
 
         snprintf(str, sizeof(str), "%s/%s.%d.pcap", config.pcapDir[0], names[type], getpid());
         unknownPacketFile[type] = fopen(str, "w");
+
+	// TODO-- should we also add logic to pick right pcapDir when there are multiple?
+        if (unknownPacketFile[type] == NULL) {
+          LOGEXIT("Unable to open pcap file %s to store unknown type %s.  Error %s", str, names[type], strerror (errno));
+          MOLOCH_UNLOCK(lock);
+          return;
+        }
+
         fwrite(&pcapFileHeader, 24, 1, unknownPacketFile[type]);
     }
 
@@ -934,9 +977,10 @@ LOCAL int moloch_packet_gre4(MolochPacketBatch_t * batch, MolochPacket_t * const
     case 0x88be:
         return moloch_packet_erspan(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
     default:
+        if (BIT_ISSET(type, config.etherSavePcap))
+            moloch_packet_save_unknown_packet(0, packet);
         return MOLOCH_PACKET_UNKNOWN;
     }
-
 }
 /******************************************************************************/
 void moloch_packet_frags_free(MolochFrags_t * const frags)
@@ -1193,7 +1237,7 @@ LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const pa
     return MOLOCH_PACKET_SUCCESS;
 }
 /******************************************************************************/
-LOCAL int moloch_packet_ip4_gtp(MolochPacketBatch_t *batch, MolochPacket_t * const packet, const uint8_t *data, int len)
+LOCAL int moloch_packet_ip_gtp(MolochPacketBatch_t *batch, MolochPacket_t * const packet, const uint8_t *data, int len)
 {
     if (len < 12) {
         return MOLOCH_PACKET_CORRUPT;
@@ -1237,6 +1281,17 @@ LOCAL int moloch_packet_ip4_gtp(MolochPacketBatch_t *batch, MolochPacket_t * con
     if ((flags & 0xf0) == 0x60)
         return moloch_packet_ip6(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
     return moloch_packet_ip4(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
+}
+/******************************************************************************/
+LOCAL int moloch_packet_ip4_vxlan(MolochPacketBatch_t *batch, MolochPacket_t * const packet, const uint8_t *data, int len)
+{
+    if (len < 8) {
+        return MOLOCH_PACKET_CORRUPT;
+    }
+
+    packet->tunnel |= MOLOCH_PACKET_TUNNEL_VXLAN;
+
+    return moloch_packet_ether(batch, packet, data+8, len-8);
 }
 /******************************************************************************/
 SUPPRESS_ALIGNMENT
@@ -1347,7 +1402,16 @@ LOCAL int moloch_packet_ip4(MolochPacketBatch_t *batch, MolochPacket_t * const p
             int rem = len - ip_hdr_len - sizeof(struct udphdr *);
             uint8_t *buf = (uint8_t *)ip4 + ip_hdr_len + sizeof(struct udphdr *);
             if ((buf[0] & 0xf0) == 0x30 && buf[1] == 0xff && (buf[2] << 8 | buf[3]) == rem - 8) {
-                return moloch_packet_ip4_gtp(batch, packet, buf, rem);
+                return moloch_packet_ip_gtp(batch, packet, buf, rem);
+            }
+        }
+
+        // See if this is really VXLAN
+        if (udphdr->uh_dport == 0xb512 && len > ip_hdr_len + (int)sizeof(struct udphdr) + 8) {
+            int rem = len - ip_hdr_len - sizeof(struct udphdr *);
+            uint8_t *buf = (uint8_t *)ip4 + ip_hdr_len + sizeof(struct udphdr *);
+            if ((buf[0] & 0x77) == 0 && (buf[1] & 0xb7) == 0) {
+                return moloch_packet_ip4_vxlan(batch, packet, buf, rem);
             }
         }
 
@@ -1431,6 +1495,9 @@ LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const 
     packet->v6 = 1;
 
 
+#ifdef DEBUG_PACKET
+    LOG("Got ip6 header %p %d", packet, packet->pktlen);
+#endif
     int nxt = ip6->ip6_nxt;
     int done = 0;
     do {
@@ -1486,6 +1553,15 @@ LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const 
 
             moloch_session_id6(sessionId, ip6->ip6_src.s6_addr, udphdr->uh_sport,
                                ip6->ip6_dst.s6_addr, udphdr->uh_dport);
+
+            // See if this is really GTP
+            if (udphdr->uh_dport == 0x6808 && len > ip_hdr_len + (int)sizeof(struct udphdr) + 12) {
+                int rem = len - ip_hdr_len - sizeof(struct udphdr *);
+                const uint8_t *buf = (uint8_t *)udphdr + sizeof(struct udphdr *);
+                if ((buf[0] & 0xf0) == 0x30 && buf[1] == 0xff && (buf[2] << 8 | buf[3]) == rem - 8) {
+                    return moloch_packet_ip_gtp(batch, packet, buf, rem);
+                }
+            }
 
             packet->ses = SESSION_UDP;
             done = 1;
@@ -1546,7 +1622,7 @@ LOCAL int moloch_packet_ip6(MolochPacketBatch_t * batch, MolochPacket_t * const 
 
     if (ip_len + (int)sizeof(struct ip6_hdr) < ip_hdr_len) {
 #ifdef DEBUG_PACKET
-        LOG ("ERROR - %d + %ld < %d", ip_len, sizeof(struct ip6_hdr), ip_hdr_len);
+        LOG ("ERROR - %d + %ld < %d", ip_len, (long)sizeof(struct ip6_hdr), ip_hdr_len);
 #endif
         return MOLOCH_PACKET_CORRUPT;
     }
@@ -1624,6 +1700,8 @@ LOCAL int moloch_packet_ppp(MolochPacketBatch_t * batch, MolochPacket_t * const 
 #ifdef DEBUG_PACKET
         LOG("BAD PACKET: Unknown ppp type %d", data[3]);
 #endif
+        if (BIT_ISSET(0x880b, config.etherSavePcap))
+            moloch_packet_save_unknown_packet(0, packet);
         return MOLOCH_PACKET_UNKNOWN;
     }
 }
@@ -1638,7 +1716,7 @@ LOCAL int moloch_packet_mpls(MolochPacketBatch_t * batch, MolochPacket_t * const
             return MOLOCH_PACKET_CORRUPT;
         }
 
-        int S = data[3] & 0x1;
+        int S = data[2] & 0x1;
 
         data += 4;
         len -= 4;
@@ -1654,6 +1732,8 @@ LOCAL int moloch_packet_mpls(MolochPacketBatch_t * batch, MolochPacket_t * const
 #ifdef DEBUG_PACKET
                 LOG("BAD PACKET: Unknown mpls type %d", data[0] >> 4);
 #endif
+                if (BIT_ISSET(0x8847, config.etherSavePcap))
+                    moloch_packet_save_unknown_packet(0, packet);
                 return MOLOCH_PACKET_UNKNOWN;
             }
         }

@@ -86,11 +86,11 @@ Pcap.prototype.open = function(filename, info) {
     this.encoding = info.encoding || "normal";
     if (info.dek) {
       var decipher = crypto.createDecipher("aes-192-cbc", info.kek);
-      this.encKey = Buffer.concat([decipher.update(new Buffer(info.dek, 'hex')), decipher.final()]);
+      this.encKey = Buffer.concat([decipher.update(Buffer.from(info.dek, 'hex')), decipher.final()]);
     }
 
     if (info.iv) {
-      var iv   = new Buffer(info.iv, 'hex');
+      var iv   = Buffer.from(info.iv, 'hex');
       this.iv  = Buffer.alloc(16);
       iv.copy(this.iv);
     }
@@ -306,11 +306,11 @@ Pcap.prototype.icmp = function (buffer, obj, pos) {
     type:      buffer[0],
     code:      buffer[1],
     sum:       buffer.readUInt16BE(2),
-    id:        buffer.readUInt16BE(4),
-    sequence:  buffer.readUInt16BE(6)
+    // id:        buffer.readUInt16BE(4),
+    // sequence:  buffer.readUInt16BE(6)
   };
 
-  obj.icmp.data = buffer.slice(8);
+  obj.icmp.data = buffer;
 };
 
 Pcap.prototype.tcp = function (buffer, obj, pos) {
@@ -707,6 +707,9 @@ Pcap.prototype.pcap = function (buffer, obj) {
     break;
   case 127: // radiotap
     this.radiotap(buffer.slice(16, obj.pcap.incl_len + 16), obj, 16);
+    break;
+  case 228: // RAW
+    this.ip4(buffer.slice(16, obj.pcap.incl_len + 16), obj, 16);
     break;
   case 239: // NFLOG
     this.nflog(buffer.slice(16, obj.pcap.incl_len + 16), obj, 16);

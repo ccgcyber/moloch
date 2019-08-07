@@ -323,6 +323,14 @@ export default {
     },
     shiftKeyHold: function () {
       return this.$store.state.shiftKeyHold;
+    },
+    expression: {
+      get: function () {
+        return this.$store.state.expression;
+      },
+      set: function (newValue) {
+        this.$store.commit('setExpression', newValue);
+      }
     }
   },
   watch: {
@@ -401,9 +409,12 @@ export default {
         }
       }
 
+      let routeQuery = this.$route.query;
+      routeQuery.expression = this.expression;
+
       this.$router.push({
         query: {
-          ...this.$route.query,
+          ...routeQuery,
           date: this.timeRange,
           stopTime: undefined,
           startTime: undefined
@@ -472,6 +483,7 @@ export default {
         this.localStopTime = newTime;
         this.time.stopTime = Math.floor(this.localStopTime.valueOf() / 1000);
       }
+      this.validateDate();
     },
     /**
      * Fired when clicking the next time button on a time input
@@ -493,6 +505,7 @@ export default {
         this.localStopTime = newTime;
         this.time.stopTime = Math.floor(this.localStopTime.valueOf() / 1000);
       }
+      this.validateDate();
     },
     /**
      * Fired when change bounded select box is changed
@@ -636,12 +649,12 @@ export default {
           this.localStartTime = moment((currentTimeSec - (hourSec * this.timeRange)) * 1000);
           this.time.startTime = (currentTimeSec - (hourSec * this.timeRange)).toString();
         }
-      } else if (startTime && stopTime) {
+      } else if (startTime !== undefined && stopTime !== undefined) {
         // start and stop times available
         let stop = stopTime;
         let start = startTime;
 
-        if (stop && start && !isNaN(stop) && !isNaN(start)) {
+        if (stop !== undefined && start !== undefined && !isNaN(stop) && !isNaN(start)) {
           stop = parseInt(stop, 10);
           start = parseInt(start, 10);
 
@@ -672,7 +685,7 @@ export default {
         } else { // if we can't parse stop or start time, set default
           this.timeRange = '1'; // default to 1 hour
         }
-      } else if (!date && !startTime && !stopTime) {
+      } else if (!date) {
         // there are no time query parameters, so set defaults
         this.timeRange = '1'; // default to 1 hour
       }

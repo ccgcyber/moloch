@@ -389,6 +389,7 @@ typedef struct moloch_config {
     char     *bpf;
     char     *yara;
     char     *emailYara;
+    char     *caTrustFile;
     char     *geoLite2ASN;
     char     *geoLite2Country;
     char     *rirFile;
@@ -434,6 +435,7 @@ typedef struct moloch_config {
     char      parseSMTP;
     char      parseSMTPHeaderAll;
     char      parseSMB;
+    char      ja3Strings;
     char      parseDNSRecordAll;
     char      parseQSValue;
     char      parseCookieValue;
@@ -449,6 +451,7 @@ typedef struct moloch_config {
     char      corruptSavePcap;
     char      autoGenerateId;
     char      ignoreErrors;
+    char      enablePacketLen;
 } MolochConfig_t;
 
 typedef struct {
@@ -495,6 +498,7 @@ struct moloch_pcap_sf_pkthdr {
 #define MOLOCH_PACKET_TUNNEL_MPLS   0x04
 #define MOLOCH_PACKET_TUNNEL_PPP    0x08
 #define MOLOCH_PACKET_TUNNEL_GTP    0x10
+#define MOLOCH_PACKET_TUNNEL_VXLAN  0x20
 
 typedef struct molochpacket_t
 {
@@ -518,7 +522,7 @@ typedef struct molochpacket_t
     uint8_t        v6:1;           // v6 or not
     uint8_t        copied:1;       // don't need to copy
     uint8_t        wasfrag:1;      // was a fragment
-    uint8_t        tunnel:5;       // tunnel type
+    uint8_t        tunnel:6;       // tunnel type
 } MolochPacket_t;
 
 typedef struct
@@ -914,6 +918,7 @@ uint64_t moloch_http_dropped_count(void *server);
 
 void *moloch_http_create_server(const char *hostnames, int maxConns, int maxOutstandingRequests, int compress);
 void moloch_http_set_retries(void *server, uint16_t retries);
+void moloch_http_set_client_cert(void *serverV, char* clientCert, char* clientKey, char* clientKeyPass);
 void moloch_http_set_print_errors(void *server);
 void moloch_http_set_headers(void *server, char **headers);
 void moloch_http_set_header_cb(void *server, MolochHttpHeader_cb cb);

@@ -9,14 +9,14 @@
                ],
                "hostCnt" : 1,
                "nameserverASN" : [
-                  "AS10880 Yahoo",
-                  "AS7280 Yahoo! Inc.",
-                  "AS36646 Yahoo",
+                  "AS10880 Oath Holdings Inc.",
+                  "AS7280 Oath Holdings Inc.",
+                  "AS36646 Oath Holdings Inc.",
                   "AS23879 Internet Content Provider",
                   "AS23879 Internet Content Provider",
-                  "AS10880 Yahoo",
+                  "AS10880 Oath Holdings Inc.",
                   "AS10229 Internet Content Provider",
-                  "AS7280 Yahoo! Inc."
+                  "AS7280 Oath Holdings Inc."
                ],
                "nameserverGEO" : [
                   "US",
@@ -79,7 +79,7 @@
                "statusCnt" : 1
             },
             "dstBytes" : 429,
-            "dstDataBytes" : 421,
+            "dstDataBytes" : 387,
             "dstIp" : "10.3.4.5",
             "dstMac" : [
                "00:10:db:ff:10:01"
@@ -113,7 +113,7 @@
             "protocolCnt" : 2,
             "segmentCnt" : 1,
             "srcBytes" : 95,
-            "srcDataBytes" : 87,
+            "srcDataBytes" : 53,
             "srcIp" : "10.5.4.3",
             "srcMac" : [
                "52:54:00:67:a8:e6"
@@ -128,7 +128,7 @@
             "srcPort" : 48297,
             "timestamp" : "SET",
             "totBytes" : 524,
-            "totDataBytes" : 508,
+            "totDataBytes" : 440,
             "totPackets" : 2
          },
          "header" : {

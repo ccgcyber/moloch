@@ -29,7 +29,9 @@ var internals = {fileId2File: {},
                  molochNodeStatsCache: {},
                  healthCache: {},
                  indicesCache: {},
+                 indicesSettingsCache: {},
                  usersCache: {},
+                 lookupsCache: {},
                  nodesStatsCache: {},
                  nodesInfoCache: {},
                  qInProgress: 0,
@@ -59,6 +61,15 @@ exports.initialize = function (info, cb) {
   internals.nodeName = info.nodeName;
   delete info.nodeName;
 
+  var esSSLOptions =  {rejectUnauthorized: !internals.info.insecure, ca: internals.info.ca};
+  if(info.esClientKey) {
+    esSSLOptions.key = fs.readFileSync(info.esClientKey);
+    esSSLOptions.cert = fs.readFileSync(info.esClientCert);
+    if(info.esClientKeyPass) {
+       esSSLOptions.passphrase = info.esClientKeyPass;
+    }
+  }
+
   internals.elasticSearchClient = new ESC.Client({
     host: internals.info.host,
     apiVersion: internals.apiVersion,
@@ -66,7 +77,7 @@ exports.initialize = function (info, cb) {
     keepAlive: true,
     minSockets: 20,
     maxSockets: 51,
-    ssl: {rejectUnauthorized: !internals.info.insecure, ca: internals.info.ca}
+    ssl: esSSLOptions
   });
 
   internals.elasticSearchClient.info((err,data) => {
@@ -87,7 +98,7 @@ exports.initialize = function (info, cb) {
         keepAlive: true,
         minSockets: 5,
         maxSockets: 6,
-        ssl: {rejectUnauthorized: !internals.info.insecure, ca: internals.info.ca}
+        ssl: esSSLOptions
       });
     } else {
       internals.usersElasticSearchClient = internals.elasticSearchClient;
@@ -298,6 +309,28 @@ exports.optimizeIndex = function (index, options, cb) {
   return internals.elasticSearchClient.indices.forcemerge(params, cb);
 };
 
+// This API does not call fixIndex
+exports.closeIndex = function (index, options, cb) {
+  if (!cb) {
+    cb = options;
+    options = undefined;
+  }
+  var params = {index: index};
+  exports.merge(params, options);
+  return internals.elasticSearchClient.indices.close(params, cb);
+};
+
+// This API does not call fixIndex
+exports.openIndex = function (index, options, cb) {
+  if (!cb) {
+    cb = options;
+    options = undefined;
+  }
+  var params = {index: index};
+  exports.merge(params, options);
+  return internals.elasticSearchClient.indices.open(params, cb);
+};
+
 exports.indexStats = function(index, cb) {
   return internals.elasticSearchClient.indices.stats({index: fixIndex(index)}, cb);
 };
@@ -336,6 +369,10 @@ exports.health = function(cb) {
 
 exports.indices = function(cb, index) {
   return internals.elasticSearchClient.cat.indices({format: "json", index: fixIndex(index), bytes: "b", h: "health,status,index,uuid,pri,rep,docs.count,store.size,cd,segmentsCount,pri.search.query_current,memoryTotal"}, cb);
+};
+
+exports.indicesSettings = function(cb, index) {
+  return internals.elasticSearchClient.indices.getSettings({flatSettings: true, index: fixIndex(index)}, cb);
 };
 
 exports.shards = function(cb) {
@@ -393,6 +430,115 @@ exports.refresh = function (index, cb) {
   return internals.usersElasticSearchClient.indices.refresh({index: fixIndex(index)}, cb);
 };
 
+exports.addTagsToSession = function (index, id, tags, node, cb) {
+  let params = {
+    retry_on_conflict: 3,
+    index: fixIndex(index),
+    type: 'session',
+    id: id
+  };
+
+  let script = `
+    if (ctx._source.tags != null) {
+      for (int i = 0; i < params.tags.length; i++) {
+        if (ctx._source.tags.indexOf(params.tags[i]) == -1) {
+          ctx._source.tags.add(params.tags[i]);
+        }
+      }
+      ctx._source.tagsCnt = ctx._source.tags.length;
+    } else {
+      ctx._source.tags = params.tags;
+      ctx._source.tagsCnt = params.tags.length;
+    }
+  `;
+
+  params.body = {
+    script: {
+      inline: script,
+      lang: 'painless',
+      params: {
+        tags: tags
+      }
+    }
+  };
+
+  if (node) { params.body._node = node; }
+
+  return internals.elasticSearchClient.update(params, cb);
+};
+
+exports.removeTagsFromSession = function (index, id, tags, node, cb) {
+  let params = {
+    retry_on_conflict: 3,
+    index: fixIndex(index),
+    type: 'session',
+    id: id
+  };
+
+  let script = `
+    if (ctx._source.tags != null) {
+      for (int i = 0; i < params.tags.length; i++) {
+        int index = ctx._source.tags.indexOf(params.tags[i]);
+        if (index > -1) { ctx._source.tags.remove(index); }
+      }
+      ctx._source.tagsCnt = ctx._source.tags.length;
+      if (ctx._source.tagsCnt == 0) {
+        ctx._source.remove("tags");
+        ctx._source.remove("tagsCnt");
+      }
+    }
+  `;
+
+  params.body = {
+    script: {
+      inline: script,
+      lang: 'painless',
+      params: {
+        tags: tags
+      }
+    }
+  };
+
+  if (node) { params.body._node = node; }
+
+  return internals.elasticSearchClient.update(params, cb);
+};
+
+exports.addHuntToSession = function (index, id, huntId, huntName, cb) {
+  let params = {
+    retry_on_conflict: 3,
+    index: fixIndex(index),
+    type: 'session',
+    id: id
+  };
+
+  let script = `
+    if (ctx._source.huntId != null) {
+      ctx._source.huntId.add(params.huntId);
+    } else {
+      ctx._source.huntId = [ params.huntId ];
+    }
+    if (ctx._source.huntName != null) {
+      ctx._source.huntName.add(params.huntName);
+    } else {
+      ctx._source.huntName = [ params.huntName ];
+    }
+  `;
+
+  params.body = {
+    script: {
+      inline: script,
+      lang: 'painless',
+      params: {
+        huntId: huntId,
+        huntName: huntName
+      }
+    }
+  };
+
+  return internals.elasticSearchClient.update(params, cb);
+};
+
 //////////////////////////////////////////////////////////////////////////////////
 //// High level functions
 //////////////////////////////////////////////////////////////////////////////////
@@ -402,10 +548,9 @@ exports.flushCache = function () {
   internals.molochNodeStatsCache = {};
   internals.healthCache = {};
   internals.usersCache = {};
+  internals.lookupsCache = {};
   delete internals.aliasesCache;
 };
-
-
 exports.searchUsers = function(query, cb) {
   return internals.usersElasticSearchClient.search({index: internals.usersPrefix + 'users', type: 'user', body: query}, cb);
 };
@@ -437,12 +582,18 @@ exports.numberOfUsers = function(cb) {
 
 exports.deleteUser = function (name, cb) {
   delete internals.usersCache[name];
-  return internals.usersElasticSearchClient.delete({index: internals.usersPrefix + 'users', type: 'user', id: name, refresh: true}, cb);
+  return internals.usersElasticSearchClient.delete({index: internals.usersPrefix + 'users', type: 'user', id: name, refresh: true}, (err) => {
+    delete internals.usersCache[name]; // Delete again after db says its done refreshing
+    cb(err);
+  });
 };
 
 exports.setUser = function(name, doc, cb) {
   delete internals.usersCache[name];
-  return internals.usersElasticSearchClient.index({index: internals.usersPrefix + 'users', type: 'user', body: doc, id: name, refresh: true}, cb);
+  return internals.usersElasticSearchClient.index({index: internals.usersPrefix + 'users', type: 'user', body: doc, id: name, refresh: true}, (err) => {
+    delete internals.usersCache[name]; // Delete again after db says its done refreshing
+    cb(err);
+  });
 };
 
 function twoDigitString(value) {
@@ -480,8 +631,59 @@ exports.numberOfHunts = function(cb) {
 exports.deleteHuntItem = function (id, cb) {
   return internals.elasticSearchClient.delete({index:fixIndex('hunts'), type:'hunt', id:id, refresh:true}, cb);
 };
-exports.setHunt = function(id, doc, cb) {
+exports.setHunt = function (id, doc, cb) {
   return internals.elasticSearchClient.index({index:fixIndex('hunts'), type: 'hunt', body:doc, id: id, refresh:true}, cb);
+};
+
+exports.searchLookups = function (query, cb) {
+  return internals.elasticSearchClient.search({index:fixIndex('lookups'), type:'lookup', body:query}, cb);
+};
+exports.createLookup = function (doc, username, cb) {
+  internals.lookupsCache = {};
+  return internals.elasticSearchClient.index({index:fixIndex('lookups'), type:'lookup', body:doc, refresh: "wait_for"}, cb);
+};
+exports.deleteLookup = function (id, username, cb) {
+  internals.lookupsCache = {};
+  return internals.elasticSearchClient.delete({index:fixIndex('lookups'), type:'lookup', id:id, refresh:true}, cb);
+};
+exports.setLookup = function (id, username, doc, cb) {
+  internals.lookupsCache = {};
+  return internals.elasticSearchClient.index({index:fixIndex('lookups'), type: 'lookup', body:doc, id: id, refresh:true}, cb);
+};
+exports.getLookup = function (id, cb) {
+  return internals.elasticSearchClient.get({index:fixIndex('lookups'), type:'lookup', id:id}, cb);
+};
+exports.getLookupsCache = function (name, cb) {
+  if (internals.lookupsCache[name] && internals.lookupsCache._timeStamp > Date.now() - 30000) {
+    return cb(null, internals.lookupsCache[name]);
+  }
+
+  // only get lookups for this user or shared
+  const query = {
+    query: {
+      bool: {
+        should: [
+          { term: { shared: true } },
+          { term: { userId: name } }
+        ]
+      }
+    }
+  };
+
+  exports.searchLookups(query, (err, lookups) => {
+    if (err) { return cb(err, lookups); }
+
+    let lookupsMap = {};
+    for (let lookup of lookups.hits.hits) {
+      // need the whole object to test for type mismatch
+      lookupsMap[lookup._source.name] = lookup;
+    }
+
+    internals.lookupsCache[name] = lookupsMap;
+    internals.lookupsCache._timeStamp = Date.now();
+
+    cb(null, lookupsMap);
+  });
 };
 
 exports.molochNodeStats = function (name, cb) {
@@ -614,6 +816,30 @@ exports.indicesCache = function (cb) {
   });
 };
 
+exports.indicesSettingsCache = function (cb) {
+  if (!cb) {
+    return internals.indicesSettingsCache;
+  }
+
+  if (internals.indicesSettingsCache._timeStamp !== undefined && internals.indicesSettingsCache._timeStamp > Date.now() - 10000) {
+    return cb(null, internals.indicesSettingsCache);
+  }
+
+  return exports.indicesSettings((err, indicesSettings) => {
+    if (err) {
+      // Even if an error, if we have a cache use it
+      if (internals.indicesSettingsCache._timeStamp !== undefined) {
+        return cb(null, internals.indicesSettingsCache);
+      }
+      return cb(err, null);
+    }
+
+    internals.indicesSettingsCache = indicesSettings;
+    internals.indicesSettingsCache._timeStamp = Date.now();
+    cb(null, indicesSettings);
+  });
+};
+
 exports.hostnameToNodeids = function (hostname, cb) {
   var query = {query: {match: {hostname:hostname}}};
   exports.search('stats', 'stat', query, (err, sdata) => {
@@ -663,7 +889,7 @@ exports.fileNameToFiles = function (name, cb) {
     if (internals.fileName2File[name]) {
       return cb([internals.fileName2File[name]]);
     }
-    query = {query: {term: {name: name}}, sort: [{num: {order: "desc"}}]};
+    query = {size: 100, query: {term: {name: name}}, sort: [{num: {order: "desc"}}]};
   }
 
   exports.search('files', 'file', query, (err, data) => {

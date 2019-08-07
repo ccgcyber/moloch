@@ -176,26 +176,30 @@
           </b-dropdown-header>
           <b-dropdown-divider>
           </b-dropdown-divider>
-          <template
-            v-for="(group, key) in filteredFields">
+          <template v-for="(group, key) in filteredFields">
             <b-dropdown-header
               :key="key"
               v-if="group.length"
               class="group-header">
               {{ key }}
             </b-dropdown-header>
-            <!-- TODO fix tooltip placement -->
-            <!-- https://github.com/bootstrap-vue/bootstrap-vue/issues/1352 -->
-            <b-dropdown-item
-              v-for="(field, k) in group"
-              :key="key + k"
-              :class="{'active':isFieldVisible(field.dbField, nodeFields) >= 0}"
-              v-b-tooltip.hover.top
-              :title="field.help"
-              @click.stop.prevent="toggleFieldVisibility(field.dbField, nodeFields)">
-              {{ field.friendlyName }}
-              <small>({{ field.exp }})</small>
-            </b-dropdown-item>
+            <template v-for="(field, k) in group">
+              <b-dropdown-item
+                :id="key + k + 'itemnode'"
+                :key="key + k + 'itemnode'"
+                :class="{'active':isFieldVisible(field.dbField, nodeFields) >= 0}"
+                @click.stop.prevent="toggleFieldVisibility(field.dbField, nodeFields)">
+                {{ field.friendlyName }}
+                <small>({{ field.exp }})</small>
+              </b-dropdown-item>
+              <b-tooltip v-if="field.help"
+                :key="key + k + 'tooltipnode'"
+                :target="key + k + 'itemnode'"
+                placement="left"
+                boundary="window">
+                {{ field.help }}
+              </b-tooltip>
+            </template>
           </template>
         </b-dropdown> <!-- /node fields button -->
 
@@ -223,26 +227,30 @@
           </b-dropdown-header>
           <b-dropdown-divider>
           </b-dropdown-divider>
-          <template
-            v-for="(group, key) in filteredFields">
+          <template v-for="(group, key) in filteredFields">
             <b-dropdown-header
               :key="key"
               v-if="group.length"
               class="group-header">
               {{ key }}
             </b-dropdown-header>
-            <!-- TODO fix tooltip placement -->
-            <!-- https://github.com/bootstrap-vue/bootstrap-vue/issues/1352 -->
-            <b-dropdown-item
-              v-for="(field, k) in group"
-              :key="key + k"
-              :class="{'active':isFieldVisible(field.dbField, linkFields) >= 0}"
-              v-b-tooltip.hover.top
-              :title="field.help"
-              @click.stop.prevent="toggleFieldVisibility(field.dbField, linkFields)">
-              {{ field.friendlyName }}
-              <small>({{ field.exp }})</small>
-            </b-dropdown-item>
+            <template v-for="(field, k) in group">
+              <b-dropdown-item
+                :id="key + k + 'itemlink'"
+                :key="key + k + 'itemlink'"
+                :class="{'active':isFieldVisible(field.dbField, linkFields) >= 0}"
+                @click.stop.prevent="toggleFieldVisibility(field.dbField, linkFields)">
+                {{ field.friendlyName }}
+                <small>({{ field.exp }})</small>
+              </b-dropdown-item>
+              <b-tooltip v-if="field.help"
+                :key="key + k + 'tooltiplink'"
+                :target="key + k + 'itemlink'"
+                placement="left"
+                boundary="window">
+                {{ field.help }}
+              </b-tooltip>
+            </template>
           </template>
         </b-dropdown> <!-- /link fields button -->
 
@@ -271,7 +279,7 @@
       </moloch-no-results> <!-- /no results -->
 
       <!-- connections graph container -->
-      <svg></svg>
+      <svg class="connections-graph"></svg>
       <!-- /connections graph container -->
 
       <!-- popup area -->
@@ -821,10 +829,11 @@ export default {
           if ((srcFieldIsTime && dataNode.type === 1) ||
             (dstFieldIsTime && dataNode.type === 2)) {
             dataNode.id = this.$options.filters.timezoneDateString(
-              Math.floor(dataNode.id / 1000),
+              dataNode.id,
               this.settings.timezone ||
                 this.$store.state.user.settings.timezone,
-              'YYYY/MM/DD HH:mm:ss z'
+              this.settings.ms ||
+                this.$store.state.user.settings.ms
             );
           }
         }
@@ -1071,7 +1080,7 @@ export default {
               <div class="mb-2">
                 <strong>{{dataNode.id}}</strong>
                 <a class="pull-right cursor-pointer no-decoration"
-                  @click="closePopup()">
+                  @click="closePopup">
                   <span class="fa fa-close"></span>
                 </a>
               </div>
@@ -1325,6 +1334,9 @@ export default {
 .connections-page {
   /* account for main navbar height */
   margin-top: 36px;
+}
+
+.connections-graph {
   /* don't allow selecting text */
   -webkit-user-select: none;
   -moz-user-select: none;

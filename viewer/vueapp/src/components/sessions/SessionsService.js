@@ -1,5 +1,6 @@
 import Vue from 'vue';
 import qs from 'qs';
+import store from '../../store';
 
 let getDecodingsQIP;
 let _decodingsCache;
@@ -30,30 +31,18 @@ export default {
         if (parseInt(query.date, 10) === -1) {
           params.date = query.date;
         } else {
-          if (query.startTime) {
-            params.startTime = query.startTime;
-          }
-          if (query.stopTime) {
-            params.stopTime = query.stopTime;
-          }
+          params.startTime = query.startTime;
+          params.stopTime = query.stopTime;
         }
 
-        let i, len, item;
-        // server takes one param (order)
-        if (query.sorts && query.sorts.length) {
-          params.order = '';
-          for (i = 0, len = query.sorts.length; i < len; ++i) {
-            item = query.sorts[i];
-            params.order += item[0] + ':' + item[1];
-            if (i < len - 1) { params.order += ','; }
-          }
-        }
+        // add sort to params
+        params.order = store.state.sortsParam;
 
         // server takes one param (fields)
         if (query.fields && query.fields.length) {
           params.fields = '';
-          for (i = 0, len = query.fields.length; i < len; ++i) {
-            item = query.fields[i];
+          for (let i = 0, len = query.fields.length; i < len; ++i) {
+            const item = query.fields[i];
             params.fields += item;
             if (i < len - 1) { params.fields += ','; }
           }
@@ -173,6 +162,9 @@ export default {
 
       if (options.error) { return reject({text: options.error}); }
 
+      // add sort to params
+      options.params.order = store.state.sortsParam;
+
       // add tags to data instead of url params
       options.data.tags = params.tags;
       delete options.params.tags;
@@ -199,6 +191,9 @@ export default {
 
       if (options.error) { return reject({text: options.error}); }
 
+      // add sort to params
+      options.params.order = store.state.sortsParam;
+
       Vue.axios(options)
         .then((response) => {
           resolve(response);
@@ -221,6 +216,9 @@ export default {
       let options = this.getReqOptions('sendSessions', 'POST', params, routeParams);
 
       if (options.error) { return reject({text: options.error}); };
+
+      // add sort to params
+      options.params.order = store.state.sortsParam;
 
       // add tags and cluster to data instead of url params
       options.data.tags = params.tags;
@@ -261,11 +259,14 @@ export default {
         options.params.ids = options.data.ids;
       }
 
+      // add sort to params
+      options.params.order = store.state.sortsParam;
+
       let url = `${baseUrl}?${qs.stringify(options.params)}`;
 
       window.location = url;
 
-      return resolve({text: 'PCAP Exported'});
+      return resolve({text: 'PCAP now exporting'});
     });
   },
 
@@ -292,6 +293,9 @@ export default {
         options.params.ids = options.data.ids;
       }
 
+      // add sort to params
+      options.params.order = store.state.sortsParam;
+
       let url = `${baseUrl}?${qs.stringify(options.params)}`;
 
       window.location = url;
@@ -308,10 +312,11 @@ export default {
   viewIntersection: function (params, routeParams) {
     let clonedParams = JSON.parse(JSON.stringify(routeParams));
 
-    params.expression = clonedParams.expression;
     params.date = clonedParams.date;
-    params.startTime = clonedParams.startTime;
+    params.view = clonedParams.view;
     params.stopTime = clonedParams.stopTime;
+    params.startTime = clonedParams.startTime;
+    params.expression = clonedParams.expression;
 
     let url = `multiunique.txt?${qs.stringify(params)}`;
 
@@ -330,6 +335,7 @@ export default {
     let params = {
       exp: exp,
       counts: counts,
+      view: clonedParams.view,
       date: clonedParams.date,
       stopTime: clonedParams.stopTime,
       startTime: clonedParams.startTime,

@@ -26,17 +26,19 @@ const store = new Vuex.Store({
     responseTime: undefined,
     sessionsTableState: undefined,
     views: undefined,
-    loadingData: false
+    loadingData: false,
+    sorts: [['firstPacket', 'desc']],
+    sortsParam: 'firstPacket:desc'
   },
   mutations: {
     setTimeRange (state, value) {
       state.timeRange = value.toString();
     },
     setTime (state, value) {
-      if (value.startTime) {
+      if (value.startTime !== undefined) {
         state.time.startTime = value.startTime.toString();
       }
-      if (value.stopTime) {
+      if (value.stopTime !== undefined) {
         state.time.stopTime = value.stopTime.toString();
       }
     },
@@ -118,6 +120,24 @@ const store = new Vuex.Store({
     },
     setLoadingData (state, value) {
       state.loadingData = value;
+    },
+    setSorts (state, value) {
+      state.sorts = value;
+
+      state.sortsParam = '';
+
+      if (!Array.isArray(value)) {
+        state.sortsParam = value;
+        return;
+      }
+
+      // combine sort field and sort order into one string
+      // because server takes one param
+      for (let i = 0, len = value.length; i < len; ++i) {
+        let item = value[i];
+        state.sortsParam += item[0] + ':' + item[1];
+        if (i < len - 1) { state.sortsParam += ','; }
+      }
     }
   }
 });

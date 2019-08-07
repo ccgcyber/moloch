@@ -1,4 +1,4 @@
-use Test::More tests => 614;
+use Test::More tests => 626;
 use Cwd;
 use URI::Escape;
 use MolochTest;
@@ -133,6 +133,12 @@ my $pwd = "*/pcap";
     countTest(1, "date=-1&expression=" . uri_escape("file=$pwd/v6-http.pcap&&ip=2001:6f8:900:7c0:0:0:0:2"));
     countTest(1, "date=-1&expression=" . uri_escape("file=$pwd/v6-http.pcap&&ip=2001:6f8:900:7c0::2.80"));
     countTest(1, "date=-1&expression=" . uri_escape("file=$pwd/v6-http.pcap&&ip=.59201"));
+
+# ipv4 and ipv6 shorthand tests
+    countTest(3, "date=-1&expression=" . uri_escape("(file=$pwd/v6-http.pcap||file=$pwd/bt-udp.pcap)&&ip.src=ipv4"));
+    countTest(6, "date=-1&expression=" . uri_escape("(file=$pwd/v6-http.pcap||file=$pwd/bt-udp.pcap)&&ip.src=ipv6"));
+    countTest(6, "date=-1&expression=" . uri_escape("(file=$pwd/v6-http.pcap||file=$pwd/bt-udp.pcap)&&ip.src!=ipv4"));
+    countTest(3, "date=-1&expression=" . uri_escape("(file=$pwd/v6-http.pcap||file=$pwd/bt-udp.pcap)&&ip.src!=ipv6"));
 
 # ip boundary tests
     countTest(0, "date=-1&expression=" . uri_escape("file=$pwd/ip-boundaries.pcap&&ip.src=0.0.0.0"));
@@ -379,6 +385,10 @@ if (0) {
     countTest(2, "date=-1&expression=" . uri_escape("(file=$pwd/socks-http-pass.pcap||file=$pwd/gre-sample.pcap)&&tcpflags.psh==8"));
     countTest(4, "date=-1&expression=" . uri_escape("(file=$pwd/socks-http-pass.pcap||file=$pwd/gre-sample.pcap)&&tcpflags.fin==2"));
     countTest(4, "date=-1&expression=" . uri_escape("(file=$pwd/socks-http-pass.pcap||file=$pwd/gre-sample.pcap)&&tcpflags.rst==0"));
+
+# Check startTime parsing
+    countTest(3, "startTime=0&stopTime=1387258118&expression=" . uri_escape("file=$pwd/bt-udp.pcap"));
+    countTest(3, "startTime=1&stopTime=1387258118&expression=" . uri_escape("file=$pwd/bt-udp.pcap"));
 
 # Check sorting when no mapping
     countTest(1, "startTime=1387256793&stopTime=1387258118&order=tls.ja3:desc&expression=" . uri_escape("file=$pwd/bt-udp.pcap"));

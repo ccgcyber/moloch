@@ -34,6 +34,7 @@
 
 extern MolochConfig_t        config;
 
+LOCAL GRegex     *slashslashRegex;
 
 typedef struct suricataitem_t SuricataItem_t;
 struct suricataitem_t {
@@ -69,7 +70,8 @@ struct suricatahead_t {
 
 LOCAL char                  *suricataAlertFile;
 LOCAL FILE                  *file;
-LOCAL char                   line[0xfffff];
+LOCAL int                    lineSize = 0xffff;
+LOCAL char                  *line;
 LOCAL int                    lineLen;
 LOCAL ino_t                  fileInode;
 LOCAL off_t                  fileSize;
@@ -260,8 +262,8 @@ LOCAL void suricata_process_alert(char *data, int len, SuricataItem_t *item)
         } else if (MATCH(data, "rev")) {
             item->rev = atoi(data + out[i+2]);
         } else if (MATCH(data, "signature")) {
-            item->signature = g_strndup(data + out[i+2], out[i+3]);
-            item->signature_len = out[i+3];
+            item->signature = g_regex_replace_literal(slashslashRegex, data + out[i+2], out[i+3], 0, "/", 0, NULL);
+            item->signature_len = strlen(item->signature);
         } else if (MATCH(data, "severity")) {
             item->severity = atoi(data + out[i+2]);
         } else if (MATCH(data, "category")) {
@@ -335,11 +337,13 @@ LOCAL void suricata_process()
             item->flow_id = g_strndup(line + out[i+2], out[i+3]);
             item->flow_id_len = out[i+3];
         } else if (MATCH(line, "proto")) {
-            if (strncmp("TCP", line + out[i+2], 3) == 0)
+            // Match on prototol by name or by
+            // IANA number: https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
+            if (strncmp("TCP", line + out[i+2], 3) == 0 || strncmp("006", line + out[i+2], 3) == 0)
                 item->ses = SESSION_TCP;
-            else if (strncmp("UDP", line + out[i+2], 3) == 0)
+            else if (strncmp("UDP", line + out[i+2], 3) == 0 || strncmp("017", line + out[i+2], 3) == 0)
                 item->ses = SESSION_UDP;
-            else if (strncmp("ICMP", line + out[i+2], 3) == 0)
+            else if (strncmp("ICMP", line + out[i+2], 3) == 0 || strncmp("001", line + out[i+2], 3) == 0)
                 item->ses = SESSION_ICMP;
             else {
                 suricata_item_free(item);
@@ -366,11 +370,16 @@ LOCAL void suricata_process()
 /******************************************************************************/
 LOCAL void suricata_read()
 {
-    while (fgets(line + lineLen, 0xffffe - lineLen, file)) {
+    while (fgets(line + lineLen, lineSize - lineLen, file)) {
         lineLen = strlen(line);
         if (line[lineLen-1] == '\n') {
             suricata_process();
             lineLen = 0;
+        } else if (lineLen == lineSize - 1) {
+            lineSize *= 1.5;
+            line = realloc(line, lineSize);
+            if (!line)
+                LOGEXIT("ERROR - OOM %d", lineSize);
         }
     }
     clearerr(file);
@@ -460,6 +469,8 @@ LOCAL gboolean suricata_timer(gpointer UNUSED(user_data))
  */
 void moloch_plugin_init()
 {
+    line = malloc(lineSize);
+
     suricataAlertFile     = moloch_config_str(NULL, "suricataAlertFile", NULL);
     suricataExpireSeconds = moloch_config_int(NULL, "suricataExpireMinutes", 60, 10, 0xffffff) * 60;
 
@@ -467,9 +478,6 @@ void moloch_plugin_init()
 
     if (!suricataAlertFile)
         LOGEXIT("No suricataAlertFile set");
-
-    g_timeout_add_seconds(1, suricata_timer, 0);
-    suricata_timer(NULL);
 
     moloch_plugins_register("suricata", FALSE);
 
@@ -525,4 +533,9 @@ void moloch_plugin_init()
         "Suricata Severity",
         MOLOCH_FIELD_TYPE_INT_GHASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
+
+    slashslashRegex = g_regex_new("\\\\/", 0, 0, 0);
+
+    g_timeout_add_seconds(1, suricata_timer, 0);
+    suricata_timer(NULL);
 }

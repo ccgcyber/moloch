@@ -148,6 +148,10 @@
               class="btn-radio">
               Packets
             </b-radio>
+            <b-radio value="byHisto"
+              class="btn-radio">
+              Bytes
+            </b-radio>
             <b-radio value="dbHisto"
               class="btn-radio">
               Databytes
@@ -524,12 +528,16 @@ export default {
             };
 
             let type;
-            if (this.graphType === 'dbHisto' || this.graphType === 'paHisto') {
+            if (this.graphType === 'byHisto' || this.graphType === 'dbHisto' || this.graphType === 'paHisto') {
               type = item.seriesIndex === 0 ? 'Src' : 'Dst';
             }
 
-            let val = this.$options.filters.commaString(Math.round(item.series.data[item.dataIndex][1] * 100) / 100);
-            let d = this.$options.filters.timezoneDateString(item.datapoint[0].toFixed(0) / 1000, this.timezone || 'local');
+            const val = this.$options.filters.commaString(
+              Math.round(item.series.data[item.dataIndex][1] * 100) / 100
+            );
+            const d = this.$options.filters.timezoneDateString(
+              item.datapoint[0].toFixed(0), this.timezone || 'local', false
+            );
 
             let tooltipHTML = `<div id="tooltip" class="graph-tooltip">
                                 <strong>${type || ''}</strong>
@@ -552,6 +560,11 @@ export default {
         this.graph = [
           { data: this.graphData.db1Histo, color: srcColor },
           { data: this.graphData.db2Histo, color: dstColor }
+        ];
+      } else if (this.graphType === 'byHisto') {
+        this.graph = [
+          { data: this.graphData.by1Histo, color: srcColor },
+          { data: this.graphData.by2Histo, color: dstColor }
         ];
       } else if (this.graphType === 'paHisto') {
         this.graph = [
@@ -590,9 +603,7 @@ export default {
           max: this.graphData.xmax || null,
           tickFormatter: (v, axis) => {
             return this.$options.filters.timezoneDateString(
-              Math.floor(v / 1000),
-              this.timezone,
-              'YYYY/MM/DD HH:mm:ss z'
+              v, this.timezone, false
             );
           }
         },
@@ -602,7 +613,7 @@ export default {
           zoomRange: false,
           autoscaleMargin: 0.2,
           tickFormatter: (v) => {
-            if (this.graphType === 'dbHisto') {
+            if (this.graphType === 'byHisto' || this.graphType === 'dbHisto') {
               return this.$options.filters.humanReadableBytes(v);
             } else {
               return this.$options.filters.humanReadableNumber(v);

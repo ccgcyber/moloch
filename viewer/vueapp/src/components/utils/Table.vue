@@ -62,10 +62,28 @@
           :key="column.name"
           v-b-tooltip.hover
           :title="column.help"
-          @click="sort(column.sort)"
-          :style="{'width': column.width + 'px'}"
-          :class="{'cursor-pointer':column.sort}">
+          @click.self="sort(column.sort)"
+          :class="{'cursor-pointer':column.sort}"
+          :style="{'width': column.width + 'px'}">
           {{ column.name }}
+          <span v-if="column.canClear"
+            class="btn-zero">
+            <b-tooltip :target="`zero-btn-${column.name}`">
+              Set this column's values to 0.
+              <strong v-if="zeroedAt && zeroedAt[column.id]">
+                <br>
+                Last cleared at
+                {{ zeroedAt[column.id] | timezoneDateString(user.settings.timezone || 'local') }}
+              </strong>
+            </b-tooltip>
+            <button :id="`zero-btn-${column.name}`"
+              type="button"
+              @click="zeroColValues(column)"
+              class="btn btn-xs btn-secondary">
+              <span class="fa fa-ban">
+              </span>
+            </button>
+          </span>
           <span v-if="column.sort">
             <span v-show="tableSortField === column.sort && !tableDesc" class="fa fa-sort-asc"></span>
             <span v-show="tableSortField === column.sort && tableDesc" class="fa fa-sort-desc"></span>
@@ -85,18 +103,7 @@
           </td>
           <td v-for="(column, index) in computedColumns"
             :key="column.id + index + 'avg'">
-            <template v-if="!column.doStats">
-              &nbsp;
-            </template>
-            <template v-else-if="column.avgTotFunction">
-              {{ column.avgTotFunction(averageValues[column.id]) }}
-            </template>
-            <template v-else-if="!column.avgTotFunction && column.dataFunction && column.dataField">
-              {{ column.dataFunction(averageValues[column.id]) }}
-            </template>
-            <template v-else>
-              {{ averageValues[column.id] }}
-            </template>
+            {{ calculateFormatAvgValue(column) }}
           </td>
         </tr>
         <tr class="border-bottom-bold bold total-row"
@@ -105,19 +112,8 @@
             Total
           </td>
           <td v-for="(column, index) in computedColumns"
-            :key="column.id + index + 'avg'">
-            <template v-if="!column.doStats">
-              &nbsp;
-            </template>
-            <template v-else-if="column.avgTotFunction">
-              {{ column.avgTotFunction(totalValues[column.id]) }}
-            </template>
-            <template v-else-if="!column.avgTotFunction && column.dataFunction && column.dataField">
-              {{ column.dataFunction(totalValues[column.id]) }}
-            </template>
-            <template v-else>
-              {{ totalValues[column.id] }}
-            </template>
+            :key="column.id + index + 'total'">
+            {{ calculateFormatTotValue(column) }}
           </td>
         </tr>
       </template> <!-- /avg/total top rows -->
@@ -139,17 +135,9 @@
             </slot> <!-- /action buttons -->
           </td>
           <!-- cell value -->
-          <td v-for="(column, index) in computedColumns"
-            :key="column.id + index">
-            <template v-if="!column.dataFunction && column.dataField">
-              {{ item[column.dataField] }}
-            </template>
-            <template v-else-if="column.dataFunction && !column.dataField">
-              {{ column.dataFunction(item) }}
-            </template>
-            <template v-else>
-              {{ column.dataFunction(item[column.dataField]) }}
-            </template>
+          <td v-for="(column, colindex) in computedColumns"
+            :key="column.id + colindex">
+            {{ calculateFormatValue(column, item, index) }}
           </td> <!-- /cell value -->
         </tr>
         <!-- more info row -->
@@ -179,19 +167,8 @@
           Avg
         </td>
         <td v-for="(column, index) in computedColumns"
-          :key="column.id + index + 'avg'">
-          <template v-if="!column.doStats">
-            &nbsp;
-          </template>
-          <template v-else-if="column.avgTotFunction">
-            {{ column.avgTotFunction(averageValues[column.id]) }}
-          </template>
-          <template v-else-if="!column.avgTotFunction && column.dataFunction && column.dataField">
-            {{ column.dataFunction(averageValues[column.id]) }}
-          </template>
-          <template v-else>
-            {{ averageValues[column.id] }}
-          </template>
+          :key="column.id + index + 'avgfoot'">
+          {{ calculateFormatAvgValue(column) }}
         </td>
       </tr>
       <tr class="bold total-row">
@@ -199,19 +176,8 @@
           Total
         </td>
         <td v-for="(column, index) in computedColumns"
-          :key="column.id + index + 'avg'">
-          <template v-if="!column.doStats">
-            &nbsp;
-          </template>
-          <template v-else-if="column.avgTotFunction">
-            {{ column.avgTotFunction(totalValues[column.id]) }}
-          </template>
-          <template v-else-if="!column.avgTotFunction && column.dataFunction && column.dataField">
-            {{ column.dataFunction(totalValues[column.id]) }}
-          </template>
-          <template v-else>
-            {{ totalValues[column.id] }}
-          </template>
+          :key="column.id + index + 'totalfoot'">
+          {{ calculateFormatTotValue(column) }}
         </td>
       </tr>
     </tfoot> <!-- /avg/total bottom rows -->
@@ -315,10 +281,15 @@ export default {
       colQuery: '', // the search string for columns to add/remove from the table
       openedRows: {}, // save the opened rows so they don't get unopened when the table data refreshes
       averageValues: {}, // list of total values
-      totalValues: {} // list of total values
+      totalValues: {}, // list of total values
+      zeroMap: {}, // list of values that have been cleared
+      zeroedAt: {} // list of times each column was cleared
     };
   },
   computed: {
+    user: function () {
+      return this.$store.state.user;
+    },
     filteredColumns: function () {
       // let filteredColumns = [];
       return this.columns.filter((column) => {
@@ -348,7 +319,10 @@ export default {
           if (column.doStats) {
             let totalValue = 0;
             for (let item of this.data) {
-              totalValue += parseInt(item[column.dataField || column.sort]);
+              if (!item.hasOwnProperty(column.id) && !item.hasOwnProperty(column.sort)) {
+                continue;
+              }
+              totalValue += parseInt(item[column.id || column.sort]);
             }
             this.totalValues[column.id] = totalValue;
             this.averageValues[column.id] = totalValue / this.data.length;
@@ -464,6 +438,88 @@ export default {
       setTimeout(() => { this.saveTableState(); }, 1000);
 
       this.initializeColResizable();
+    },
+    zeroColValues: function (column) {
+      this.$set(this.zeroedAt, column.id, new Date().getTime());
+      this.$set(this.zeroMap, column.id, []);
+      for (let i = 0; i < this.data.length; i++) {
+        let data = this.data[i];
+        this.$set(this.zeroMap[column.id], i, data[column.id]);
+      }
+    },
+    calculateFormatValue: function (column, item, index) {
+      // if it's not a computed field value return it immediately
+      if (!column.doStats && !column.dataFunction) { return item[column.id]; }
+
+      let itemClone = JSON.parse(JSON.stringify(item));
+      let value = itemClone[column.id];
+
+      if (value === null || value === undefined) { return; }
+
+      if (this.zeroMap.hasOwnProperty(column.id)) {
+        value = value - this.zeroMap[column.id][index];
+      }
+
+      if (value < 0) { // server reset, so update zeroMap
+        this.$set(this.zeroMap[column.id], index, item[column.id]);
+        value = 0;
+      }
+
+      itemClone[column.id] = value;
+
+      return column.dataFunction ? column.dataFunction(itemClone) : value;
+    },
+    calculateFormatTotValue: function (column) {
+      // if it's not a computed field or there's no data return empty immediately
+      if (!column.doStats || !this.data || !this.data.length) { return ' '; }
+
+      let value = this.totalValues[column.id];
+      // need to recalucate the value if this column has been zeroed
+      if (this.zeroMap.hasOwnProperty(column.id)) {
+        // subtract all zeroed values for this column
+        for (let zeroVal of this.zeroMap[column.id]) {
+          value = value - zeroVal;
+        }
+      }
+
+      let mock = {};
+      mock[column.id] = value;
+
+      if (column.avgTotFunction) {
+        return column.avgTotFunction(mock);
+      } else if (column.dataFunction) {
+        return column.dataFunction(mock);
+      }
+
+      return value;
+    },
+    calculateFormatAvgValue: function (column) {
+      // if it's not a computed field or there's no data return empty immediately
+      if (!column.doStats || !this.data || !this.data.length) { return ' '; }
+
+      let sum = 0;
+      let value = this.averageValues[column.id];
+      // need to recalucate the value if this column has been zeroed
+      if (this.zeroMap.hasOwnProperty(column.id)) {
+        for (let v = 0; v < this.data.length; v++) {
+          let realValue = this.data[v];
+          let value = realValue[column.id];
+          value = value - this.zeroMap[column.id][v];
+          sum += value;
+        }
+        value = sum / this.data.length;
+      }
+
+      let mock = {};
+      mock[column.id] = value;
+
+      if (column.avgTotFunction) {
+        return column.avgTotFunction(mock);
+      } else if (column.dataFunction) {
+        return column.dataFunction(mock);
+      }
+
+      return value;
     },
     /* helper functions ------------------------------------------ */
     initializeColDragDrop: function () {
@@ -672,9 +728,10 @@ table {
   position: relative;
 }
 button.fit-btn {
-  position: absolute;
-  right: 0;
   top: 0;
+  right: 0;
+  z-index: 9;
+  position: absolute;
   visibility: hidden;
 }
 table > thead:hover button.fit-btn {
@@ -723,5 +780,19 @@ table thead tr th.ignore-element {
 }
 .table-sm.JPadding > tbody > tr > td, .table-sm.JPadding > tbody > tr > th {
   padding: 0.1rem 0.5rem !important;
+}
+
+/* column clear button */
+table thead th {
+  position: relative;
+}
+table thead th .btn-zero {
+  top: 0;
+  left: 2px;
+  position: absolute;
+  visibility: hidden;
+}
+table thead th:hover .btn-zero {
+  visibility: visible;
 }
 </style>

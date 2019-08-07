@@ -98,15 +98,14 @@
               New Sessions Tab (with only this value)
             </b-dropdown-item>
             <b-dropdown-item
-              @click="isOpen = false"
-              v-clipboard:copy="pd.value"
+              @click="doCopy(pd.value)"
               title="Copy value to clipboard">
               <span class="fa fa-clipboard"></span>&nbsp;
               Copy value
             </b-dropdown-item>
           </div>
           <!-- /clickable field menu -->
-        </span><!-- /normal parsed value -->
+        </span> <!-- /normal parsed value -->
 
         <!-- time value -->
         <span v-else
@@ -162,6 +161,8 @@
 import ConfigService from '../utils/ConfigService';
 import MolochSessionInfo from './SessionInfo';
 
+const noCommas = { 'vlan': true, 'suricata.signatureId': true };
+
 export default {
   name: 'MolochSessionField',
   components: { MolochSessionInfo },
@@ -214,9 +215,9 @@ export default {
           case 'seconds':
             qVal = val; // save original value as the query value
             val = this.$options.filters.timezoneDateString(
-              Math.floor(val / 1000),
+              val,
               this.timezone || this.$store.state.user.settings.timezone,
-              'YYYY/MM/DD HH:mm:ss z'
+              this.$store.state.user.settings.ms
             );
 
             if (this.expr !== 'starttime' && this.expr !== 'stoptime') {
@@ -234,7 +235,7 @@ export default {
             }
             break;
           case 'integer':
-            if (this.field.category !== 'port' && this.field.exp !== 'vlan') {
+            if (this.field.category !== 'port' && !noCommas[this.field.exp]) {
               qVal = val; // save original value as the query value
               val = this.$options.filters.commaString(val);
             }
@@ -297,7 +298,7 @@ export default {
     fieldClick: function (field, value, op, andor) {
       this.isOpen = false; // close the dropdown
 
-      let fullExpression = this.buildExpression(field, value, op);
+      const fullExpression = this.$options.filters.buildExpression(field, value, op);
 
       this.$store.commit('addToExpression', { expression: fullExpression, op: andor });
     },
@@ -331,7 +332,7 @@ export default {
     newTabSessions: function (field, value, op, root) {
       this.isOpen = false; // close the dropdown
 
-      let appendExpression = this.buildExpression(field, value, op);
+      const appendExpression = this.$options.filters.buildExpression(field, value, op);
 
       // build new expression
       let newExpression;
@@ -353,6 +354,15 @@ export default {
 
       window.open(routeData.href, '_blank');
     },
+    /**
+     * Triggered when a the Copy menu item is clicked for a field
+     * Copies the value provided to the user's clipboard and closes the menu
+     * @param {string} value The field value
+     */
+    doCopy: function (value) {
+      this.$copyText(value);
+      this.isOpen = false;
+    },
     /* helper functions ---------------------------------------------------- */
     /**
      * Gets info to display the menu for a field
@@ -366,23 +376,6 @@ export default {
       } else {
         return { field: this.expr, category: [this.field.category], info: this.field };
       }
-    },
-    /**
-     * Builds an expression for search.
-     * Stringifies necessary values and escapes necessary characters
-     * @param {string} field  The field name
-     * @param {string} value  The field value
-     * @param {string} op     The relational operator
-     * @returns {string}      The fully built expression
-     */
-    buildExpression: function (field, value, op) {
-      // for values required to be strings in the search expression
-      let str = /[^-+a-zA-Z0-9_.@:*?/]+/.test(value);
-      // escape unescaped quotes
-      value = value.toString().replace(/\\([\s\S])|(")/g, '\\$1$2');
-      if (str) { value = `"${value}"`; }
-
-      return `${field} ${op} ${value}`;
     },
     /**
      * Gets Session object
@@ -621,8 +614,10 @@ export default {
   left: 0;
   right: auto;
 }
+</style>
 
-.session-field-dropdown a {
+<style>
+.session-field-dropdown a.dropdown-item {
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
@@ -630,11 +625,11 @@ export default {
   clear: both;
   font-weight: normal;
   line-height: 1.42857143;
-  color: var(--color-black);
+  color: var(--color-foreground, #212529);
   white-space: nowrap;
 }
 
-.session-field-dropdown a:hover {
+.session-field-dropdown a.dropdown-item:hover {
   text-decoration: none;
   color: var(--color-black);
   background-color: var(--color-gray-lighter);

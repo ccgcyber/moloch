@@ -29,7 +29,7 @@
 
     <!-- loading overlay -->
     <moloch-loading
-      v-if="loading && !error">
+      v-if="loading">
     </moloch-loading> <!-- /loading overlay -->
 
     <!-- page error -->
@@ -41,10 +41,10 @@
 
     <!-- content -->
     <div class="settings-content row"
-       v-if="!loading && !error">
+       v-if="!loading && !error && settings">
 
       <!-- navigation -->
-      <div class="col-xl-2 col-lg-3 col-md-3 col-sm-4"
+      <div class="col-xl-2 col-lg-3 col-md-3 col-sm-4 col-xs-12"
         role="tablist"
         aria-orientation="vertical">
         <div class="nav flex-column nav-pills">
@@ -106,10 +106,18 @@
             </span>&nbsp;
             Notifiers
           </a>
+          <a v-if="!multiviewer"
+            class="nav-link cursor-pointer"
+            @click="openView('shortcuts')"
+            :class="{'active':visibleTab === 'shortcuts'}">
+            <span class="fa fa-fw fa-list">
+            </span>&nbsp;
+            Shortcuts
+          </a>
         </div>
       </div> <!-- /navigation -->
 
-      <div class="col">
+      <div class="col-xl-10 col-lg-9 col-md-9 col-sm-8 col-xs-12 settings-right-panel">
 
         <!-- general settings -->
         <form class="form-horizontal"
@@ -134,25 +142,37 @@
                     @change="updateTime"
                     v-model="settings.timezone">
                     <b-radio value="local"
-                      v-b-tooltip.hover
                       class="btn-radio">
                       Local
                     </b-radio>
                     <b-radio value="localtz"
-                      v-b-tooltip.hover
                       class="btn-radio">
                       Local + Timezone
                     </b-radio>
                     <b-radio value="gmt"
-                      v-b-tooltip.hover
                       class="btn-radio">
                       UTC
                     </b-radio>
                   </b-form-radio-group>
                 </b-form-group>
               </div>
+              <div class="btn-group">
+                <b-form-group>
+                  <b-form-checkbox
+                    button
+                    size="sm"
+                    v-b-tooltip.hover
+                    class="btn-checkbox"
+                    @change="updateTime"
+                    v-model="settings.ms"
+                    :active="settings.ms"
+                    title="(for session and packet timestamps only)">
+                    milliseconds
+                  </b-form-checkbox>
+                </b-form-group>
+              </div>
               <label class="ml-4 font-weight-bold text-theme-primary">
-                {{ date | timezoneDateString(settings.timezone, 'YYYY/MM/DD HH:mm:ss z') }}
+                {{ date | timezoneDateString(settings.timezone, settings.ms) }}
               </label>
             </div>
           </div> <!-- /timezone -->
@@ -435,8 +455,6 @@
              and can be activated in the search bar.
           </p>
 
-          <hr>
-
           <table class="table table-striped table-sm">
             <thead>
               <tr>
@@ -608,8 +626,6 @@
             delayed by 90 second to make sure all updates have been completed
             for that session.
           </p>
-
-          <hr>
 
           <table class="table table-striped table-sm">
             <thead>
@@ -833,8 +849,6 @@
             table's column layout for future use.
           </p>
 
-          <hr>
-
           <table class="table table-striped table-sm">
             <thead>
               <tr>
@@ -956,8 +970,6 @@
             Custom visible field configurations allow the user to save their
             visible fields on the SPI View page for future use.
           </p>
-
-          <hr>
 
           <table class="table table-striped table-sm">
             <thead>
@@ -1827,6 +1839,223 @@
         </form>
         <!-- /notifiers settings -->
 
+        <!-- shortcut settings -->
+        <form class="form-horizontal"
+          v-if="visibleTab === 'shortcuts'"
+          id="shortcuts">
+
+          <h3>Shortcuts</h3>
+
+          <p>
+            Create a list of values that can be used in queries as shortcuts.
+            For example, create a list of IPs and use them in a query
+            expression <code>ip.src == $MY_IPS</code>.
+            <br>
+            <strong>Tip:</strong>
+            Use <code>$</code> to autocomplete shortcuts in search expressions.
+          </p>
+
+          <table v-if="shortcuts && shortcuts.length"
+            class="table table-striped table-sm">
+            <thead>
+              <tr>
+                <th>Shared</th>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Value(s)</th>
+                <th>Type</th>
+                <th>&nbsp;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- shortcuts -->
+              <template v-for="(item, index) in shortcuts">
+                <tr :key="`${item.id}-content`">
+                  <td>
+                    <input type="checkbox"
+                      :disabled="!user.createEnabled && item.userId !== user.userId"
+                      v-model="item.shared"
+                      @input="toggleShortcutShared(item)"
+                    />
+                  </td>
+                  <td>
+                    {{ item.name }}
+                  </td>
+                  <td>
+                    {{ item.description }}
+                  </td>
+                  <td class="shortcut-value">
+                    {{ item.value }}
+                  </td>
+                  <td>
+                    {{ item.type }}
+                  </td>
+                  <td class="shortcut-btns">
+                    <span v-if="user.createEnabled || item.userId === user.userId">
+                      <span v-if="!item.newValue">
+                        <button type="button"
+                          v-b-tooltip.hover
+                          @click="toggleEditShortcut(item)"
+                          title="Make changes to this shortcut's value"
+                          class="btn btn-sm btn-theme-tertiary pull-right ml-1">
+                          <span class="fa fa-pencil">
+                          </span>
+                        </button>
+                        <button type="button"
+                          v-b-tooltip.hover
+                          title="Delete this shortcut"
+                          class="btn btn-sm btn-danger pull-right"
+                          @click="deleteShortcut(item, index)">
+                          <span class="fa fa-trash-o">
+                          </span>
+                        </button>
+                      </span>
+                      <span v-else>
+                        <button type="button"
+                          v-b-tooltip.hover
+                          @click="updateShortcut(item)"
+                          title="Save changes to this shortcut's value"
+                          class="btn btn-sm btn-theme-tertiary pull-right ml-1">
+                          <span class="fa fa-save">
+                          </span>
+                        </button>
+                        <button type="button"
+                          v-b-tooltip.hover
+                          title="Cancel changes to this shortcut's value"
+                          class="btn btn-sm btn-warning pull-right"
+                          @click="toggleEditShortcut(item)">
+                          <span class="fa fa-ban">
+                          </span>
+                        </button>
+                      </span>
+                    </span>
+                  </td>
+                </tr>
+                <tr :key="`${item.id}-edit`"
+                  v-if="item.newValue">
+                  <td colspan="6">
+                    <textarea rows="5"
+                      type="text"
+                      class="form-control form-control-sm m-1"
+                      v-model="item.newValue">
+                    </textarea>
+                  </td>
+                </tr>
+              </template> <!-- /shortcuts -->
+              <!-- shortcuts list error -->
+              <tr v-if="shortcutsListError">
+                <td colspan="6">
+                  <p class="text-danger mb-0">
+                    <span class="fa fa-exclamation-triangle">
+                    </span>&nbsp;
+                    {{ shortcutsListError }}
+                  </p>
+                </td>
+              </tr> <!-- /shortcuts list error -->
+            </tbody>
+          </table>
+          <!-- new shortcut form -->
+          <div class="row var-form mr-1 ml-1 mt-2">
+            <div class="col">
+              <div class="row mb-3 mt-4">
+                <div class="col-10 offset-2">
+                  <h3 class="mt-3">
+                    New Shortcut
+                  </h3>
+                </div>
+              </div>
+              <div class="form-group row">
+                <label for="newShortcutName"
+                  class="col-2 col-form-label text-right">
+                  Name<sup>*</sup>
+                </label>
+                <div class="col-10">
+                  <input id="newShortcutName"
+                    type="text"
+                    class="form-control form-control-sm"
+                    v-model="newShortcutName"
+                    placeholder="MY_MOLOCH_VAR"
+                  />
+                </div>
+              </div>
+              <div class="form-group row">
+                <label for="newShortcutDescription"
+                  class="col-2 col-form-label text-right">
+                  Description
+                </label>
+                <div class="col-10">
+                  <input id="newShortcutDescription"
+                    type="text"
+                    class="form-control form-control-sm"
+                    v-model="newShortcutDescription"
+                  />
+                </div>
+              </div>
+              <div class="form-group row">
+                <label for="newShortcutValue"
+                  class="col-2 col-form-label text-right">
+                  Value(s)<sup>*</sup>
+                </label>
+                <div class="col-10">
+                  <textarea id="newShortcutValue"
+                    type="text"
+                    rows="5"
+                    class="form-control form-control-sm"
+                    v-model="newShortcutValue"
+                    placeholder="Enter a comma or newline separated list of values">
+                  </textarea>
+                </div>
+              </div>
+              <div class="form-group row">
+                <label for="newShortcutType"
+                  class="col-2 col-form-label text-right">
+                  Type<sup>*</sup>
+                </label>
+                <div class="col-10">
+                  <select id="newShortcutType"
+                    v-model="newShortcutType"
+                    class="form-control form-control-sm">
+                    <option value="ip">IP(s)</option>
+                    <option value="string">String(s)</option>
+                    <option value="number">Number(s)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group row">
+                <label for="newShortcutShared"
+                  class="col-2 col-form-label text-right">
+                  Shared
+                </label>
+                <div class="col-10">
+                  <input id="newShortcutShared"
+                    type="checkbox"
+                    v-model="newShortcutShared"
+                  />
+                  <button class="btn btn-theme-tertiary btn-sm pull-right"
+                    type="button"
+                    @click="createShortcut">
+                    <span class="fa fa-plus-circle">
+                    </span>&nbsp;
+                    Create
+                  </button>
+                </div>
+              </div>
+              <!-- shortcut form error -->
+              <div class="row mb-4 text-right">
+                <div class="col-12">
+                  <p v-if="shortcutFormError"
+                    class="small text-danger mb-0">
+                    <span class="fa fa-exclamation-triangle">
+                    </span>&nbsp;
+                    {{ shortcutFormError }}
+                  </p>
+                </div>
+              </div> <!-- /shortcut form error -->
+            </div>
+          </div> <!-- /new shortcut form -->
+
+        </form> <!-- / shortcut settings -->
+
       </div>
 
     </div> <!-- /content -->
@@ -1935,7 +2164,16 @@ export default {
       notifierTypes: [],
       notifiersError: '',
       newNotifier: undefined,
-      newNotifierError: ''
+      newNotifierError: '',
+      // shortcut settings vars
+      shortcuts: undefined,
+      shortcutsListError: '',
+      newShortcutShared: false,
+      newShortcutName: '',
+      newShortcutDescription: '',
+      newShortcutValue: '',
+      newShortcutType: 'string',
+      shortcutFormError: ''
     };
   },
   computed: {
@@ -1958,7 +2196,7 @@ export default {
       tab = tab.replace(/^#/, '');
       if (tab === 'general' || tab === 'views' || tab === 'cron' ||
         tab === 'col' || tab === 'theme' || tab === 'password' ||
-        tab === 'spiview' || tab === 'notifiers') {
+        tab === 'spiview' || tab === 'notifiers' || tab === 'shortcuts') {
         this.visibleTab = tab;
       }
 
@@ -2010,6 +2248,7 @@ export default {
         this.getSpiviewConfigs();
         this.getNotifierTypes();
         this.getNotifiers();
+        this.getShortcuts();
       })
       .catch((error) => {
         this.error = error.text;
@@ -2019,47 +2258,6 @@ export default {
     ConfigService.getMolochClusters()
       .then((response) => {
         this.molochClusters = response;
-      });
-
-    // get fields from field service then get sessionsNew state
-    FieldService.get(true)
-      .then((response) => {
-        this.fields = JSON.parse(JSON.stringify(response));
-        this.fieldsPlus = JSON.parse(JSON.stringify(response));
-        this.fieldsPlus.push({
-          dbField: 'ip.dst:port',
-          exp: 'ip.dst:port',
-          help: 'Destination IP:Destination Port',
-          group: 'general',
-          friendlyName: 'Dst IP:Dst Port'
-        });
-
-        // add custom columns to the fields array
-        for (let key in customCols) {
-          if (customCols.hasOwnProperty(key)) {
-            this.fields.push(customCols[key]);
-          }
-        }
-
-        // build fields map for quick lookup by dbField
-        this.fieldsMap = {};
-        for (let i = 0, len = this.fields.length; i < len; ++i) {
-          let field = this.fields[i];
-          this.fieldsMap[field.dbField] = field;
-        }
-
-        UserService.getState('sessionsNew')
-          .then((response) => {
-            this.setupColumns(response.data.visibleHeaders);
-            // if the sort column setting does not match any of the visible
-            // headers, set the sort column setting to last
-            if (response.data.visibleHeaders.indexOf(this.settings.sortColumn) === -1) {
-              this.settings.sortColumn = 'last';
-            }
-          })
-          .catch(() => {
-            this.setupColumns(['firstPacket', 'lastPacket', 'src', 'srcPort', 'dst', 'dstPort', 'totPackets', 'dbby', 'node', 'info']);
-          });
       });
   },
   methods: {
@@ -2107,7 +2305,6 @@ export default {
     /* updates the displayed date for the timzeone setting
      * triggered by the user changing the timezone setting */
     updateTime: function (newTimezone) {
-      this.settings.timezone = newTimezone;
       this.tick();
       this.update();
     },
@@ -2132,21 +2329,21 @@ export default {
       this.update();
     },
     spiGraphFieldSelected: function (field) {
-      this.spiGraphTypeahead = field.friendlyName;
-      this.settings.spiGraph = field.dbField;
-      this.spiGraphField = field;
+      this.$set(this, 'spiGraphField', field);
+      this.$set(this.settings, 'spiGraph', field.dbField);
+      this.$set(this, 'spiGraphTypeahead', field.friendlyName);
       this.update();
     },
     connSrcFieldSelected: function (field) {
-      this.connSrcFieldTypeahead = field.friendlyName;
-      this.settings.connSrcField = field.dbField;
-      this.connSrcField = field;
+      this.$set(this, 'connSrcField', field);
+      this.$set(this.settings, 'connSrcField', field.dbField);
+      this.$set(this, 'connSrcFieldTypeahead', field.friendlyName);
       this.update();
     },
     connDstFieldSelected: function (field) {
-      this.connDstFieldTypeahead = field.friendlyName;
-      this.settings.connDstField = field.dbField;
-      this.connDstField = field;
+      this.$set(this, 'connDstField', field);
+      this.$set(this.settings, 'connDstField', field.dbField);
+      this.$set(this, 'connDstFieldTypeahead', field.friendlyName);
       this.update();
     },
     /* starts the clock for the timezone setting */
@@ -2158,7 +2355,7 @@ export default {
     },
     /* updates the date and format for the timezone setting */
     tick: function () {
-      this.date = Math.floor(new Date() / 1000);
+      this.date = new Date();
       if (this.settings.timezone === 'gmt') {
         this.dateFormat = 'yyyy/MM/dd HH:mm:ss\'Z\'';
       } else {
@@ -2699,6 +2896,108 @@ export default {
           this.msgType = 'danger';
         });
     },
+    /* SHORTCUTS --------------------------------------- */
+    /* toggles shared var on a shortcut and saves the shortcut */
+    toggleShortcutShared: function (shortcut) {
+      this.$set(shortcut, 'shared', !shortcut.shared);
+      this.updateShortcut(shortcut);
+    },
+    /* opens up text area to edit shortcut value */
+    toggleEditShortcut: function (shortcut) {
+      if (!shortcut.newValue) {
+        this.$set(shortcut, 'newValue', shortcut.value);
+      } else {
+        this.$set(shortcut, 'newValue', undefined);
+      }
+    },
+    /* creates a new shortcut */
+    createShortcut: function () {
+      if (!this.newShortcutName) {
+        this.shortcutFormError = 'Enter a unique shortcut name';
+        return;
+      }
+
+      if (!this.newShortcutValue) {
+        this.shortcutFormError = 'Enter a value for your new shortcut';
+        return;
+      }
+
+      const data = {
+        name: this.newShortcutName,
+        type: this.newShortcutType,
+        value: this.newShortcutValue,
+        shared: this.newShortcutShared,
+        description: this.newShortcutDescription
+      };
+
+      this.$http.post('lookups', { var: data })
+        .then((response) => {
+          // add it to the list
+          this.shortcuts.push(response.data.var);
+          // clear the inputs and any error
+          this.shortcutFormError = false;
+          this.newShortcutName = '';
+          this.newShortcutValue = '';
+          this.newShortcutShared = false;
+          this.newShortcutDescription = '';
+          // display success message to user
+          this.msg = response.data.text;
+          this.msgType = 'success';
+        })
+        .catch((error) => {
+          this.msg = error.text;
+          this.msgType = 'danger';
+        });
+    },
+    /* updates a specified shortcut (only shared and value are editable) */
+    updateShortcut: function (shortcut) {
+      let data = {
+        name: shortcut.name,
+        type: shortcut.type,
+        value: shortcut.value,
+        shared: shortcut.shared,
+        userId: shortcut.userId,
+        description: shortcut.description
+      };
+
+      if (shortcut.newValue) {
+        data.value = shortcut.newValue;
+      }
+
+      this.$http.put(`lookups/${shortcut.id}`, { var: data })
+        .then((response) => {
+          // update value and clear out new value
+          // so it can be used to determine editing
+          if (shortcut.newValue) {
+            this.$set(shortcut, 'value', response.data.var.value);
+            this.$set(shortcut, 'newValue', undefined);
+            delete shortcut.newValue;
+          }
+          // display success message to user
+          this.msg = response.data.text;
+          this.msgType = 'success';
+        })
+        .catch((error) => {
+          this.msg = error.text;
+          this.msgType = 'danger';
+        });
+    },
+    /* deletes a shortcut and removes it from the shortcuts array */
+    deleteShortcut: function (shortcut, index) {
+      this.$http.delete(`lookups/${shortcut.id}`)
+        .then((response) => {
+          // remove it from the array
+          this.shortcuts.splice(index, 1);
+          // display success message to user
+          this.msg = response.data.text;
+          this.msgType = 'success';
+        })
+        .catch((error) => {
+          // display error message to user
+          this.msg = error.text;
+          this.msgType = 'danger';
+        });
+    },
 
     /* helper functions ---------------------------------------------------- */
     /* retrievs the theme colors from the document body's property values */
@@ -2736,31 +3035,31 @@ export default {
     getSettings: function () {
       UserService.getSettings(this.userId)
         .then((response) => {
-          // set defaults so that radio buttons show the default value
-          if (!response.timezone) { response.timezone = 'local'; }
-          if (!response.detailFormat) { response.detailFormat = 'last'; }
-          if (!response.numPackets) { response.numPackets = 'last'; }
-          if (!response.showTimestamps) { response.showTimestamps = 'last'; }
-          if (!response.manualQuery) { response.manualQuery = false; }
-
-          // dbField is saved in settings, but show the field's friendlyName
-          for (let i = 0, len = this.fieldsPlus.length; i < len; i++) {
-            let field = this.fieldsPlus[i];
-            if (response.spiGraph === field.dbField) {
-              this.spiGraphField = field;
-              this.spiGraphTypeahead = field.friendlyName;
-            }
-            if (response.connSrcField === field.dbField) {
-              this.connSrcField = field;
-              this.connSrcFieldTypeahead = field.friendlyName;
-            }
-            if (response.connDstField === field.dbField) {
-              this.connDstField = field;
-              this.connDstFieldTypeahead = field.friendlyName;
-            }
+          // set the user settings individually
+          for (let key in response) {
+            this.$set(this.settings, key, response[key]);
           }
 
-          this.settings = response;
+          // set defaults if a user setting doesn't exists
+          // so that radio buttons show the default value
+          if (!response.timezone) {
+            this.$set(this.settings, 'timezone', 'local');
+          }
+          if (!response.detailFormat) {
+            this.$set(this.settings, 'detailFormat', 'last');
+          }
+          if (!response.numPackets) {
+            this.$set(this.settings, 'numPackets', 'last');
+          }
+          if (!response.showTimestamps) {
+            this.$set(this.settings, 'showTimestamps', 'last');
+          }
+          if (!response.manualQuery) {
+            this.$set(this.settings, 'manualQuery', false);
+          }
+
+          this.getFields();
+
           this.loading = false;
 
           this.setTheme();
@@ -2777,6 +3076,72 @@ export default {
             this.error = error.text;
           }
           this.displayName = '';
+        });
+    },
+    /* retrieves moloch fields and visible column headers for sessions table
+     * adds custom columns to fields
+     * sets user settings for spigraph field & connections src/dst fields
+     * creates fields map for quick lookups
+     */
+    getFields: function () {
+      // get fields from field service then get sessionsNew state
+      FieldService.get(true)
+        .then((response) => {
+          this.fields = JSON.parse(JSON.stringify(response));
+          this.fieldsPlus = JSON.parse(JSON.stringify(response));
+          this.fieldsPlus.push({
+            dbField: 'ip.dst:port',
+            exp: 'ip.dst:port',
+            help: 'Destination IP:Destination Port',
+            group: 'general',
+            friendlyName: 'Dst IP:Dst Port'
+          });
+
+          // add custom columns to the fields array
+          for (let key in customCols) {
+            if (customCols.hasOwnProperty(key)) {
+              this.fields.push(customCols[key]);
+            }
+          }
+
+          // update the user settings for spigraph field & connections src/dst fields
+          // NOTE: dbField is saved in settings, but show the field's friendlyName
+          for (let i = 0, len = this.fieldsPlus.length; i < len; i++) {
+            let field = this.fieldsPlus[i];
+            if (this.settings.spiGraph === field.dbField) {
+              this.$set(this, 'spiGraphField', field);
+              this.$set(this, 'spiGraphTypeahead', field.friendlyName);
+            }
+            if (this.settings.connSrcField === field.dbField) {
+              this.$set(this, 'connSrcField', field);
+              this.$set(this, 'connSrcFieldTypeahead', field.friendlyName);
+            }
+            if (this.settings.connDstField === field.dbField) {
+              this.$set(this, 'connDstField', field);
+              this.$set(this, 'connDstFieldTypeahead', field.friendlyName);
+            }
+          }
+
+          // build fields map for quick lookup by dbField
+          this.fieldsMap = {};
+          for (let i = 0, len = this.fields.length; i < len; ++i) {
+            let field = this.fields[i];
+            this.fieldsMap[field.dbField] = field;
+          }
+
+          // get the visible headers for the sessions table configuration
+          UserService.getState('sessionsNew')
+            .then((response) => {
+              this.setupColumns(response.data.visibleHeaders);
+              // if the sort column setting does not match any of the visible
+              // headers, set the sort column setting to last
+              if (response.data.visibleHeaders.indexOf(this.settings.sortColumn) === -1) {
+                this.settings.sortColumn = 'last';
+              }
+            })
+            .catch(() => {
+              this.setupColumns(['firstPacket', 'lastPacket', 'src', 'srcPort', 'dst', 'dstPort', 'totPackets', 'dbby', 'node', 'info']);
+            });
         });
     },
     /* retrieves the specified user's views */
@@ -2868,6 +3233,16 @@ export default {
           this.notifiersError = error.text || error;
         });
     },
+    getShortcuts: function () {
+      let url = 'lookups';
+      if (this.userId) { url += `?userId=${this.userId}`; }
+      this.$http.get(url)
+        .then((response) => {
+          this.shortcuts = response.data;
+        }, (error) => {
+          this.shortcutsListError = error.text || error;
+        });
+    },
     /**
      * Setup this.columns with a list of field objects
      * @param {array} colIdArray The array of column ids
@@ -2917,6 +3292,10 @@ export default {
   margin-top: 90px;
   margin-left: 0;
   margin-right: 0;
+  overflow-x: hidden;
+}
+.settings-content .settings-right-panel {
+  overflow-x: auto;
 }
 
 .settings-page .sub-navbar {
@@ -2943,6 +3322,28 @@ export default {
   box-shadow: inset 0 1px 1px rgba(0, 0, 0, .05);
   background-color: var(--color-gray-lighter);
   border: 1px solid var(--color-gray-light);
+}
+
+/* shortcuts form */
+.settings-page .var-form {
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, .05);
+  background-color: var(--color-gray-lighter);
+  border: 1px solid var(--color-gray-light);
+  border-radius: 3px;
+}
+.settings-page .var-form input[type='checkbox'] {
+  margin-top: 0.75rem;
+}
+
+/* shorcuts table */
+.settings-page .shortcut-value {
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-page .shortcut-btns {
+  min-width: 80px;
 }
 
 /* theme displays ----------------- */

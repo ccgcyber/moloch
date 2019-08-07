@@ -55,6 +55,8 @@
 # 58 - users message count and last used date
 # 59 - tokens
 # 60 - users time query limit
+# 61 - shortcuts
+# 62 - hunt error timestamp and node
 
 use HTTP::Request::Common;
 use LWP::UserAgent;
@@ -63,9 +65,12 @@ use Data::Dumper;
 use POSIX;
 use strict;
 
-my $VERSION = 60;
+my $VERSION = 62;
 my $verbose = 0;
 my $PREFIX = "";
+my $SECURE = 1;
+my $CLIENTCERT = "";
+my $CLIENTKEY = "";
 my $NOCHANGES = 0;
 my $SHARDS = -1;
 my $REPLICAS = -1;
@@ -79,6 +84,9 @@ my $ESTIMEOUT=60;
 my $UPGRADEALLSESSIONS = 1;
 my $DOHOTWARM = 0;
 my $WARMAFTER = -1;
+my $TYPE = "string";
+my $SHARED = 0;
+my $DESCRIPTION = "";
 
 #use LWP::ConsoleLogger::Everywhere ();
 
@@ -109,6 +117,9 @@ sub showHelp($)
     print "Global Options:\n";
     print "  -v                           - Verbose, multiple increases level\n";
     print "  --prefix <prefix>            - Prefix for table names\n";
+    print "  --clientkey <keypath>        - Path to key for client authentication.  Must not have a passphrase.\n";
+    print "  --clientcert <certpath>      - Path to cert for client authentication\n";
+    print "  --insecure                   - Don't verify http certificates\n";
     print "  -n                           - Make no db changes\n";
     print "  --timeout <timeout>          - Timeout in seconds for ES, default 60\n";
     print "\n";
@@ -118,13 +129,13 @@ sub showHelp($)
     print "    --shards <shards>          - Number of shards for sessions, default number of nodes\n";
     print "    --replicas <num>           - Number of replicas for sessions, default 0\n";
     print "    --shardsPerNode <shards>   - Number of shards per node or use \"null\" to let ES decide, default shards*replicas/nodes\n";
-    print "    --hotwarm                  - Set 'hot' for 'node.attr.molochtype' on new indices\n";
+    print "    --hotwarm                  - Set 'hot' for 'node.attr.molochtype' on new indices, warm on non sessions indices\n";
     print "  wipe                         - Same as init, but leaves user database untouched\n";
     print "  upgrade [<opts>]             - Upgrade Moloch's schema in elasticsearch from previous versions\n";
     print "    --shards <shards>          - Number of shards for sessions, default number of nodes\n";
     print "    --replicas <num>           - Number of replicas for sessions, default 0\n";
     print "    --shardsPerNode <shards>   - Number of shards per node or use \"null\" to let ES decide, default shards*replicas/nodes\n";
-    print "    --hotwarm                  - Set 'hot' for 'node.attr.molochtype' on new indices\n";
+    print "    --hotwarm                  - Set 'hot' for 'node.attr.molochtype' on new indices, warm on non sessions indices\n";
     print "  expire <type> <num> [<opts>] - Perform daily ES maintenance and optimize all indices in ES\n";
     print "       type                    - Same as rotateIndex in ini file = hourly,hourlyN,daily,weekly,monthly\n";
     print "       num                     - number of indexes to keep\n";
@@ -137,15 +148,22 @@ sub showHelp($)
     print "    --warmafter <num>          - Set molochwarm on indices after <num> <tpye>\n";
     print "  optimize                     - Optimize all indices in ES\n";
     print "    --segments <num>           - Number of segments to optimize sessions to, default 1\n";
-    print "  disableusers <days>          - Disable user accounts that have not been active\n";
+    print "  disable-users <days>         - Disable user accounts that have not been active\n";
     print "      days                     - Number of days of inactivity (integer)\n";
+    print "  set-shortcut <name> <userid> <file> [<opts>]\n";
+    print "       name                    - Name of the shortcut (no special characters except '_')\n";
+    print "       userid                  - UserId of the user to add the shortcut for\n";
+    print "       file                    - File that includes a comma or newline separated list of values\n";
+    print "    --type <type>              - Type of shortcut = string, ip, number, default is string\n";
+    print "    --shared                   - Whether the shortcut is shared to all users\n";
+    print "    --description <description>- Description of the shortcut\n";
     print "\n";
     print "Backup and Restore Commands:\n";
-    print "  backup <basename>            - Backup important indices into a file per index, filenames start with <basename>\n";
-    print "  export <index> <basename>    - Save a single index into a file, filename starts with <basename>\n";
-    print "  restore <filename>           - Restore single index\n";
-    print "  rollback <basename> [<opts>] - Rollback to a particular version; filenames of settings, mappings, templates, and documents start with <basename>\n";
+    print "  backup <basename>            - Backup everything but sessions; filenames created start with <basename>\n";
+    print "  restore <basename> [<opts>]  - Restore everything but sessions; filenames restored from start with <basename>\n";
     print "    --skipupgradeall           - Do not upgrade Sessions\n";
+    print "  export <index> <basename>    - Save a single index into a file, filename starts with <basename>\n";
+    print "  import <filename>            - Import single index from <filename>\n";
     print "  users-export <filename>      - Save the users info to <filename>\n";
     print "  users-import <filename>      - Load the users info from <filename>\n";
     print "\n";
@@ -233,6 +251,8 @@ sub esPost
     logmsg "POST DATA:", Dumper($content), "\n" if ($verbose > 3);
     my $response = $main::userAgent->post("${main::elasticsearch}$url", Content => $content, Content_Type => "application/json");
     if ($response->code == 500 || ($response->code != 200 && $response->code != 201 && !$dontcheck)) {
+      return from_json("{}") if ($dontcheck == 2);
+
       logmsg "POST RESULT:", $response->content, "\n" if ($verbose > 3);
       die "Couldn't POST ${main::elasticsearch}$url  the http status code is " . $response->code . " are you sure elasticsearch is running/reachable?";
     }
@@ -345,10 +365,37 @@ sub esScroll
 ################################################################################
 sub esAlias
 {
-    my ($cmd, $index, $alias) = @_;
-
+    my ($cmd, $index, $alias, $dontaddprefix) = @_;
     logmsg "Alias cmd $cmd from $index to alias $alias\n" if ($verbose > 0);
+    if (!$dontaddprefix){ # append PREFIX
     esPost("/_aliases", '{ "actions": [ { "' . $cmd . '": { "index": "' . $PREFIX . $index . '", "alias" : "'. $PREFIX . $alias .'" } } ] }', 1);
+    } else { # do not append PREFIX
+        esPost("/_aliases", '{ "actions": [ { "' . $cmd . '": { "index": "' . $index . '", "alias" : "'. $alias .'" } } ] }', 1);
+    }
+}
+
+################################################################################
+sub esWaitForNoTask
+{
+    my ($str) = @_;
+    while (1) {
+        logmsg "GET ${main::elasticsearch}/_cat/tasks\n" if ($verbose > 1);
+        my $response = $main::userAgent->get("${main::elasticsearch}/_cat/tasks");
+        if ($response->code != 200) {
+            sleep(30);
+        }
+
+        return 1 if (index ($response->content, $str) == -1);
+        sleep 20;
+    }
+}
+################################################################################
+sub esForceMerge
+{
+    my ($index, $segments) = @_;
+    esWaitForNoTask("forcemerge");
+    esPost("/$index/_forcemerge?max_num_segments=$segments", "", 2);
+    esWaitForNoTask("forcemerge");
 }
 
 ################################################################################
@@ -1467,6 +1514,12 @@ sub huntsUpdate
         "properties": {
           "value": {
             "type": "keyword"
+          },
+          "time": {
+            "type": "date"
+          },
+          "node": {
+            "type": "keyword"
           }
         }
       },
@@ -1479,6 +1532,63 @@ sub huntsUpdate
 
 logmsg "Setting hunts_v1 mapping\n" if ($verbose > 0);
 esPut("/${PREFIX}hunts_v1/hunt/_mapping?master_timeout=${ESTIMEOUT}s&pretty", $mapping);
+}
+################################################################################
+
+################################################################################
+sub lookupsCreate
+{
+  my $settings = '
+{
+  "settings": {
+    "index.priority": 30,
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "auto_expand_replicas": "0-3"
+  }
+}';
+
+  logmsg "Creating lookups_v1 index\n" if ($verbose > 0);
+  esPut("/${PREFIX}lookups_v1", $settings);
+  esAlias("add", "lookups_v1", "lookups");
+  lookupsUpdate();
+}
+
+sub lookupsUpdate
+{
+    my $mapping = '
+{
+  "lookup": {
+    "_source": {"enabled": "true"},
+    "dynamic": "strict",
+    "properties": {
+      "userId": {
+        "type": "keyword"
+      },
+      "name": {
+        "type": "keyword"
+      },
+      "shared": {
+        "type": "boolean"
+      },
+      "description": {
+        "type": "keyword"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "ip": {
+        "type": "keyword"
+      },
+      "string": {
+        "type": "keyword"
+      }
+    }
+  }
+}';
+
+logmsg "Setting lookups_v1 mapping\n" if ($verbose > 0);
+esPut("/${PREFIX}lookups_v1/lookup/_mapping?master_timeout=${ESTIMEOUT}s&pretty", $mapping);
 }
 ################################################################################
 
@@ -1900,11 +2010,7 @@ sub progress {
 ################################################################################
 sub optimizeOther {
     logmsg "Optimizing Admin Indices\n";
-    foreach my $i ("${PREFIX}stats_v3", "${PREFIX}dstats_v3", "${PREFIX}files_v5", "${PREFIX}sequence_v2",  "${PREFIX}users_v6", "${PREFIX}queries_v2", "${PREFIX}hunts_v1") {
-        progress("$i ");
-        esPost("/$i/_forcemerge?max_num_segments=1", "", 1);
-    }
-    logmsg "\n";
+    esForceMerge("${PREFIX}stats_v3,${PREFIX}dstats_v3,${PREFIX}fields_v2,${PREFIX}files_v5,${PREFIX}sequence_v2,${PREFIX}users_v6,${PREFIX}queries_v2,${PREFIX}hunts_v1", 1);
     logmsg "\n" if ($verbose > 0);
 }
 ################################################################################
@@ -1925,11 +2031,11 @@ sub parseArgs {
             $pos++;
             $SEGMENTS = int($ARGV[$pos]);
         } elsif ($ARGV[$pos] eq "--nooptimize") {
-	    $NOOPTIMIZE = 1;
+            $NOOPTIMIZE = 1;
         } elsif ($ARGV[$pos] eq "--full") {
-	    $FULL = 1;
+            $FULL = 1;
         } elsif ($ARGV[$pos] eq "--reverse") {
-	    $REVERSE = 1;
+            $REVERSE = 1;
         } elsif ($ARGV[$pos] eq "--skipupgradeall") {
             $UPGRADEALLSESSIONS = 0;
         } elsif ($ARGV[$pos] eq "--shardsPerNode") {
@@ -1944,6 +2050,14 @@ sub parseArgs {
         } elsif ($ARGV[$pos] eq "--warmafter") {
             $pos++;
             $WARMAFTER = int($ARGV[$pos]);
+        } elsif ($ARGV[$pos] eq "--shared") {
+            $SHARED = 1;
+        } elsif ($ARGV[$pos] eq "--type") {
+            $pos++;
+            $TYPE = $ARGV[$pos];
+        } elsif ($ARGV[$pos] eq "--description") {
+            $pos++;
+            $DESCRIPTION = $ARGV[$pos];
         } else {
             logmsg "Unknown option '$ARGV[$pos]'\n";
         }
@@ -1959,6 +2073,14 @@ while (@ARGV > 0 && substr($ARGV[0], 0, 1) eq "-") {
         $PREFIX .= "_" if ($PREFIX !~ /_$/);
     } elsif ($ARGV[0] =~ /-n$/) {
         $NOCHANGES = 1;
+    } elsif ($ARGV[0] =~ /--insecure$/) {
+        $SECURE = 0;
+    } elsif ($ARGV[0] =~ /--clientcert$/) {
+        $CLIENTCERT = $ARGV[1];
+        shift @ARGV;
+    } elsif ($ARGV[0] =~ /--clientkey$/) {
+        $CLIENTKEY = $ARGV[1];
+        shift @ARGV;
     } elsif ($ARGV[0] =~ /--timeout$/) {
         $ESTIMEOUT = int($ARGV[1]);
         shift @ARGV;
@@ -1970,17 +2092,30 @@ while (@ARGV > 0 && substr($ARGV[0], 0, 1) eq "-") {
 
 showHelp("Help:") if ($ARGV[1] =~ /^help$/);
 showHelp("Missing arguments") if (@ARGV < 2);
-showHelp("Unknown command '$ARGV[1]'") if ($ARGV[1] !~ /^(init|initnoprompt|clean|info|wipe|upgrade|upgradenoprompt|disableusers|users-?import|restore|rollback|users-?export|export|backup|expire|rotate|optimize|mv|rm|rm-?missing|rm-?node|add-?missing|field|force-?put-?version|sync-?files|hide-?node|unhide-?node|add-?alias|set-?replicas|set-?shards-?per-?node|set-?allocation-?enable|allocate-?empty|unflood-?stage)$/);
-showHelp("Missing arguments") if (@ARGV < 3 && $ARGV[1] =~ /^(users-?import|restore|rollback|users-?export|backup|rm|rm-?missing|rm-?node|hide-?node|unhide-?node|set-?allocation-?enable|unflood-?stage)$/);
-showHelp("Missing arguments") if (@ARGV < 4 && $ARGV[1] =~ /^(field|export|add-?missing|sync-?files|add-?alias|set-?replicas|set-?shards-?per-?node)$/);
-showHelp("Missing arguments") if (@ARGV < 5 && $ARGV[1] =~ /^(allocate-?empty)$/);
+showHelp("Unknown command '$ARGV[1]'") if ($ARGV[1] !~ /^(init|initnoprompt|clean|info|wipe|upgrade|upgradenoprompt|disable-?users|set-?shortcut|users-?import|import|restore|users-?export|export|backup|expire|rotate|optimize|mv|rm|rm-?missing|rm-?node|add-?missing|field|force-?put-?version|sync-?files|hide-?node|unhide-?node|add-?alias|set-?replicas|set-?shards-?per-?node|set-?allocation-?enable|allocate-?empty|unflood-?stage)$/);
+showHelp("Missing arguments") if (@ARGV < 3 && $ARGV[1] =~ /^(users-?import|import|users-?export|backup|restore|rm|rm-?missing|rm-?node|hide-?node|unhide-?node|set-?allocation-?enable|unflood-?stage)$/);
+showHelp("Missing arguments") if (@ARGV < 4 && $ARGV[1] =~ /^(field|export|add-?missing|sync-?files|add-?alias|set-?replicas|set-?shards-?per-?node|set-?shortcut)$/);
+showHelp("Missing arguments") if (@ARGV < 5 && $ARGV[1] =~ /^(allocate-?empty|set-?shortcut)$/);
 showHelp("Must have both <old fn> and <new fn>") if (@ARGV < 4 && $ARGV[1] =~ /^(mv)$/);
 showHelp("Must have both <type> and <num> arguments") if (@ARGV < 4 && $ARGV[1] =~ /^(rotate|expire)$/);
 
 parseArgs(2) if ($ARGV[1] =~ /^(init|initnoprompt|upgrade|upgradenoprompt|clean)$/);
-parseArgs(3) if ($ARGV[1] =~ /^(rollback)$/);
+parseArgs(3) if ($ARGV[1] =~ /^(restore)$/);
 
 $main::userAgent = LWP::UserAgent->new(timeout => $ESTIMEOUT + 5, keep_alive => 5);
+if ($CLIENTCERT ne "") {
+    $main::userAgent->ssl_opts(
+        SSL_verify_mode => $SECURE,
+        verify_hostname=> $SECURE,
+        SSL_cert_file => $CLIENTCERT,
+        SSL_key_file => $CLIENTKEY
+    )
+} else {
+    $main::userAgent->ssl_opts(
+        SSL_verify_mode => $SECURE,
+        verify_hostname=> $SECURE
+    )
+}
 
 if ($ARGV[0] =~ /^http/) {
     $main::elasticsearch = $ARGV[0];
@@ -1988,7 +2123,7 @@ if ($ARGV[0] =~ /^http/) {
     $main::elasticsearch = "http://$ARGV[0]";
 }
 
-if ($ARGV[1] =~ /^(users-?import|restore)$/) {
+if ($ARGV[1] =~ /^(users-?import|import)$/) {
     open(my $fh, "<", $ARGV[2]) or die "cannot open < $ARGV[2]: $!";
     my $data = do { local $/; <$fh> };
     esPost("/_bulk", $data);
@@ -2001,9 +2136,9 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
         logmsg "The index is empty\n";
         exit 0;
     }
-    open(my $fh, ">", "$ARGV[3].$index.json") or die "cannot open > $ARGV[3].$index.json: $!";
+    open(my $fh, ">", "$ARGV[3].${PREFIX}${index}.json") or die "cannot open > $ARGV[3].${PREFIX}${index}.json: $!";
     foreach my $hit (@{$data}) {
-        print $fh "{\"index\": {\"_index\": \"$PREFIX$index\", \"_type\": \"$hit->{_type}\", \"_id\": \"$hit->{_id}\", \"_version\": $hit->{_version}, \"_version_type\": \"external\"}}\n";
+        print $fh "{\"index\": {\"_index\": \"${PREFIX}${index}\", \"_type\": \"$hit->{_type}\", \"_id\": \"$hit->{_id}\", \"_version\": $hit->{_version}, \"_version_type\": \"external\"}}\n";
         if (exists $hit->{_source}) {
             print $fh to_json($hit->{_source}) . "\n";
         } else {
@@ -2015,13 +2150,14 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
 } elsif ($ARGV[1] =~ /^backup$/) {
     my @indexes = ("users", "sequence", "stats", "queries", "files", "fields", "dstats");
     push(@indexes, "hunts") if ($main::versionNumber > 51);
+    push(@indexes, "lookups") if ($main::versionNumber > 60);
     logmsg "Exporting documents...\n";
     foreach my $index (@indexes) {
         my $data = esScroll($index, "", '{"version": true}');
         next if (scalar(@{$data}) == 0);
-        open(my $fh, ">", "$ARGV[2].$index.json") or die "cannot open > $ARGV[2].$index.json: $!";
+        open(my $fh, ">", "$ARGV[2].${PREFIX}${index}.json") or die "cannot open > $ARGV[2].${PREFIX}${index}.json: $!";
         foreach my $hit (@{$data}) {
-            print $fh "{\"index\": {\"_index\": \"$PREFIX$index\", \"_type\": \"$hit->{_type}\", \"_id\": \"$hit->{_id}\", \"_version\": $hit->{_version}, \"_version_type\": \"external\"}}\n";
+            print $fh "{\"index\": {\"_index\": \"${PREFIX}${index}\", \"_type\": \"$hit->{_type}\", \"_id\": \"$hit->{_id}\", \"_version\": $hit->{_version}, \"_version_type\": \"external\"}}\n";
             if (exists $hit->{_source}) {
                 print $fh to_json($hit->{_source}) . "\n";
             } else {
@@ -2035,29 +2171,34 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
     foreach my $template (@templates) {
         my $data = esGet("/_template/${PREFIX}${template}");
         my @name = split(/_/, $template);
-        open(my $fh, ">", "$ARGV[2].$name[0].template.json") or die "cannot open > $ARGV[2].$name[0].template.json: $!";
+        open(my $fh, ">", "$ARGV[2].${PREFIX}$name[0].template.json") or die "cannot open > $ARGV[2].${PREFIX}$name[0].template.json: $!";
         print $fh to_json($data);
         close($fh);
     }
     logmsg "Exporting settings...\n";
     foreach my $index (@indexes) {
         my $data = esGet("/${PREFIX}${index}/_settings");
-        open(my $fh, ">", "$ARGV[2].${index}.settings.json") or die "cannot open > $ARGV[2].${index}.settings.json: $!";
+        open(my $fh, ">", "$ARGV[2].${PREFIX}${index}.settings.json") or die "cannot open > $ARGV[2].${PREFIX}${index}.settings.json: $!";
         print $fh to_json($data);
         close($fh);
     }
     logmsg "Exporting mappings...\n";
     foreach my $index (@indexes) {
         my $data = esGet("/${PREFIX}${index}/_mappings");
-        open(my $fh, ">", "$ARGV[2].${index}.mappings.json") or die "cannot open > $ARGV[2].${index}.mappings.json: $!";
+        open(my $fh, ">", "$ARGV[2].${PREFIX}${index}.mappings.json") or die "cannot open > $ARGV[2].${PREFIX}${index}.mappings.json: $!";
         print $fh to_json($data);
         close($fh);
     }
     logmsg "Exporting aliaes...\n";
-    my $aliases = join(',', @indexes);
+
+    my @indexes_prefixed = ();
+    foreach my $index (@indexes) {
+        push(@indexes_prefixed, $PREFIX . $index);
+    }
+    my $aliases = join(',', @indexes_prefixed);
     $aliases = "/_cat/aliases/${aliases}?format=json";
     my $data = esGet($aliases), "\n";
-    open(my $fh, ">", "$ARGV[2].aliases.json") or die "cannot open > $ARGV[2].aliases.json: $!";
+    open(my $fh, ">", "$ARGV[2].${PREFIX}aliases.json") or die "cannot open > $ARGV[2].${PREFIX}aliases.json: $!";
     print $fh to_json($data);
     close($fh);
     logmsg "Finished\n";
@@ -2110,7 +2251,6 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
     $shardsPerNode = $SHARDSPERNODE if ($SHARDSPERNODE eq "null" || $SHARDSPERNODE > $shardsPerNode);
 
     dbESVersion();
-    $main::userAgent->timeout(7200);
     optimizeOther() unless $NOOPTIMIZE ;
     logmsg sprintf ("Expiring %s sessions indices, %s optimizing %s, warming %s\n", commify(scalar(keys %{$indices}) - $optimizecnt), $NOOPTIMIZE?"Not":"", commify($optimizecnt), commify($warmcnt));
     esPost("/_flush/synced", "", 1);
@@ -2138,7 +2278,7 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
 
             # 1 is set if it shouldn't be expired, > 1 means it needs to be optimized
             if ($indices->{$i}->{OPTIMIZEIT} > 1) {
-                esPost("/$i/_forcemerge?max_num_segments=$SEGMENTS", "", 1) unless $NOOPTIMIZE ;
+                esForceMerge($i, $SEGMENTS) unless $NOOPTIMIZE;
             }
 
             if ($REPLICAS != -1) {
@@ -2187,7 +2327,7 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
             esDelete("/$i", 1);
         }
     }
-    esPost("/${PREFIX}history_*/_forcemerge?max_num_segments=1", "", 1) unless $NOOPTIMIZE ;
+    esForceMerge("${PREFIX}history_*", 1) unless $NOOPTIMIZE;
     esPost("/_flush/synced", "", 1);
 
     # Give the cluster a kick to rebalance
@@ -2203,12 +2343,12 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
     logmsg sprintf "Optimizing %s Session Indices\n", commify(scalar(keys %{$indices}));
     foreach my $i (sort (keys %{$indices})) {
         progress("$i ");
-        esPost("/$i/_forcemerge?max_num_segments=$SEGMENTS", "", 1);
+        esForceMerge($i, $SEGMENTS);
     }
     esPost("/_flush/synced", "", 1);
     logmsg "\n";
     exit 0;
-} elsif ($ARGV[1] eq "disableusers") {
+} elsif ($ARGV[1] =~ /^(disable-?users)$/) {
     showHelp("Invalid number of <days>") if (!defined $ARGV[2] || $ARGV[2] !~ /^[+-]?\d+$/);
 
     my $users = esGet("/${PREFIX}users/_search?size=1000&q=enabled:true+AND+createEnabled:false+AND+_exists_:lastUsed");
@@ -2233,6 +2373,71 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
     } else {
       print "$rmcount user(s) disabled\n";
     }
+
+    exit 0;
+} elsif ($ARGV[1] =~ /^(set-?shortcut)$/) {
+    showHelp("Invalid name $ARGV[2], names cannot have special characters except '_'") if ($ARGV[2] =~ /[^-a-zA-Z0-9_]$/);
+    showHelp("file '$ARGV[4]' not found") if (! -e $ARGV[4]);
+    showHelp("file '$ARGV[4]' empty") if (-z $ARGV[4]);
+
+    parseArgs(5);
+
+    showHelp("Type must be ip, string, or number instead of $TYPE") if ($TYPE !~ /^(string|ip|number)$/);
+
+    # read shortcuts file
+    my $shortcutValues;
+    open(my $fh, '<', $ARGV[4]);
+    {
+      local $/;
+      $shortcutValues = <$fh>;
+    }
+    close($fh);
+
+    my $shortcutsArray = [split /[\n,]/, $shortcutValues];
+
+    my $shortcutName = $ARGV[2];
+    my $shortcutUserId = $ARGV[3];
+
+    my $shortcuts = esGet("/${PREFIX}lookups/_search?q=name:${shortcutName}");
+
+    my $existingShortcut;
+    foreach my $shortcut (@{$shortcuts->{hits}->{hits}}) {
+      if ($shortcut->{_source}->{name} == $shortcutName) {
+        $existingShortcut = $shortcut;
+        last;
+      }
+    }
+
+    # create shortcut object
+    my $newShortcut;
+    $newShortcut->{name} = $shortcutName;
+    $newShortcut->{userId} = $shortcutUserId;
+    $newShortcut->{$TYPE} = $shortcutsArray;
+    if ($existingShortcut) { # use existing optional fields
+      if ($existingShortcut->{_source}->{description}) {
+        $newShortcut->{description} = $existingShortcut->{_source}->{description};
+      }
+      if ($existingShortcut->{_source}->{shared}) {
+        $newShortcut->{shared} = $existingShortcut->{_source}->{shared};
+      }
+    }
+    if ($DESCRIPTION) {
+      $newShortcut->{description} = $DESCRIPTION;
+    }
+    if ($SHARED) {
+      $newShortcut->{shared} = \1;
+    }
+
+    my $verb = "Created";
+    if ($existingShortcut) { # update the shortcut
+      $verb = "Updated";
+      my $id = $existingShortcut->{_id};
+      esPost("/${PREFIX}lookups/lookup/${id}", to_json($newShortcut));
+    } else { # create the shortcut
+      esPost("/${PREFIX}lookups/lookup", to_json($newShortcut));
+    }
+
+    print "${verb} shortcut ${shortcutName}\n";
 
     exit 0;
 } elsif ($ARGV[1] eq "info") {
@@ -2283,6 +2488,7 @@ if ($ARGV[1] =~ /^(users-?import|restore)$/) {
     }
     printIndex($status, "stats_v3");
     printIndex($status, "stats_v2");
+    printIndex($status, "fields_v2");
     printIndex($status, "files_v5");
     printIndex($status, "files_v4");
     printIndex($status, "users_v6");
@@ -2563,6 +2769,7 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
     esDelete("/${PREFIX}history_v1-*", 1);
     esDelete("/_template/${PREFIX}history_v1_template", 1);
     esDelete("/${PREFIX}hunts_v1", 1);
+    esDelete("/${PREFIX}lookups_v1", 1);
     if ($ARGV[1] =~ /^(init|clean)/) {
         esDelete("/${PREFIX}users_v3", 1);
         esDelete("/${PREFIX}users_v4", 1);
@@ -2588,41 +2795,43 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
     fieldsCreate();
     historyUpdate();
     huntsCreate();
+    lookupsCreate();
     if ($ARGV[1] =~ "init") {
         usersCreate();
         queriesCreate();
     }
-} elsif ($ARGV[1] =~ /^rollback$/) {
+} elsif ($ARGV[1] =~ /^restore$/) {
 
     logmsg "It is STRONGLY recommended that you stop ALL moloch captures and viewers before proceeding.\n";
 
     dbCheckForActivity();
 
-    my @indexes = ("users", "sequence", "stats", "queries", "hunts", "files", "fields", "dstats");
+    my @indexes = ("users", "sequence", "stats", "queries", "hunts", "files", "fields", "dstats", "lookups");
     my @filelist = ();
     foreach my $index (@indexes) { # list of data, settings, and mappings files
-        push(@filelist, "$ARGV[2].$index.json\n") if (-e "$ARGV[2].$index.json");
-        push(@filelist, "$ARGV[2].$index.settings.json\n") if (-e "$ARGV[2].$index.settings.json");
-        push(@filelist, "$ARGV[2].$index.mappings.json\n") if (-e "$ARGV[2].$index.mappings.json");
+        push(@filelist, "$ARGV[2].${PREFIX}${index}.json\n") if (-e "$ARGV[2].${PREFIX}${index}.json");
+        push(@filelist, "$ARGV[2].${PREFIX}${index}.settings.json\n") if (-e "$ARGV[2].${PREFIX}${index}.settings.json");
+        push(@filelist, "$ARGV[2].${PREFIX}${index}.mappings.json\n") if (-e "$ARGV[2].${PREFIX}${index}.mappings.json");
     }
     foreach my $index ("sessions2", "history") { # list of templates
-        @filelist = (@filelist, "$ARGV[2].$index.template.json\n") if (-e "$ARGV[2].$index.template.json");
+        @filelist = (@filelist, "$ARGV[2].${PREFIX}${index}.template.json\n") if (-e "$ARGV[2].${PREFIX}${index}.template.json");
     }
 
-    push(@filelist, "$ARGV[2].aliases.json\n") if (-e "$ARGV[2].aliases.json");
+    push(@filelist, "$ARGV[2].${PREFIX}aliases.json\n") if (-e "$ARGV[2].${PREFIX}aliases.json");
 
     my @directory = split(/\//,$ARGV[2]);
     my $basename = $directory[scalar(@directory)-1];
     splice(@directory, scalar(@directory)-1, 1);
     my $path = join("/", @directory);
 
-    die "Cannot find files start with $basename in $path" if (scalar(@filelist) == 0);
+    die "Cannot find files start with ${basename}.${PREFIX} in $path" if (scalar(@filelist) == 0);
 
-    logmsg "\nFollowing files will be used for rollback\n\n@filelist\n\n";
 
-    waitFor("ROLLBACK", "do you want to rollback? This will delete ALL data [@indexes] but sessions and history and restore from backups: files start with $basename in $path");
+    logmsg "\nFollowing files will be used for restore\n\n@filelist\n\n";
 
-    logmsg "\nStarting Rollback...\n\n";
+    waitFor("RESTORE", "do you want to restore? This will delete ALL data [@indexes] but sessions and history and restore from backups: files start with $basename in $path");
+
+    logmsg "\nStarting Restore...\n\n";
 
     logmsg "Erasing data ...\n\n";
 
@@ -2657,6 +2866,7 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
     esDelete("/${PREFIX}queries", 1);
     esDelete("/${PREFIX}queries_v1", 1);
     esDelete("/${PREFIX}queries_v2", 1);
+    esDelete("/${PREFIX}lookups_v1", 1);
     esDelete("/_template/${PREFIX}template_1", 1);
     esDelete("/_template/${PREFIX}sessions_template", 1);
     esDelete("/_template/${PREFIX}sessions2_template", 1);
@@ -2664,50 +2874,49 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
 
     logmsg "Importing settings...\n\n";
     foreach my $index (@indexes) { # import settings
-        if (-e "$ARGV[2].$index.settings.json") {
-            open(my $fh, "<", "$ARGV[2].$index.settings.json");
+        if (-e "$ARGV[2].${PREFIX}${index}.settings.json") {
+            open(my $fh, "<", "$ARGV[2].${PREFIX}${index}.settings.json");
             my $data = do { local $/; <$fh> };
             $data = from_json($data);
             my @index = keys %{$data};
-
             delete $data->{$index[0]}->{settings}->{index}->{creation_date};
             delete $data->{$index[0]}->{settings}->{index}->{provided_name};
             delete $data->{$index[0]}->{settings}->{index}->{uuid};
             delete $data->{$index[0]}->{settings}->{index}->{version};
             my $settings = to_json($data->{$index[0]});
-            esPut("/${PREFIX}$index[0]", $settings);
+            esPut("/$index[0]", $settings);
             close($fh);
         }
     }
 
     logmsg "Importing aliases...\n\n";
-    if (-e "$ARGV[2].aliases.json") { # import alias
-            open(my $fh, "<", "$ARGV[2].aliases.json");
+    if (-e "$ARGV[2].${PREFIX}aliases.json") { # import alias
+            open(my $fh, "<", "$ARGV[2].${PREFIX}aliases.json");
             my $data = do { local $/; <$fh> };
             $data = from_json($data);
             foreach my $alias (@{$data}) {
-                esAlias("add", $alias->{index}, $alias->{alias});
+                esAlias("add", $alias->{index}, $alias->{alias}, 1);
             }
     }
 
     logmsg "Importing mappings...\n\n";
     foreach my $index (@indexes) { # import mappings
-        if (-e "$ARGV[2].$index.mappings.json") {
-            open(my $fh, "<", "$ARGV[2].$index.mappings.json");
+        if (-e "$ARGV[2].${PREFIX}${index}.mappings.json") {
+            open(my $fh, "<", "$ARGV[2].${PREFIX}${index}.mappings.json");
             my $data = do { local $/; <$fh> };
             $data = from_json($data);
             my @index = keys %{$data};
             my $mappings = $data->{$index[0]}->{mappings};
             my @type = keys %{$mappings};
-            esPut("/${PREFIX}$index[0]/$type[0]/_mapping?master_timeout=${ESTIMEOUT}s&pretty", to_json($mappings));
+            esPut("/$index[0]/$type[0]/_mapping?master_timeout=${ESTIMEOUT}s&pretty", to_json($mappings));
             close($fh);
         }
     }
 
     logmsg "Importing documents...\n\n";
     foreach my $index (@indexes) { # import documents
-        if (-e "$ARGV[2].$index.json") {
-            open(my $fh, "<", "$ARGV[2].$index.json");
+        if (-e "$ARGV[2].${PREFIX}${index}.json") {
+            open(my $fh, "<", "$ARGV[2].${PREFIX}${index}.json");
             my $data = do { local $/; <$fh> };
             esPost("/_bulk", $data);
             close($fh);
@@ -2717,13 +2926,23 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
     logmsg "Importing templates for Sessions and History...\n\n";
     my @templates = ("sessions2", "history");
     foreach my $template (@templates) { # import templates
-        if (-e "$ARGV[2].$template.template.json") {
-            open(my $fh, "<", "$ARGV[2].$template.template.json");
+        if (-e "$ARGV[2].${PREFIX}${template}.template.json") {
+            open(my $fh, "<", "$ARGV[2].${PREFIX}${template}.template.json");
             my $data = do { local $/; <$fh> };
             $data = from_json($data);
             my @template_name = keys %{$data};
-            my $mapping = $data->{$template_name[0]};
-            esPut("/_template/${PREFIX}$template_name[0]?master_timeout=${ESTIMEOUT}s", to_json($data->{$template_name[0]}));
+            esPut("/_template/$template_name[0]?master_timeout=${ESTIMEOUT}s", to_json($data->{$template_name[0]}));
+            close($fh);
+        }
+    }
+
+    foreach my $template (@templates) { # update mappings
+        if (-e "$ARGV[2].${PREFIX}${template}.template.json") {
+            open(my $fh, "<", "$ARGV[2].${PREFIX}${template}.template.json");
+            my $data = do { local $/; <$fh> };
+            $data = from_json($data);
+            my @template_name = keys %{$data};
+            my $mapping = $data->{$template_name[0]}->{mappings};
             if (($template cmp "sessions2") == 0 && $UPGRADEALLSESSIONS) {
                 my $indices = esGet("/${PREFIX}sessions2-*/_alias", 1);
                 logmsg "Updating sessions2 mapping for ", scalar(keys %{$indices}), " indices\n" if (scalar(keys %{$indices}) != 0);
@@ -2744,7 +2963,7 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
             close($fh);
         }
     }
-    logmsg "Finished Rollback.\n";
+    logmsg "Finished Restore.\n";
 } else {
 
 # Remaing is upgrade or upgradenoprompt
@@ -2787,6 +3006,7 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
 
         huntsCreate();
         checkForOld5Indices();
+        lookupsCreate();
         setPriority();
     } elsif ($main::versionNumber < 52) {
         historyUpdate();
@@ -2794,6 +3014,7 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
         createNewAliasesFromOld("users", "users_v6", "users_v5", \&usersCreate);
         huntsCreate();
         checkForOld5Indices();
+        lookupsCreate();
         setPriority();
         queriesUpdate();
         sessions2Update();
@@ -2801,12 +3022,15 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
         historyUpdate();
         createNewAliasesFromOld("users", "users_v6", "users_v5", \&usersCreate);
         checkForOld5Indices();
+        lookupsCreate();
         setPriority();
         queriesUpdate();
         sessions2Update();
+        huntsUpdate();
         fieldsIpDst();
     } elsif ($main::versionNumber <= 58) {
         checkForOld5Indices();
+        lookupsCreate();
         setPriority();
         usersUpdate();
         huntsUpdate();
@@ -2817,9 +3041,21 @@ if ($ARGV[1] =~ /^(init|wipe|clean)/) {
         checkForOld5Indices();
         sessions2Update();
         usersUpdate();
+        lookupsCreate();
+        huntsUpdate();
+    } elsif ($main::versionNumber <= 62) {
+        checkForOld5Indices();
+        sessions2Update();
+        huntsUpdate();
     } else {
         logmsg "db.pl is hosed\n";
     }
+}
+
+if ($DOHOTWARM) {
+    esPut("/${PREFIX}stats_v3,${PREFIX}dstats_v3,${PREFIX}fields_v2,${PREFIX}files_v5,${PREFIX}sequence_v2,${PREFIX}users_v6,${PREFIX}queries_v2,${PREFIX}hunts_v1,${PREFIX}history*/_settings?master_timeout=${ESTIMEOUT}s&allow_no_indices=true&ignore_unavailable=true", "{\"index.routing.allocation.require.molochtype\": \"warm\"}");
+} else {
+    esPut("/${PREFIX}stats_v3,${PREFIX}dstats_v3,${PREFIX}fields_v2,${PREFIX}files_v5,${PREFIX}sequence_v2,${PREFIX}users_v6,${PREFIX}queries_v2,${PREFIX}hunts_v1,${PREFIX}history*/_settings?master_timeout=${ESTIMEOUT}s&allow_no_indices=true&ignore_unavailable=true", "{\"index.routing.allocation.require.molochtype\": null}");
 }
 
 logmsg "Finished\n";

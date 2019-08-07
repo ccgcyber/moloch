@@ -8,7 +8,8 @@ ES Versions:
   * Moloch >= 0.18.1 supports ES 2.4.x, >= 5.3.1 not 6.x or later
 
 Node Versions:
-  * Moloch >= 1.6.0 requires NodeJS 8.x of 8.12 or later
+  * Moloch >= 2.0.0 requires NodeJS 10.x
+  * Moloch >= 1.6.0 requires NodeJS 8.x, 8.12 or later
   * Moloch >= 1.0.0 requires NodeJS 8.x
   * Moloch >= 0.20.0 requires NodeJS 6.x
   * Moloch >= 0.18.1 requires NodeJS 4.x
@@ -17,6 +18,7 @@ NOTICE: Restart wiseService before capture when upgrading
 
 2.0.0 2019/05/xx
   - NOTICE: This versions requires ES 6.6.x or later
+  - release - cyberchef 8.30.0, node 10.15.3
   - viewer - Can display pcap retention in Capture Stats tab
   - all - Fix some elasticsearch deprecation warnings
   - viewer - Added uploadFileSizeLimit
@@ -24,6 +26,18 @@ NOTICE: Restart wiseService before capture when upgrading
   - capture - no longer send packet lengths to ES by default (enablePacketLen)
   - parliament - Can configure multiple of each type of notifier
   - viewer - Can just delete SPI
+  - db - backup command now saves meta data so restore can do a rollback
+         (thanks codesniffer)
+  - capture - add truncated-pcap tag to sessions where all pcap isn't written
+  - suricata - support timezones better
+  - db - improve optimize to deal with connection closed better
+  - viewer - Added shortcuts
+  - capture - fixed ja3s mishandling of 10/11 extension types (thanks Norwegian Healthcare CERT)
+  - viewer - add bytes as a graphing choice
+  - capture - fixed ja3 mishandling of 11 extension types (thanks Norwegian Healthcare CERT)
+  - capture - Added startsWith,contains,endsWith rule expression modifier
+  - viewer - support ip == ipv4 and ip == ipv6 expressions
+  - capture - Initial ipv6 gtp support
 
 1.8.0 2019/04/03
   - NOTICE: This will be the last version to support ES 5

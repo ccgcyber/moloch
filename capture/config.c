@@ -478,6 +478,7 @@ void moloch_config_load()
     config.dropGroup        = moloch_config_str(keyfile, "dropGroup", NULL);
     config.pluginsDir       = moloch_config_str_list(keyfile, "pluginsDir", NULL);
     config.parsersDir       = moloch_config_str_list(keyfile, "parsersDir", " /data/moloch/parsers ; ./parsers ");
+    config.caTrustFile      = moloch_config_str(keyfile, "caTrustFile", NULL);
     char *offlineRegex      = moloch_config_str(keyfile, "offlineFilenameRegex", "(?i)\\.(pcap|cap)$");
 
     config.offlineRegex     = g_regex_new(offlineRegex, 0, 0, &error);
@@ -537,6 +538,7 @@ void moloch_config_load()
     config.parseSMTP             = moloch_config_boolean(keyfile, "parseSMTP", TRUE);
     config.parseSMTPHeaderAll    = moloch_config_boolean(keyfile, "parseSMTPHeaderAll", FALSE);
     config.parseSMB              = moloch_config_boolean(keyfile, "parseSMB", TRUE);
+    config.ja3Strings            = moloch_config_boolean(keyfile, "ja3Strings", FALSE);
     config.parseDNSRecordAll     = moloch_config_boolean(keyfile, "parseDNSRecordAll", FALSE);
     config.parseQSValue          = moloch_config_boolean(keyfile, "parseQSValue", FALSE);
     config.parseCookieValue      = moloch_config_boolean(keyfile, "parseCookieValue", FALSE);
@@ -550,6 +552,7 @@ void moloch_config_load()
     config.trackESP              = moloch_config_boolean(keyfile, "trackESP", FALSE);
     config.yaraEveryPacket       = moloch_config_boolean(keyfile, "yaraEveryPacket", TRUE);
     config.autoGenerateId        = moloch_config_boolean(keyfile, "autoGenerateId", FALSE);
+    config.enablePacketLen       = moloch_config_boolean(NULL, "enablePacketLen", FALSE);
 
     config.maxStreams[SESSION_TCP] = MAX(100, maxStreams/config.packetThreads*1.25);
     config.maxStreams[SESSION_UDP] = MAX(100, maxStreams/config.packetThreads/20);

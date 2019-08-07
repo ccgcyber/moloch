@@ -63,7 +63,6 @@ LOCAL struct timespec startHealthCheck;
 LOCAL uint64_t        esHealthMS;
 
 LOCAL int             dbExit;
-LOCAL char            enablePacketLen;
 
 /******************************************************************************/
 extern MolochConfig_t        config;
@@ -123,7 +122,7 @@ LOCAL MolochIpInfo_t *moloch_db_get_local_ip6(MolochSession_t *session, struct i
 }
 
 /******************************************************************************/
-LOCAL void moloch_db_js0n_str(BSB *bsb, unsigned char *in, gboolean utf8)
+LOCAL void moloch_db_js0n_str(BSB * bsb, unsigned char * in, gboolean utf8)
 {
     BSB_EXPORT_u08(*bsb, '"');
     while (*in) {
@@ -158,19 +157,16 @@ LOCAL void moloch_db_js0n_str(BSB *bsb, unsigned char *in, gboolean utf8)
             } else if (utf8) {
                 if ((*in & 0xf0) == 0xf0) {
                     if (!in[1] || !in[2] || !in[3]) goto end;
-                    BSB_EXPORT_u08(*bsb, *(in++));
-                    BSB_EXPORT_u08(*bsb, *(in++));
-                    BSB_EXPORT_u08(*bsb, *(in++));
-                    BSB_EXPORT_u08(*bsb, *in);
+                    BSB_EXPORT_ptr(*bsb, in, 4);
+                    in += 3;
                 } else if ((*in & 0xf0) == 0xe0) {
                     if (!in[1] || !in[2]) goto end;
-                    BSB_EXPORT_u08(*bsb, *(in++));
-                    BSB_EXPORT_u08(*bsb, *(in++));
-                    BSB_EXPORT_u08(*bsb, *in);
+                    BSB_EXPORT_ptr(*bsb, in, 3);
+                    in += 2;
                 } else if ((*in & 0xf0) == 0xd0) {
                     if (!in[1]) goto end;
-                    BSB_EXPORT_u08(*bsb, *(in++));
-                    BSB_EXPORT_u08(*bsb, *in);
+                    BSB_EXPORT_ptr(*bsb, in, 2);
+                    in += 1;
                 } else {
                     BSB_EXPORT_u08(*bsb, *in);
                 }
@@ -401,7 +397,11 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     }
 
     /* jsonSize is an estimate of how much space it will take to encode the session */
-    jsonSize = 1100 + session->filePosArray->len*12 + 10*session->fileNumArray->len + 10*session->fileLenArray->len;
+    jsonSize = 1100 + session->filePosArray->len*12 + 10*session->fileNumArray->len;
+    if (config.enablePacketLen) {
+        jsonSize += 10*session->fileLenArray->len;
+    }
+
     for (pos = 0; pos < session->maxFields; pos++) {
         if (session->fields[pos]) {
             jsonSize += session->fields[pos]->jsonSize;
@@ -666,7 +666,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     }
     BSB_EXPORT_cstr(jbsb, "],");
 
-    if (enablePacketLen) {
+    if (config.enablePacketLen) {
         BSB_EXPORT_cstr(jbsb, "\"packetLen\":[");
         for(i = 0; i < session->fileLenArray->len; i++) {
             if (i != 0)
@@ -2302,6 +2302,12 @@ void moloch_db_init()
         headers[1] = NULL;
         moloch_http_set_headers(esServer, headers);
         moloch_http_set_print_errors(esServer);
+
+        char* clientCert = moloch_config_str(NULL, "esClientCert", NULL);
+        char* clientKey = moloch_config_str(NULL, "esClientKey", NULL);
+        char* clientKeyPass = moloch_config_str(NULL, "esClientKeyPass", NULL);
+        moloch_http_set_client_cert(esServer, clientCert, clientKey, clientKeyPass);
+
         moloch_db_health_check((gpointer)1L);
     }
     myPid = getpid() & 0xffff;
@@ -2336,8 +2342,6 @@ void moloch_db_init()
     for (thread = 0; thread < config.packetThreads; thread++) {
         MOLOCH_LOCK_INIT(dbInfo[thread].lock);
     }
-
-    enablePacketLen = moloch_config_boolean(NULL, "enablePacketLen", FALSE);
 }
 /******************************************************************************/
 void moloch_db_exit()

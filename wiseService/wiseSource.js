@@ -104,7 +104,7 @@ function WISESource (api, section) {
 
 module.exports = WISESource;
 
-WISESource.emptyResult = {num: 0, buffer: new Buffer(0)};
+WISESource.emptyResult = {num: 0, buffer: Buffer.alloc(0)};
 WISESource.field2Pos = {};
 WISESource.field2Info = {};
 WISESource.pos2Field = {};
@@ -219,7 +219,7 @@ WISESource.prototype.parseJSON = function (body, setCb, endCb) {
   for(var i = 0; i < json.length; i++) {
     // Walk the key path
     let key = json[i];
-    for (var j = 0; key && j < keyColumn.length; j++) {
+    for (let j = 0; key && j < keyColumn.length; j++) {
       key = key[keyColumn[j]];
     }
 
@@ -229,10 +229,10 @@ WISESource.prototype.parseJSON = function (body, setCb, endCb) {
 
     var args = [];
     // Check each shortcut
-    for (var k = 0; k < shortcuts.length; k++) {
+    for (let k = 0; k < shortcuts.length; k++) {
       var obj = json[i];
       // Walk the shortcut path
-      for (var j = 0; obj && j < shortcuts[k].length; j++) {
+      for (let j = 0; obj && j < shortcuts[k].length; j++) {
         obj = obj[shortcuts[k][j]];
       }
       if (obj !== undefined && obj !== null) {
@@ -241,7 +241,13 @@ WISESource.prototype.parseJSON = function (body, setCb, endCb) {
       }
     }
 
-    setCb(key, {num: args.length/2, buffer: WISESource.encode.apply(null, args)});
+    if (Array.isArray(key)) {
+      key.forEach((part) => {
+        setCb(part, {num: args.length/2, buffer: WISESource.encode.apply(null, args)});
+      });
+    } else {
+      setCb(key, {num: args.length/2, buffer: WISESource.encode.apply(null, args)});
+    }
   }
   endCb(null);
 };
@@ -257,7 +263,7 @@ WISESource.combineResults = function(results)
     len += results[a].buffer.length;
   }
 
-  var buf = new Buffer(len);
+  var buf = Buffer.allocUnsafe(len);
   var offset = 1;
   for (a = 0; a < results.length; a++) {
     if (!results[a]) {
@@ -303,7 +309,7 @@ WISESource.encode = function ()
     len += 3 + Buffer.byteLength(arguments[a]);
   }
 
-  var buf = new Buffer(len);
+  var buf = Buffer.allocUnsafe(len);
   var offset = 0;
   for (a = 1; a < arguments.length; a += 2) {
       buf.writeUInt8(arguments[a-1], offset);
@@ -376,15 +382,10 @@ WISESource.prototype.formatSetting = function () {
   return true;
 };
 //////////////////////////////////////////////////////////////////////////////////
-var typeName2Func = {ip: "getIp", domain: "getDomain", md5: "getMd5", email: "getEmail", url: "getURL", tuple: "getTuple", ja3: "getJa3", sha256: "getSha256"};
 WISESource.prototype.typeSetting = function ()
 {
   this.type     = this.api.getConfig(this.section, "type");
-  this.typeFunc = typeName2Func[this.type];
-  if (this.typeFunc === undefined) {
-    console.log(this.section, "ERROR - unknown type", this.type);
-    return;
-  }
+  this.typeFunc = this.api.funcName(this.type);
 };
 //////////////////////////////////////////////////////////////////////////////////
 WISESource.emptyCombinedResult = WISESource.combineResults([]);

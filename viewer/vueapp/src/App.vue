@@ -72,9 +72,6 @@ export default {
     }
   },
   mounted: function () {
-    const hash = this.$route.hash;
-    if (hash) { this.scrollFix(hash); }
-
     this.compatibleBrowser = (typeof Object['__defineSetter__'] === 'function') &&
       !!String.prototype.includes;
 
@@ -204,22 +201,6 @@ export default {
         },
         hash: this.$route.hash
       });
-    },
-    scrollFix: function (hash) {
-      // remove the hash from the url
-      this.$router.replace({
-        ...this.$route,
-        hash: undefined
-      });
-
-      setTimeout(() => {
-        // add the hash back to the url so that router/index.js
-        // scrollBehavior actually triggers on page load
-        this.$router.replace({
-          ...this.$route,
-          hash: hash
-        });
-      }, 750);
     }
   }
 };
@@ -360,27 +341,35 @@ a.no-decoration { text-decoration: none; }
 }
 
 /* themed radio/checkbox buttons */
-label.btn-radio, button.btn-checkbox {
+label.btn-radio,
+button.btn-checkbox,
+div.btn-checkbox > label {
+  cursor: pointer;
   background-image: none;
   background-color: var(--color-background, white) !important;
   border-color    : var(--color-primary) !important;
   color           : var(--color-primary);
 }
 label.btn-radio.active:hover:not(:disabled),
-button.btn-checkbox.active:hover:not(:disabled) {
+button.btn-checkbox.active:hover:not(:disabled),
+div.btn-checkbox > label.active:hover:not(:disabled) {
   background-color: var(--color-primary-darker) !important;
 }
 label.btn-radio:hover:not(:disabled),
-button.btn-checkbox:hover:not(:disabled) {
+button.btn-checkbox:hover:not(:disabled),
+div.btn-checkbox > label:hover:not(:disabled) {
   color           : var(--color-primary);
   background-color: var(--color-primary-lightest) !important;
 }
 label.btn-radio.active:not(:disabled),
-button.btn-checkbox.active:not(:disabled) {
+button.btn-checkbox.active:not(:disabled),
+div.btn-checkbox > label.active:not(:disabled) {
   border-color    : var(--color-primary) !important;
   background-color: var(--color-primary) !important;
 }
-label.btn-radio:disabled, button.btn-checkbox:disabled {
+label.btn-radio:disabled,
+button.btn-checkbox:disabled,
+div.btn-checkbox > label:disabled {
   background-color: var(--color-background, white);
   color: var(--color-gray);
   border-color: var(--color-gray) !important;
@@ -541,12 +530,12 @@ dl.dl-horizontal.dl-horizontal-wide dd {
 /* make the shortcut letter the same size/position as the icon */
 .query-shortcut {
   color: var(--color-tertiary-lighter);
-  font-size: 18px;
+  font-size: 14px;
   width: 20px;
 }
 .time-shortcut {
   color: var(--color-tertiary-lighter);
-  font-size: 18px;
+  font-size: 14px;
   width: 20px;
 }
 /* make sure the width of the input prepend doesn't change */
@@ -617,5 +606,10 @@ dl.dl-horizontal.dl-horizontal-wide dd {
 .moloch-info .well > h1 {
   margin-top: 0;
   color: var(--color-primary);
+}
+
+/* apply theme foreground to tables */
+table.table {
+  color: var(--color-foreground, #555);
 }
 </style>
