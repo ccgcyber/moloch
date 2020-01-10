@@ -45,6 +45,7 @@ LOCAL  int fctField;
 LOCAL  int magicField;
 LOCAL  int headerField;
 LOCAL  int headerValue;
+LOCAL  int helloField;
 
 typedef struct {
     MolochStringHead_t boundaries;
@@ -180,6 +181,30 @@ LOCAL char * smtp_quoteable_decode_inplace(char *str, gsize *olen)
 }
 
 /******************************************************************************/
+LOCAL char *smtp_gformat(char *format)
+{
+    switch (format[0]) {
+    case 'k':
+    case 'K':
+        if (strcasecmp(format, "ks_c_5601-1987") == 0)
+            return "CP949";
+        break;
+    case 'g':
+    case 'G':
+        if (strcasecmp(format, "gb2312") == 0)
+            return "CP936";
+        break;
+    case 'w':
+    case 'W':
+        if (strcasecmp(format, "windows-1251") == 0)
+            return "CP1251";
+        if (strcasecmp(format, "windows-1252") == 0)
+            return "CP1252";
+        break;
+    }
+    return format;
+}
+/******************************************************************************/
 LOCAL void smtp_email_add_encoded(MolochSession_t *session, int pos, char *string, int len)
 {
     /* Decode this nightmare - http://www.rfc-editor.org/rfc/rfc2047.txt */
@@ -207,9 +232,9 @@ LOCAL void smtp_email_add_encoded(MolochSession_t *session, int pos, char *strin
                 extra = 1;
             }
 
-            char *out = g_convert((char *)str+extra, startquestion - str-extra, "utf-8", "WINDOWS-1252", &bread, &bwritten, &error);
+            char *out = g_convert((char *)str+extra, startquestion - str-extra, "utf-8", "CP1252", &bread, &bwritten, &error);
             if (error) {
-                LOG("ERROR convering %s to utf-8 %s ", "windows-1252", error->message);
+                LOG("ERROR convering %s to utf-8 %s ", "CP1252", error->message);
                 moloch_field_string_add(pos, session, string, len, TRUE);
                 g_error_free(error);
                 return;
@@ -250,7 +275,8 @@ LOCAL void smtp_email_add_encoded(MolochSession_t *session, int pos, char *strin
             else
                 olen = 0;
 
-            char *out = g_convert((char *)question+3, olen, "utf-8", str+2, &bread, &bwritten, &error);
+            char *fmt = smtp_gformat(str+2);
+            char *out = g_convert((char *)question+3, olen, "utf-8", fmt, &bread, &bwritten, &error);
             if (error) {
                 LOG("ERROR convering %s to utf-8 %s ", str+2, error->message);
                 moloch_field_string_add(pos, session, string, len, TRUE);
@@ -265,7 +291,8 @@ LOCAL void smtp_email_add_encoded(MolochSession_t *session, int pos, char *strin
 
             smtp_quoteable_decode_inplace(question+3, &olen);
 
-            char *out = g_convert((char *)question+3, strlen(question+3), "utf-8", str+2, &bread, &bwritten, &error);
+            char *fmt = smtp_gformat(str+2);
+            char *out = g_convert((char *)question+3, strlen(question+3), "utf-8", fmt, &bread, &bwritten, &error);
             if (error) {
                 LOG("ERROR convering %s to utf-8 %s ", str+2, error->message);
                 moloch_field_string_add(pos, session, string, len, TRUE);
@@ -309,7 +336,7 @@ LOCAL void smtp_parse_email_addresses(int field, MolochSession_t *session, char 
 
         while (data < end && *data != '<' && *data != ',') data++;
 
-        if (*data == '<') {
+        if (data < end && *data == '<') {
             data++;
             start = data;
             while (data < end && *data != '>') data++;
@@ -460,6 +487,10 @@ LOCAL int smtp_parser(MolochSession_t *session, void *uw, const unsigned char *d
                 *state = EMAIL_IGNORE;
                 email->state[(which+1)%2] = EMAIL_TLS_OK;
                 return 0;
+            } else if (strncasecmp(line->str, "HELO ", 5) == 0 ||
+                       strncasecmp(line->str, "EHLO ", 5) == 0) {
+                moloch_field_string_add_lower(helloField, session, line->str+5, -1);
+                *state = EMAIL_CMD;
             } else {
                 *state = EMAIL_CMD;
             }
@@ -920,14 +951,12 @@ void moloch_parser_init()
         "email.content-type", "Content-Type", "email.contentType",
         "Email content-type header",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
-        "requiredRight", "emailSearch",
         (char *)NULL);
 
     mvField = moloch_field_define("email", "termfield",
         "email.mime-version", "Mime-Version", "email.mimeVersion",
         "Email Mime-Header header",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
-        "requiredRight", "emailSearch",
         (char *)NULL);
 
     fnField = moloch_field_define("email", "termfield",
@@ -992,6 +1021,12 @@ void moloch_parser_init()
     magicField = moloch_field_define("email", "termfield",
         "email.bodymagic", "Body Magic", "email.bodyMagic",
         "The content type of body determined by libfile/magic",
+        MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
+        (char *)NULL);
+
+    helloField = moloch_field_define("email", "lotermfield",
+        "email.smtp-hello", "SMTP Hello", "email.smtpHello",
+        "SMTP HELO/EHLO",
         MOLOCH_FIELD_TYPE_STR_HASH,  MOLOCH_FIELD_FLAG_CNT,
         (char *)NULL);
 

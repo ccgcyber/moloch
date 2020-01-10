@@ -259,12 +259,14 @@ Vue.filter('readableTimeCompact', function (ms) {
  * '{{ searchTerm | searchFields(fields, true) }}'
  * this.$options.filters.searchFields('test', this.fields, true);
  *
- * @param {string} searchTerm     The string to search for within the fields
- * @param {array} fields          The list of fields to search
- * @param {boolean} excludeTokens Whether to exclude token fields
- * @returns {array}               An array of fields that match the search term
+ * @param {string} searchTerm       The string to search for within the fields
+ * @param {array} fields            The list of fields to search
+ * @param {boolean} excludeTokens   Whether to exclude token fields
+ * @param {boolean} excludeFilename Whether to exclude the filename field
+ * @param {boolean} excludeInfo     Whether to exclude the special info "field"
+ * @returns {array}                 An array of fields that match the search term
  */
-Vue.filter('searchFields', function (searchTerm, fields, excludeTokens) {
+Vue.filter('searchFields', function (searchTerm, fields, excludeTokens, excludeFilename, excludeInfo) {
   if (!searchTerm) { searchTerm = ''; }
   return fields.filter((field) => {
     if (field.regex !== undefined || field.noFacet === 'true') {
@@ -272,6 +274,14 @@ Vue.filter('searchFields', function (searchTerm, fields, excludeTokens) {
     }
 
     if (excludeTokens && field.type && field.type.includes('textfield')) {
+      return false;
+    }
+
+    if (excludeFilename && field.type && field.type === 'fileand') {
+      return false;
+    }
+
+    if (excludeInfo && field.exp === 'info') {
       return false;
     }
 
@@ -299,11 +309,13 @@ Vue.filter('searchFields', function (searchTerm, fields, excludeTokens) {
  */
 Vue.filter('buildExpression', function (field, value, op) {
   // for values required to be strings in the search expression
-  const str = /[^(EXISTS!)-+a-zA-Z0-9_.@:*?/]+/.test(value);
+  /* eslint-disable no-useless-escape */
+  const needQuotes = value !== 'EXISTS!' && !value.startsWith('[') &&
+    /[^-+a-zA-Z0-9_.@:*?/,\[\]]+/.test(value);
 
   // escape unescaped quotes
   value = value.toString().replace(/\\([\s\S])|(")/g, '\\$1$2');
-  if (str) { value = `"${value}"`; }
+  if (needQuotes) { value = `"${value}"`; }
 
   return `${field} ${op} ${value}`;
 });

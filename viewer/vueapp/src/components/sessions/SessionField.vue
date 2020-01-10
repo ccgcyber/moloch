@@ -81,26 +81,27 @@
               v-if="sessionBtn"
               @click.prevent.stop="goToSessions(expr, pd.queryVal, '==')"
               :title="'Open in Sessions with ' + expr + ' == ' + pd.queryVal + ' added to the search expression'">
-              <span class="fa fa-folder-open-o"></span>&nbsp;
+              <span class="fa fa-folder-open-o fa-fw"></span>
               Open Sessions
             </b-dropdown-item>
             <b-dropdown-item
               @click.prevent.stop="newTabSessions(expr, pd.queryVal, '==')"
               :title="'Open a new Sessions tab with ' + expr + ' == ' + pd.queryVal + ' added to the search expression'">
-              <span class="fa fa-external-link-square"></span>&nbsp;
+              <span class="fa fa-external-link-square fa-fw"></span>
               New Sessions Tab
             </b-dropdown-item>
             <b-dropdown-item
               v-if="expression"
+              class="no-wrap"
               @click.prevent.stop="newTabSessions(expr, pd.queryVal, '==', true)"
               :title="'Open a new Sessions tab with ' + expr + ' == ' + pd.queryVal + ' as the root search expression'">
-              <span class="fa fa-external-link"></span>&nbsp;
+              <span class="fa fa-external-link fa-fw"></span>
               New Sessions Tab (with only this value)
             </b-dropdown-item>
             <b-dropdown-item
               @click="doCopy(pd.value)"
               title="Copy value to clipboard">
-              <span class="fa fa-clipboard"></span>&nbsp;
+              <span class="fa fa-clipboard fa-fw"></span>
               Copy value
             </b-dropdown-item>
           </div>
@@ -184,6 +185,18 @@ export default {
       molochClickables: undefined
     };
   },
+  watch: {
+    // watch route update of time params to rebuild the menu
+    '$route.query.date': function (newVal, oldVal) {
+      if (this.molochClickables) { this.buildMenu(); }
+    },
+    '$route.query.startTime': function (newVal, oldVal) {
+      if (this.molochClickables) { this.buildMenu(); }
+    },
+    '$route.query.stopTime': function (newVal, oldVal) {
+      if (this.molochClickables) { this.buildMenu(); }
+    }
+  },
   computed: {
     expression: function () {
       return this.$store.state.expression;
@@ -215,7 +228,7 @@ export default {
           case 'seconds':
             qVal = val; // save original value as the query value
             val = this.$options.filters.timezoneDateString(
-              val,
+              parseInt(val),
               this.timezone || this.$store.state.user.settings.timezone,
               this.$store.state.user.settings.ms
             );
@@ -245,9 +258,9 @@ export default {
         result[i].value = val; // update parsed value in array
         result[i].queryVal = qVal; // update query value in array
         result[i].id = `${val}-${this.field.dbField}`;
-
-        return result;
       }
+
+      return result;
     }
   },
   methods: {
@@ -298,6 +311,8 @@ export default {
     fieldClick: function (field, value, op, andor) {
       this.isOpen = false; // close the dropdown
 
+      value = value.toString();
+
       const fullExpression = this.$options.filters.buildExpression(field, value, op);
 
       this.$store.commit('addToExpression', { expression: fullExpression, op: andor });
@@ -331,6 +346,8 @@ export default {
      */
     newTabSessions: function (field, value, op, root) {
       this.isOpen = false; // close the dropdown
+
+      value = value.toString();
 
       const appendExpression = this.$options.filters.buildExpression(field, value, op);
 
@@ -452,6 +469,7 @@ export default {
             .replace('%ISOSTART%', isostart.toISOString())
             .replace('%ISOSTOP%', isostop.toISOString())
             .replace('%FIELD%', info.field)
+            .replace('%DBFIELD%', info.info.dbField)
             .replace('%TEXT%', text)
             .replace('%UCTEXT%', text.toUpperCase())
             .replace('%HOST%', host)
@@ -463,6 +481,7 @@ export default {
 
           name = (name)
             .replace('%FIELD%', info.field)
+            .replace('%DBFIELD%', info.info.dbField)
             .replace('%TEXT%', text)
             .replace('%HOST%', host)
             .replace('%URL%', url);
@@ -472,6 +491,7 @@ export default {
 
           value = (value)
             .replace('%FIELD%', info.field)
+            .replace('%DBFIELD%', info.info.dbField)
             .replace('%TEXT%', text)
             .replace('%HOST%', host)
             .replace('%URL%', url);

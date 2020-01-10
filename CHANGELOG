@@ -1,7 +1,8 @@
 NOTICE: Please see https://molo.ch/faq#upgrading-moloch for upgrading info
 
 ES Versions:
-  * Moloch >= 2.0.0  supports ES >= 6.6.0, not 7.x or later
+  * Moloch >= 2.2.0  supports ES >= 6.8.0 or >= 7.1.0
+  * Moloch >= 2.0.0  supports ES >= 6.7.0 or >= 7.1.0
   * Moloch >= 1.5.0  supports ES >= 5.5.0, 6.x, not 7.x or later
   * Moloch >= 1.0.0  supports ES >= 5.5.0, 6.x (not prod tested, only for new installs), not 7.x or later
   * Moloch >= 0.50.0 supports ES >= 5.5.0, not 6.x or later
@@ -16,28 +17,123 @@ Node Versions:
 
 NOTICE: Restart wiseService before capture when upgrading
 
-2.0.0 2019/05/xx
-  - NOTICE: This versions requires ES 6.6.x or later
-  - release - cyberchef 8.30.0, node 10.15.3
-  - viewer - Can display pcap retention in Capture Stats tab
+2.2.0 2020/01/xx
+  - NOTE - Elasticsearch 6.7.x is no longer supported
+  - NOTE - Maxmind now requires an account, setup your geoipupdate script
+           https://dev.maxmind.com/geoip/geoipupdate/#For_Free_GeoLite2_Databases
+
+  - release - node 10.18.0
+  - release - Configure now installs elasticsearch 7.5.1
+  - viewer - New aes256Encryption option to upgrade encryption, all
+             viewers must be on 2.2.0 or later before upgrading
+  - capture - geoLite2ASN and geoLite2Country are now semicolon seperated
+              lists.  The first one that exists will be used or warning
+	      printed.  To disable warning set to blank.
+
+2.1.2 2019/12/16
+  - capture - no longer check in configure scripts, use autoreconf (thanks martinpaljak)
+  - capture - new http header raw callback for plugins (thanks pjsg)
+  - lua - Improvements and new sample script (thanks pjsg)
+  - viewer - more cyberchef fixes
+  - viewer - increased timeout on indexing
+  - viewer - show menu/protocol column on sessions page even if there are no
+             visible columns (issue #1337)
+  - parliament - make sure good config before writing (issue #1181)
+
+2.1.1 2019/12/09
+  - release - cyberchef 9.11.7
+  - wise - fix view duplication when reload tagger file (#1315)
+  - capture - string fields created with wise/custom-fields are now assumed utf8
+  - capture - term signal handled better
+  - s3 - handle longer tokens and path vs host access
+  - viewer - support -o option to override config file like capture has
+  - viewer - new "ES Admin" tab, enable with esAdminUsers= in config.ini
+  - viewer - Hopefully fix cyberchef integration on all browsers
+  - viewer - better shrink index support for viewing pcap
+  - viewer - anonymous should work better for more features
+  - viewer - work around ES slow _count API in 7.x
+  - viewer - hunts support views better
+  - db - new warmkind option for specifying what units the warm number is in
+  - db - fix versionNumber printing
+
+2.1.0 2019/11/19
+  - NOTE: All viewers must be 2.1 or later for them to communicate.  If not
+          upgrading at once set s2sSignedAuth=false in default section of config.ini
+  - release - node 10.16.3, curl 7.66.0, glib 2.59.0, libpcap 1.9.1
+  - release - remove ubuntu 14 builds
+  - release - initial centos8 build
+  - db - new shrink command
+  - db - new --gz option to compress backups
+  - capture - support named pipes better (issue #1169)
+  - capture - New email.smtpHello field
+  - capture - fields created with wise/custom-fields are now set across
+              linked sessions by default now
+  - capture - deal with extra long config values in more places
+  - capture - snf improvements
+  - viewer - default max aggregation size is 10000 to work with ES 7.x OOTB,
+             new maxAggSize setting
+  - viewer - added right-click replacer for %DBFIELD% (thanks tlacuache)
+  - viewer - display JA3s and hassh
+  - viewer - support file expresssion in more places (issue #1172)
+  - viewer - fix files date display (issue #1164)
+  - viewer - csp header support
+  - viewer - Fix some XSS/rXSS by setting correct content type
+  - viewer - Improve permission checking
+  - viewer - Use RE2 for regex
+  - viewer - shortcuts can be locked from changes
+  - wise - switch to ioredis implementation so clusters/sentinel works
+  - s3 - many fixes (thanks pjsg)
+  - s3 - support compressing pcap when s3WriteGzip is set to true (thanks pjsg)
+  - s3 - can fetch data from metadata service (thanks pjsg)
+
+2.0.1 2019/09/09
+  - release - cyberchef 9.4.0
+  - capture - label TLS 1.3 sessions correctly (issue #1137)
+  - capture - New simpleMaxQ setting to control max disk Q
+  - capture - http CONNECT method will now classify payload (issue #1153)
+  - capture - Initial dtls support
+  - viewer - cancel current ES query on new query
+  - viewer - fix connections page timezone
+  - viewer - fix not auto quoting all expressions (issue #1146)
+  - viewer - fix security warnings
+
+2.0.0 2019/08/19
+  - NOTICE: This versions requires ES 6.7.x (6.8.2+/7.3+ recommended) or later
+  - NOTICE: db.pl upgrade is required, see https://molo.ch/faq#how_do_i_upgrade_to_moloch_2
+  - release - cyberchef 8.30.0, node 10.16.2, yara 3.10.0
+  - release - include sample headers parsing and turn them on by default
+  - release - easybutton supports osx
   - all - Fix some elasticsearch deprecation warnings
+  - all - elasticsearch 7 support
+  - db - backup command now saves meta data so restore can do a rollback (thanks codesniffer)
+  - db - improve optimize to deal with connection closed better
+  - parliament - Can configure multiple of each type of notifier
+  - viewer - Can display pcap retention in Capture Stats tab
   - viewer - Added uploadFileSizeLimit
   - viewer - Can interact with users in multiES if usersElasticsearch is set
-  - capture - no longer send packet lengths to ES by default (enablePacketLen)
-  - parliament - Can configure multiple of each type of notifier
   - viewer - Can just delete SPI
-  - db - backup command now saves meta data so restore can do a rollback
-         (thanks codesniffer)
-  - capture - add truncated-pcap tag to sessions where all pcap isn't written
-  - suricata - support timezones better
-  - db - improve optimize to deal with connection closed better
-  - viewer - Added shortcuts
-  - capture - fixed ja3s mishandling of 10/11 extension types (thanks Norwegian Healthcare CERT)
+  - viewer - Added shortcuts feature
   - viewer - add bytes as a graphing choice
+  - viewer - support ip == ipv4 and ip == ipv6 expressions
+  - viewer - pivot dropdown option in spiview (issue #1135)
+  - viewer - optional milisecond display
+  - viewer - Support view parameter for unique/multiunique
+  - viewer - Support ES client auth and insecure better (thanks Scott)
+  - viewer - Lots of stats summing, avg, sorting fixes
+  - capture - Initial ipv6 gtp support
+  - capture - no longer send packet lengths to ES by default (enablePacketLen)
+  - capture - add truncated-pcap tag to sessions where all pcap isn't written
+  - capture - fixed ja3s mishandling of 10/11 extension types (thanks Norwegian Healthcare CERT)
   - capture - fixed ja3 mishandling of 11 extension types (thanks Norwegian Healthcare CERT)
   - capture - Added startsWith,contains,endsWith rule expression modifier
-  - viewer - support ip == ipv4 and ip == ipv6 expressions
-  - capture - Initial ipv6 gtp support
+  - capture - honor the caTrustFile directive (thanks Matt)
+  - capture - fix data bytes calulations for icmp/udp (thanks Brian)
+  - capture - initial vxlan support
+  - capture - Myricom/AFPacket improvements (thanks Scott)
+  - capture - updates to classifiers: telnet, mpls
+  - suricata - support timezones and slashes in signatures better
+  - suricata - support huge alert lines
+  - wise - support arrays for json elements
 
 1.8.0 2019/04/03
   - NOTICE: This will be the last version to support ES 5

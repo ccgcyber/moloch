@@ -11,6 +11,16 @@
 
     <div v-show="!error">
 
+      <button type="button"
+        v-b-tooltip.hover
+        @click="cancelTasks"
+        v-has-permission="'createEnabled'"
+        title="Cancel ALL cancelable tasks"
+        class="pull-right btn btn-sm btn-warning">
+        <span class="fa fa-ban"></span>&nbsp;
+        Cancel ALL Tasks
+      </button>
+
       <moloch-paging v-if="stats"
         class="mt-1 ml-2"
         :info-only="true"
@@ -92,15 +102,16 @@ export default {
       columns: [ // es tasks table columns
         // default columns
         { id: 'action', name: 'Action', sort: 'action', default: true, width: 200 },
-        { id: 'description', name: 'Description', sort: 'description', default: true, width: 300 },
+        { id: 'description', name: 'Description', sort: 'description', default: true, width: 300, breakword: true },
         { id: 'start_time_in_millis', name: 'Start Time', sort: 'start_time_in_millis', width: 180, default: true, dataFunction: (item) => { return this.$options.filters.timezoneDateString(item['start_time_in_millis'], this.user.settings.timezone, this.user.settings.ms); } },
         { id: 'running_time_in_nanos', name: 'Running Time', sort: 'running_time_in_nanos', width: 120, default: true, dataFunction: (item) => { return this.$options.filters.commaString(this.$options.filters.round(item['running_time_in_nanos'] / 1000000, 1)); } },
         { id: 'childrenCount', name: 'Children', sort: 'childrenCount', default: true, width: 100, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.childrenCount); } },
+        { id: 'user', name: 'User', sort: 'user', default: true, width: 100 },
         // all the rest of the available stats
         { id: 'cancellable', name: 'Cancellable', sort: 'cancellable', width: 100 },
         { id: 'id', name: 'ID', sort: 'id', width: 80 },
         { id: 'node', name: 'Node', sort: 'node', width: 180 },
-        { id: 'taskid', name: 'Task ID', sort: 'taskid', width: 150 },
+        { id: 'taskId', name: 'Task ID', sort: 'taskId', width: 150 },
         { id: 'type', name: 'Type', sort: 'type', width: 100 }
       ]
     };
@@ -152,6 +163,9 @@ export default {
     cancelTask (taskId) {
       this.$http.post('estask/cancel', { taskId: taskId });
     },
+    cancelTasks () {
+      this.$http.post('estask/cancelAll');
+    },
     /* helper functions ------------------------------------------ */
     setRequestInterval: function () {
       reqPromise = setInterval(() => {
@@ -166,7 +180,7 @@ export default {
 
       this.query.filter = this.searchTerm;
 
-      this.query.size = this.pageSize || 1000;
+      this.query.size = this.pageSize || 500;
 
       if (desc !== undefined) { this.query.desc = desc; }
       if (sortField) { this.query.sortField = sortField; }
@@ -196,3 +210,9 @@ export default {
   }
 };
 </script>
+
+<style>
+#esTasksTable td {
+  vertical-align: top;
+}
+</style>

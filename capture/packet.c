@@ -51,6 +51,7 @@ LOCAL int                    icmpCodeField;
 
 LOCAL uint64_t               droppedFrags;
 
+time_t                       currentTime[MOLOCH_MAX_PACKET_THREADS];
 time_t                       lastPacketSecs[MOLOCH_MAX_PACKET_THREADS];
 LOCAL int                    inProgress[MOLOCH_MAX_PACKET_THREADS];
 
@@ -60,6 +61,8 @@ LOCAL patricia_tree_t       *ipTree6 = 0;
 LOCAL int                    maxTcpOutOfOrderPackets;
 
 extern MolochFieldOps_t      readerFieldOps[256];
+
+LOCAL MolochPacketEnqueue_cb ethernetCbs[0x10000];
 
 /******************************************************************************/
 
@@ -511,6 +514,8 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
 
     lastPacketSecs[thread] = packet->ts.tv_sec;
 
+    moloch_pq_run(thread, 10);
+
     MolochSession_t     *session;
     struct ip           *ip4 = (struct ip*)(packet->pkt + packet->ipOffset);
     struct ip6_hdr      *ip6 = (struct ip6_hdr*)(packet->pkt + packet->ipOffset);
@@ -697,30 +702,41 @@ LOCAL void moloch_packet_process(MolochPacket_t *packet, int thread)
     uint32_t packets = session->packets[0] + session->packets[1];
 
     if (packets <= session->stopSaving) {
-        MOLOCH_THREAD_INCR_NUM(writtenBytes, packet->pktlen);
         moloch_writer_write(session, packet);
 
-        // If the last fileNum used in the session isn't the same as the
-        // lastest packets fileNum then we need to add to the filePos and
-        // fileNum arrays.
-        int16_t len;
-        if (session->lastFileNum != packet->writerFileNum) {
-            session->lastFileNum = packet->writerFileNum;
-            g_array_append_val(session->fileNumArray, packet->writerFileNum);
-            int64_t pos = -1LL * packet->writerFileNum;
-            g_array_append_val(session->filePosArray, pos);
+        // If writerFilePos is 0, then the writer couldn't save the packet
+        if (packet->writerFilePos == 0) {
+            if (!session->diskOverload) {
+                moloch_session_add_tag(session, "pcap-disk-overload");
+                session->diskOverload = 1;
+            }
+            MOLOCH_THREAD_INCR_NUM(unwrittenBytes, packet->pktlen);
+        } else {
+
+            MOLOCH_THREAD_INCR_NUM(writtenBytes, packet->pktlen);
+
+            // If the last fileNum used in the session isn't the same as the
+            // lastest packets fileNum then we need to add to the filePos and
+            // fileNum arrays.
+            int16_t len;
+            if (session->lastFileNum != packet->writerFileNum) {
+                session->lastFileNum = packet->writerFileNum;
+                g_array_append_val(session->fileNumArray, packet->writerFileNum);
+                int64_t pos = -1LL * packet->writerFileNum;
+                g_array_append_val(session->filePosArray, pos);
+
+                if (config.enablePacketLen) {
+                    len = 0;
+                    g_array_append_val(session->fileLenArray, len);
+                }
+            }
+
+            g_array_append_val(session->filePosArray, packet->writerFilePos);
 
             if (config.enablePacketLen) {
-                len = 0;
+                len = 16 + packet->pktlen;
                 g_array_append_val(session->fileLenArray, len);
             }
-        }
-
-        g_array_append_val(session->filePosArray, packet->writerFilePos);
-
-        if (config.enablePacketLen) {
-            len = 16 + packet->pktlen;
-            g_array_append_val(session->fileLenArray, len);
         }
 
         if (packets >= config.maxPackets || session->midSave) {
@@ -822,6 +838,7 @@ LOCAL void *moloch_packet_thread(void *threadp)
         if (DLL_COUNT(packet_, &packetQ[thread]) == 0) {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME_COARSE, &ts);
+            currentTime[thread] = ts.tv_sec;
             ts.tv_sec++;
             MOLOCH_COND_TIMEDWAIT(packetQ[thread].lock, ts);
 
@@ -916,14 +933,7 @@ LOCAL int moloch_packet_gre4(MolochPacketBatch_t * batch, MolochPacket_t * const
     uint16_t type = 0;
     BSB_IMPORT_u16(bsb, type);
 
-    switch (type) {
-    case 0x0800:
-    case 0x86dd:
-    case 0x6559:
-    case 0x880b:
-    case 0x88be:
-        break;
-    default:
+    if (!ethernetCbs[type]) {
         if (config.logUnknownProtocols)
             LOG("Unknown GRE protocol 0x%04x(%d)", type, type);
         if (BIT_ISSET(type, config.etherSavePcap))
@@ -965,22 +975,13 @@ LOCAL int moloch_packet_gre4(MolochPacketBatch_t * batch, MolochPacket_t * const
     if (BSB_IS_ERROR(bsb))
         return MOLOCH_PACKET_CORRUPT;
 
-    switch (type) {
-    case 0x0800:
-        return moloch_packet_ip4(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
-    case 0x86dd:
-        return moloch_packet_ip6(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
-    case 0x6559:
-        return moloch_packet_frame_relay(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
-    case 0x880b:
-        return moloch_packet_ppp(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
-    case 0x88be:
-        return moloch_packet_erspan(batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
-    default:
-        if (BIT_ISSET(type, config.etherSavePcap))
-            moloch_packet_save_unknown_packet(0, packet);
-        return MOLOCH_PACKET_UNKNOWN;
+    if (ethernetCbs[type]) {
+        return ethernetCbs[type](batch, packet, BSB_WORK_PTR(bsb), BSB_REMAINING(bsb));
     }
+
+    if (BIT_ISSET(type, config.etherSavePcap))
+        moloch_packet_save_unknown_packet(0, packet);
+    return MOLOCH_PACKET_UNKNOWN;
 }
 /******************************************************************************/
 void moloch_packet_frags_free(MolochFrags_t * const frags)
@@ -1158,6 +1159,8 @@ LOCAL void moloch_packet_log(int ses)
         stats.total = totalPackets;
     }
 
+    uint32_t wql = moloch_writer_queue_length();
+
     LOG("packets: %" PRIu64 " current sessions: %u/%u oldest: %d - recv: %" PRIu64 " drop: %" PRIu64 " (%0.2f) queue: %d disk: %d packet: %d close: %d ns: %d frags: %d/%d pstats: %" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64,
       totalPackets,
       moloch_session_watch_count(ses),
@@ -1167,7 +1170,7 @@ LOCAL void moloch_packet_log(int ses)
       stats.dropped - initialDropped,
       (stats.total?(stats.dropped - initialDropped)*(double)100.0/stats.total:0),
       moloch_http_queue_length(esServer),
-      moloch_writer_queue_length(),
+      wql,
       moloch_packet_outstanding(),
       moloch_session_close_outstanding(),
       moloch_session_need_save_outstanding(),
@@ -1212,7 +1215,7 @@ LOCAL int moloch_packet_ip(MolochPacketBatch_t *batch, MolochPacket_t * const pa
         MOLOCH_LOCK(packetQ[thread].lock);
         overloadDrops[thread]++;
         if ((overloadDrops[thread] % 10000) == 1) {
-            LOG("WARNING - Packet Q %u is overflowing, total dropped %u, increase packetThreads or maxPacketsInQueue in %s", thread, overloadDrops[thread], config.configFile);
+            LOG("WARNING - Packet Q %u is overflowing, total dropped so far %u.  See https://molo.ch/faq#why-am-i-dropping-packets and modify %s", thread, overloadDrops[thread], config.configFile);
         }
         packet->pkt = 0;
         MOLOCH_COND_SIGNAL(packetQ[thread].lock);
@@ -1643,12 +1646,13 @@ LOCAL int moloch_packet_frame_relay(MolochPacketBatch_t *batch, MolochPacket_t *
     if (len < 4)
         return MOLOCH_PACKET_CORRUPT;
 
-    if (data[2] == 0x03 || data[3] == 0xcc)
+    uint16_t type = data[2] << 8 | data[3];
+
+    if (type == 0x03cc)
         return moloch_packet_ip4(batch, packet, data+4, len-4);
-    if (data[2] == 0x08 || data[3] == 0x00)
-        return moloch_packet_ip4(batch, packet, data+4, len-4);
-    if (data[2] == 0x86 || data[3] == 0xdd)
-        return moloch_packet_ip6(batch, packet, data+4, len-4);
+
+    if (ethernetCbs[type])
+        return ethernetCbs[type](batch, packet, data+4, len-4);
 
     return MOLOCH_PACKET_UNKNOWN;
 }
@@ -1741,6 +1745,11 @@ LOCAL int moloch_packet_mpls(MolochPacketBatch_t * batch, MolochPacket_t * const
     return MOLOCH_PACKET_CORRUPT;
 }
 /******************************************************************************/
+LOCAL int moloch_packet_ieee802(MolochPacketBatch_t *UNUSED(batch), MolochPacket_t * const UNUSED(packet), const uint8_t *UNUSED(data), int UNUSED(len))
+{
+    return MOLOCH_PACKET_UNKNOWN;
+}
+/******************************************************************************/
 LOCAL int moloch_packet_ether(MolochPacketBatch_t * batch, MolochPacket_t * const packet, const uint8_t *data, int len)
 {
     if (len < 14) {
@@ -1752,20 +1761,17 @@ LOCAL int moloch_packet_ether(MolochPacketBatch_t * batch, MolochPacket_t * cons
     int n = 12;
     while (n+2 < len) {
         int ethertype = data[n] << 8 | data[n+1];
+        if (ethertype <= 1500) {
+            return moloch_packet_ieee802(batch, packet, data+n, len-n);
+        }
         n += 2;
         switch (ethertype) {
-        case 0x0800:
-            return moloch_packet_ip4(batch, packet, data+n, len - n);
-        case 0x86dd:
-            return moloch_packet_ip6(batch, packet, data+n, len - n);
-        case 0x8864:
-            return moloch_packet_pppoe(batch, packet, data+n, len - n);
-        case 0x8847:
-            return moloch_packet_mpls(batch, packet, data+n, len - n);
         case 0x8100:
             n += 2;
             break;
         default:
+            if (ethernetCbs[ethertype])
+                return ethernetCbs[ethertype](batch, packet, data+n, len - n);
 #ifdef DEBUG_PACKET
             LOG("BAD PACKET: Unknown ethertype %x", ethertype);
 #endif
@@ -1791,20 +1797,14 @@ LOCAL int moloch_packet_sll(MolochPacketBatch_t * batch, MolochPacket_t * const 
 
     int ethertype = data[14] << 8 | data[15];
     switch (ethertype) {
-    case 0x0800:
-        return moloch_packet_ip4(batch, packet, data+16, len - 16);
-    case 0x86dd:
-        return moloch_packet_ip6(batch, packet, data+16, len - 16);
-    case 0x8864:
-        return moloch_packet_pppoe(batch, packet, data+16, len - 16);
-    case 0x8847:
-        return moloch_packet_mpls(batch, packet, data+16, len - 16);
     case 0x8100:
         if ((data[20] & 0xf0) == 0x60)
             return moloch_packet_ip6(batch, packet, data+20, len - 20);
         else
             return moloch_packet_ip4(batch, packet, data+20, len - 20);
     default:
+        if (ethernetCbs[ethertype])
+            return ethernetCbs[ethertype](batch, packet, data+16, len-16);
 #ifdef DEBUG_PACKET
         LOG("BAD PACKET: Unknown ethertype %x", ethertype);
 #endif
@@ -1872,14 +1872,13 @@ LOCAL int moloch_packet_radiotap(MolochPacketBatch_t * batch, MolochPacket_t * c
 
     hl += 3;
 
-    if (data[hl] == 0x08 && data[hl+1] == 0x00) {
-        hl += 2;
-        return moloch_packet_ip4(batch, packet, data+hl, len - hl);
+    uint16_t type = (data[hl] << 8) | data[hl+1];
+    hl += 2;
+
+    if (ethernetCbs[type]) {
+        return ethernetCbs[type](batch, packet, data+hl, len-hl);
     }
-    if (data[hl] == 0x86 && data[hl+1] == 0xdd) {
-        hl += 2;
-        return moloch_packet_ip6(batch, packet, data+hl, len - hl);
-    }
+
     return MOLOCH_PACKET_UNKNOWN;
 }
 /******************************************************************************/
@@ -1995,10 +1994,8 @@ LOCAL uint32_t moloch_packet_frag_hash(const void *key)
     return n;
 }
 /******************************************************************************/
-LOCAL int moloch_packet_frag_cmp(const void *keyv, const void *elementv)
+LOCAL int moloch_packet_frag_cmp(const void *keyv, const MolochFrags_t *element)
 {
-    MolochFrags_t *element = (MolochFrags_t *)elementv;
-
     return memcmp(keyv, element->key, 10) == 0;
 }
 /******************************************************************************/
@@ -2011,6 +2008,11 @@ LOCAL gboolean moloch_packet_save_drophash(gpointer UNUSED(user_data))
         moloch_drophash_save(&packetDrop6);
 
     return TRUE;
+}
+/******************************************************************************/
+void moloch_packet_add_ethernet_cb(uint16_t type, MolochPacketEnqueue_cb enqueueCb)
+{
+    ethernetCbs[type] = enqueueCb;
 }
 /******************************************************************************/
 void moloch_packet_init()
@@ -2167,12 +2169,21 @@ void moloch_packet_init()
 #endif
     }
 
-    HASH_INIT(fragh_, fragsHash, moloch_packet_frag_hash, moloch_packet_frag_cmp);
+    HASH_INIT(fragh_, fragsHash, moloch_packet_frag_hash, (HASH_CMP_FUNC)moloch_packet_frag_cmp);
     DLL_INIT(fragl_, &fragsList);
 
     moloch_add_can_quit(moloch_packet_outstanding, "packet outstanding");
     moloch_add_can_quit(moloch_packet_frags_outstanding, "packet frags outstanding");
     maxTcpOutOfOrderPackets = moloch_config_int(NULL, "maxTcpOutOfOrderPackets", 256, 64, 10000);
+
+
+    moloch_packet_add_ethernet_cb(0x6559, moloch_packet_frame_relay);
+    moloch_packet_add_ethernet_cb(0x0800, moloch_packet_ip4);
+    moloch_packet_add_ethernet_cb(0x86dd, moloch_packet_ip6);
+    moloch_packet_add_ethernet_cb(0x880b, moloch_packet_ppp);
+    moloch_packet_add_ethernet_cb(0x8847, moloch_packet_mpls);
+    moloch_packet_add_ethernet_cb(0x8864, moloch_packet_pppoe);
+    moloch_packet_add_ethernet_cb(0x88be, moloch_packet_erspan);
 }
 /******************************************************************************/
 uint64_t moloch_packet_dropped_packets()

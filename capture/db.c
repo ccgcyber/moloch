@@ -29,8 +29,8 @@
 #include "patricia.h"
 
 #include "maxminddb.h"
-MMDB_s                  *geoCountry;
-MMDB_s                  *geoASN;
+LOCAL MMDB_s           *geoCountry;
+LOCAL MMDB_s           *geoASN;
 
 #define MOLOCH_MIN_DB_VERSION 50
 
@@ -222,7 +222,7 @@ void moloch_db_geo_lookup6(MolochSession_t *session, struct in6_addr addr, char 
 
 
     int error = 0;
-    if (!*g) {
+    if (!*g && geoCountry) {
         MMDB_lookup_result_s result = MMDB_lookup_sockaddr(geoCountry, sa, &error);
         if (error == MMDB_SUCCESS && result.found_entry) {
             MMDB_entry_data_s entry_data;
@@ -235,7 +235,7 @@ void moloch_db_geo_lookup6(MolochSession_t *session, struct in6_addr addr, char 
         }
     }
 
-    if (!*as) {
+    if (!*as && geoASN) {
         MMDB_lookup_result_s result = MMDB_lookup_sockaddr(geoASN, sa, &error);
         if (error == MMDB_SUCCESS && result.found_entry) {
             MMDB_entry_data_s org;
@@ -257,9 +257,15 @@ void moloch_db_geo_lookup6(MolochSession_t *session, struct in6_addr addr, char 
     }
 }
 /******************************************************************************/
+LOCAL void moloch_db_send_bulk_cb(int code, unsigned char *data, int data_len, gpointer UNUSED(uw))
+{
+    if (code != 200)
+        LOG("Bulk issue.  Code: %d\n%.*s", code, data_len, data);
+}
+/******************************************************************************/
 LOCAL void moloch_db_send_bulk(char *json, int len)
 {
-    moloch_http_send(esServer, "POST", "/_bulk", 6, json, len, NULL, FALSE, NULL, NULL);
+    moloch_http_send(esServer, "POST", "/_bulk", 6, json, len, NULL, FALSE, moloch_db_send_bulk_cb, NULL);
 }
 LOCAL MolochDbSendBulkFunc sendBulkFunc = moloch_db_send_bulk;
 /******************************************************************************/
@@ -397,7 +403,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     }
 
     /* jsonSize is an estimate of how much space it will take to encode the session */
-    jsonSize = 1100 + session->filePosArray->len*12 + 10*session->fileNumArray->len;
+    jsonSize = 1100 + session->filePosArray->len*17 + 10*session->fileNumArray->len;
     if (config.enablePacketLen) {
         jsonSize += 10*session->fileLenArray->len;
     }
@@ -1022,7 +1028,7 @@ void moloch_db_save_session(MolochSession_t *session, int final)
     }
 
     if (jsonSize < (uint32_t)(BSB_WORK_PTR(jbsb) - startPtr)) {
-        LOG("WARNING - %s BIGGER then expected json %u %d\n", id, jsonSize,  (int)(BSB_WORK_PTR(jbsb) - startPtr));
+        LOG("WARNING - %s BIGGER than expected json %u %d\n", id, jsonSize,  (int)(BSB_WORK_PTR(jbsb) - startPtr));
         if (config.debug)
             LOG("Data:\n%.*s\n", (int)(BSB_WORK_PTR(jbsb) - startPtr), startPtr);
     }
@@ -1224,11 +1230,20 @@ LOCAL void moloch_db_update_stats(int n, gboolean sync)
     uint64_t esDropped       = moloch_http_dropped_count(esServer);
     uint64_t totalBytes      = moloch_packet_total_bytes();
 
+    // Incase the reader stats goes to a lower number or wraps
+    if (totalDropped < lastDropped[n])
+        totalDropped += lastDropped[n];
+
     for (i = 0; config.pcapDir[i]; i++) {
         struct statvfs vfs;
         statvfs(config.pcapDir[i], &vfs);
         freeSpaceM += (uint64_t)(vfs.f_frsize/1000.0*vfs.f_bavail/1000.0);
         totalSpaceM += (uint64_t)(vfs.f_frsize/1000.0*vfs.f_blocks/1000.0);
+    }
+
+    if (totalSpaceM == 0) {
+        // Prevents some divide by Zero problems later
+        totalSpaceM = 1;
     }
 
     const uint64_t cursec = currentTime.tv_sec;
@@ -1510,6 +1525,9 @@ uint32_t moloch_db_get_sequence_number_sync(char *name)
 
         if (!version_len || !version) {
             LOG("ERROR - Couldn't fetch sequence: %d %.*s", (int)data_len, (int)data_len, data);
+            if (strstr((char *)data, "FORBIDDEN") != 0) {
+                LOG("You have most likely run out of space on an elasticsearch node, see https://molo.ch/faq#recommended-elasticsearch-settings on setting disk watermarks and how to clear the elasticsearch error");
+            }
             free(data);
             continue;
         } else {
@@ -1804,11 +1822,11 @@ LOCAL void moloch_db_check()
 
     snprintf(tname, sizeof(tname), "%ssessions2_template", config.prefix);
 
-    key_len = snprintf(key, sizeof(key), "/_template/%s?filter_path=**._meta", tname);
+    key_len = snprintf(key, sizeof(key), "/_template/%s?filter_path=**._meta&include_type_name=true", tname);
     data = moloch_http_get(esServer, key, key_len, &data_len);
 
     if (!data || data_len == 0) {
-        LOGEXIT("ERROR - Couldn't load version information, database might be down or out of date.  Run \"db/db.pl host:port upgrade\"");
+        LOGEXIT("ERROR - Couldn't load version information, database (%s) might be down or not initialized.", config.elasticsearch);
     }
 
     uint32_t           template_len;
@@ -2297,9 +2315,7 @@ void moloch_db_init()
     }
     if (!config.dryRun) {
         esServer = moloch_http_create_server(config.elasticsearch, config.maxESConns, config.maxESRequests, config.compressES);
-        static char *headers[2];
-        headers[0] = "Content-Type: application/json";
-        headers[1] = NULL;
+        static char *headers[] = {"Content-Type: application/json", "Expect:", NULL};
         moloch_http_set_headers(esServer, headers);
         moloch_http_set_print_errors(esServer);
 
@@ -2321,8 +2337,30 @@ void moloch_db_init()
 
     moloch_add_can_quit(moloch_db_can_quit, "DB");
 
-    moloch_config_monitor_file("country file", config.geoLite2Country, moloch_db_load_geo_country);
-    moloch_config_monitor_file("asn file", config.geoLite2ASN, moloch_db_load_geo_asn);
+    // Find the first geo file that exists in our list and use that one.
+    // If none could be loaded, and setting not blank, print out warning
+    struct stat     sb;
+    int             i;
+    if (config.geoLite2Country && config.geoLite2Country[0]) {
+        for (i = 0; config.geoLite2Country[i]; i++) {
+            if (stat(config.geoLite2Country[i], &sb) == 0) {
+                moloch_config_monitor_file("country file", config.geoLite2Country[i], moloch_db_load_geo_country);
+            }
+        }
+        if (!config.geoLite2Country[i]) {
+            LOG("WARNING - No Geo Country file could be loaded, see https://molo.ch/settings#geolite2country");
+        }
+    }
+    if (config.geoLite2ASN && config.geoLite2ASN[0]) {
+        for (i = 0; config.geoLite2ASN[i]; i++) {
+            if (stat(config.geoLite2ASN[i], &sb) == 0) {
+                moloch_config_monitor_file("asn file", config.geoLite2ASN[i], moloch_db_load_geo_asn);
+            }
+        }
+        if (!config.geoLite2ASN[i]) {
+            LOG("WARNING - No Geo ASN file could be loaded, see https://molo.ch/settings#geolite2asn");
+        }
+    }
     if (config.ouiFile)
         moloch_config_monitor_file("oui file", config.ouiFile, moloch_db_load_oui);
     if (config.rirFile)

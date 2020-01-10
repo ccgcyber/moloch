@@ -16,6 +16,8 @@ const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcrypt');
 const glob    = require('glob');
 const os      = require('os');
+const helmet  = require('helmet');
+const uuid    = require('uuidv4').default;
 const upgrade = require('./upgrade');
 
 /* app setup --------------------------------------------------------------- */
@@ -46,6 +48,9 @@ const settingsDefault = {
 
 const parliamentReadError = `\nYou must fix this before you can run Parliament.
   Try using parliament.example.json as a starting point`;
+
+// keep a map of invalid tokens for when a user logs out before jwt expires
+let invalidTokens = {};
 
 (function () { // parse arguments
   let appArgs = process.argv.slice(2);
@@ -202,7 +207,29 @@ let clusterId = 0;
 let noPacketsMap = {};
 
 // super secret
-app.disable('x-powered-by');
+app.use(helmet.hidePoweredBy());
+app.use(helmet.xssFilter());
+app.use(helmet.hsts({
+  maxAge: 31536000,
+  includeSubDomains: true
+}));
+// calculate nonce
+app.use((req, res, next) => {
+  res.locals.nonce = Buffer.from(uuid()).toString('base64');
+  next();
+});
+app.use(helmet.contentSecurityPolicy({
+  directives: {
+    defaultSrc: ["'self'"],
+    /* can remove unsafe-inline for css when this is fixed
+    https://github.com/vuejs/vue-style-loader/issues/33 */
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    scriptSrc: ["'self'", "'unsafe-eval'", (req, res) => `'nonce-${res.locals.nonce}'`],
+    objectSrc: ["'none'"],
+    imgSrc: ["'self'", 'data:'],
+    frameSrc: ["'none'"]
+  }
+}));
 
 // expose vue bundles (prod)
 app.use('/parliament/static', express.static(`${__dirname}/vueapp/dist/static`));
@@ -285,6 +312,11 @@ function verifyToken (req, res, next) {
 
   if (!token) {
     return tokenError(req, res, 'No token provided.');
+  }
+
+  // check for invalid token
+  if (invalidTokens[token]) {
+    return tokenError(req, res, 'You\'ve been logged out. Please login again.');
   }
 
   // verifies token and expiration
@@ -475,13 +507,16 @@ function setIssue (cluster, newIssue) {
     console.log('Setting issue:', JSON.stringify(newIssue, null, 2));
   }
 
-  fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
-    (err) => {
-      if (err) {
-        console.log('Unable to write issue:', err.message || err);
+  const issuesError = validateIssues();
+  if (!issuesError) {
+    fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
+      (err) => {
+        if (err) {
+          console.log('Unable to write issue:', err.message || err);
+        }
       }
-    }
-  );
+    );
+  }
 }
 
 // Retrieves the health of each cluster and updates the cluster with that info
@@ -687,7 +722,10 @@ function initializeParliament () {
       parliament = upgrade.upgrade(parliament, internals.notifierTypes);
 
       try { // write the upgraded file
-        fs.writeFileSync(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8');
+        const parliamentError = validateParliament();
+        if (!parliamentError) {
+          fs.writeFileSync(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8');
+        }
       } catch (e) { // notify of error saving upgraded parliament and exit
         console.log(`Error upgrading Parliament:\n\n`, e.stack);
         console.log(parliamentReadError);
@@ -749,16 +787,19 @@ function initializeParliament () {
 
     buildNotifierTypes();
 
-    fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
-      (err) => {
-        if (err) {
-          console.log('Parliament initialization error:', err.message || err);
-          return reject(new Error('Parliament initialization error'));
-        }
+    const parliamentError = validateParliament();
+    if (!parliamentError) {
+      fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
+        (err) => {
+          if (err) {
+            console.log('Parliament initialization error:', err.message || err);
+            return reject(new Error('Parliament initialization error'));
+          }
 
-        return resolve();
-      }
-    );
+          return resolve();
+        }
+      );
+    }
   });
 }
 
@@ -787,25 +828,31 @@ function updateParliament () {
     Promise.all(promises)
       .then(() => {
         if (issuesRemoved) { // save the issues that were removed
-          fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
-            (err) => {
-              if (err) {
-                console.log('Unable to write issue:', err.message || err);
+          const issuesError = validateIssues();
+          if (!issuesError) {
+            fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
+              (err) => {
+                if (err) {
+                  console.log('Unable to write issue:', err.message || err);
+                }
               }
-            }
-          );
+            );
+          }
         }
 
         // save the data created after updating the parliament
-        fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
-          (err) => {
-            if (err) {
-              console.log('Parliament update error:', err.message || err);
-              return reject(new Error('Parliament update error'));
-            }
+        const parliamentError = validateParliament();
+        if (!parliamentError) {
+          fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
+            (err) => {
+              if (err) {
+                console.log('Parliament update error:', err.message || err);
+                return reject(new Error('Parliament update error'));
+              }
 
-            return resolve();
-          });
+              return resolve();
+            });
+        }
 
         if (app.get('debug')) {
           console.log('Parliament updated!');
@@ -886,9 +933,32 @@ function getGeneralSetting (type) {
   return val;
 }
 
+// Validates that the parliament object exists
+// Use this before writing the parliament file
+function validateParliament (next) {
+  const length = Buffer.from(JSON.stringify(parliament, null, 2)).length;
+  if (length < 320) {
+    // if it's an empty file, don't save it, return an error
+    const errorMsg = 'Error writing parliament data: empty or invalid parliament';
+    console.log(errorMsg);
+    if (next) {
+      const error = new Error(errorMsg);
+      error.httpStatusCode = 500;
+      return error;
+    }
+    return errorMsg;
+  }
+  return false;
+}
+
 // Writes the parliament to the parliament json file, updates the parliament
 // with health and stats, then sends success or error
 function writeParliament (req, res, next, successObj, errorText, sendParliament) {
+  const parliamentError = validateParliament(next);
+  if (parliamentError) {
+    return next(parliamentError);
+  }
+
   fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
     (err) => {
       if (app.get('debug')) {
@@ -920,8 +990,31 @@ function writeParliament (req, res, next, successObj, errorText, sendParliament)
   );
 }
 
+// Validates that issues exist
+// Use this before writing the issues file
+function validateIssues (next) {
+  const length = Buffer.from(JSON.stringify(issues, null, 2)).length;
+  if (length < 2) {
+    // if it's an empty file, don't save it, return an error
+    const errorMsg = 'Error writing issue data: empty issues';
+    console.log(errorMsg);
+    if (next) {
+      const error = new Error(errorMsg);
+      error.httpStatusCode = 500;
+      return error;
+    }
+    return errorMsg;
+  }
+  return false;
+}
+
 // Writes the issues to the issues json file then sends success or error
 function writeIssues (req, res, next, successObj, errorText, sendIssues) {
+  const issuesError = validateIssues(next);
+  if (issuesError) {
+    return next(issuesError);
+  }
+
   fs.writeFile(app.get('issuesfile'), JSON.stringify(issues, null, 2), 'utf8',
     (err) => {
       if (app.get('debug')) {
@@ -982,6 +1075,16 @@ router.post('/auth', (req, res, next) => {
   });
 });
 
+// logout a "session" by invalidating the token
+router.post('/logout', (req, res, next) => {
+  // check for token in header, url parameters, or post parameters
+  let token = req.body.token || req.query.token || req.headers['x-access-token'];
+  // add token to invalid token map
+  if (token) { invalidTokens[token] = true; }
+
+  return res.json({ loggedin: false });
+});
+
 // Get whether authentication or dashboardOnly mode is set
 router.get('/auth', (req, res, next) => {
   let hasAuth = !!app.get('password');
@@ -995,7 +1098,7 @@ router.get('/auth', (req, res, next) => {
 // Get whether the user is logged in
 // If it passes the verifyToken middleware, the user is logged in
 router.get('/auth/loggedin', verifyToken, (req, res, next) => {
-  return res.json({ loggedin:true });
+  return res.json({ loggedin: true });
 });
 
 // Update (or create) a password for the parliament
@@ -1292,6 +1395,11 @@ router.put('/settings/restoreDefaults', verifyToken, (req, res, next) => {
 
   let settings = JSON.parse(JSON.stringify(parliament.settings));
 
+  const parliamentError = validateParliament(next);
+  if (!parliamentError) {
+    return next(parliamentError);
+  }
+
   fs.writeFile(app.get('file'), JSON.stringify(parliament, null, 2), 'utf8',
     (err) => {
       if (err) {
@@ -1350,7 +1458,7 @@ router.put('/parliament', verifyToken, (req, res, next) => {
     }
   }
 
-  parliament = req.body.reorderedParliament;
+  parliament.groups = req.body.reorderedParliament.groups;
   updateParliament();
 
   let successObj  = { success: true, text: 'Successfully reordered items in your parliament.' };
@@ -1846,7 +1954,7 @@ router.put('/removeSelectedAcknowledgedIssues', verifyToken, (req, res, next) =>
 });
 
 // issue a test alert to a specified notifier
-router.post('/testAlert', (req, res, next) => {
+router.post('/testAlert', verifyToken, (req, res, next) => {
   if (!req.body.notifier) {
     const error = new Error('Must specify the notifier.');
     error.httpStatusCode = 422;

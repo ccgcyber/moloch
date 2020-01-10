@@ -3,7 +3,7 @@ use Exporter;
 use strict;
 use Test::More;
 @MolochTest::ISA = qw(Exporter);
-@MolochTest::EXPORT = qw (esGet esPost esDelete esCopy viewerGet viewerGetToken viewerGet2 viewerDelete viewerDeleteToken viewerPost viewerPost2 viewerPostToken viewerPostToken2 countTest countTest2 errTest bin2hex mesGet mesPost multiGet getTokenCookie getTokenCookie2 parliamentGet parliamentGetToken parliamentPost parliamentPut parliamentDelete parliamentDeleteToken waitFor viewerPutToken);
+@MolochTest::EXPORT = qw (esGet esPost esPut esDelete esCopy viewerGet viewerGetToken viewerGet2 viewerDelete viewerDeleteToken viewerPost viewerPost2 viewerPostToken viewerPostToken2 countTest countTest2 errTest bin2hex mesGet mesPost multiGet getTokenCookie getTokenCookie2 parliamentGet parliamentGetToken parliamentPost parliamentPut parliamentDelete parliamentDeleteToken waitFor viewerPutToken);
 
 use LWP::UserAgent;
 use HTTP::Request::Common;
@@ -31,8 +31,8 @@ sub viewerGetToken {
 my ($url, $token, $debug) = @_;
 
     my $response = $MolochTest::userAgent->get("http://$MolochTest::host:8123$url", "x-moloch-cookie" => $token);
-    diag $url, " response:", $response->content if ($debug);
-    my $json = from_json($response->content);
+    diag $url, " response:>", $response->content, "<:\n" if ($debug);
+    my $json = decode_json($response->content);
     return ($json);
 }
 ################################################################################
@@ -173,6 +173,15 @@ sub esPost {
 my ($url, $content) = @_;
 
     my $response = $MolochTest::userAgent->post("$MolochTest::elasticsearch$url", Content => $content, "Content-Type" => "application/json;charset=UTF-8");
+    #diag $url, " response:", $response->content;
+    my $json = from_json($response->content);
+    return ($json);
+}
+################################################################################
+sub esPut {
+my ($url, $content) = @_;
+
+    my $response = $MolochTest::userAgent->put("$MolochTest::elasticsearch$url", Content => $content, "Content-Type" => "application/json;charset=UTF-8");
     #diag $url, " response:", $response->content;
     my $json = from_json($response->content);
     return ($json);

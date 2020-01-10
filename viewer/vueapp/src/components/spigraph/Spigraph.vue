@@ -6,7 +6,7 @@
     <moloch-search
       :num-matching-sessions="filtered"
       :timezone="user.settings.timezone"
-      @changeSearch="loadData">
+      @changeSearch="cancelAndLoad(true)">
     </moloch-search> <!-- /search navbar -->
 
     <!-- spigraph sub navbar -->
@@ -126,50 +126,53 @@
           :map-data="mapData"
           :primary="true"
           :timezone="user.settings.timezone"
-          @fetchMapData="loadData">
+          @fetchMapData="cancelAndLoad(true)">
         </moloch-visualizations>
       </div> <!-- /main visualization -->
 
       <!-- values -->
-      <div v-if="fieldObj"
-        v-for="(item, index) in items"
-        :key="item.name"
-        class="spi-graph-item pl-3 pr-3 pt-1">
-        <!-- field value -->
-        <div class="row">
-          <div class="col-md-12">
-            <div class="spi-bucket">
-              <strong>
-                <moloch-session-field
-                  :field="fieldObj"
-                  :value="item.name"
-                  :expr="fieldObj.exp"
-                  :parse="true"
-                  :pull-left="true"
-                  :session-btn="true">
-                </moloch-session-field>
-              </strong>
-              <sup>({{ item.count | commaString }})</sup>
+      <template v-if="fieldObj">
+        <div v-for="(item, index) in items"
+          :key="item.name"
+          class="spi-graph-item pl-3 pr-3 pt-1">
+          <!-- field value -->
+          <div class="row">
+            <div class="col-md-12">
+              <div class="spi-bucket">
+                <strong>
+                  <moloch-session-field
+                    :field="fieldObj"
+                    :value="item.name"
+                    :expr="fieldObj.exp"
+                    :parse="true"
+                    :pull-left="true"
+                    :session-btn="true">
+                  </moloch-session-field>
+                </strong>
+                <sup>({{ item.count | commaString }})</sup>
+              </div>
             </div>
-          </div>
-        </div> <!-- /field value -->
-        <!-- field visualization -->
-        <div class="row">
-          <div class="col-md-12">
-            <moloch-visualizations
-              :id="index.toString()"
-              :graph-data="item.graph"
-              :map-data="item.map"
-              :primary="false"
-              :timezone="user.settings.timezone">
-            </moloch-visualizations>
-          </div>
-        </div> <!-- /field visualization -->
-      </div> <!-- /values -->
+          </div> <!-- /field value -->
+          <!-- field visualization -->
+          <div class="row">
+            <div class="col-md-12">
+              <moloch-visualizations
+                :id="index.toString()"
+                :graph-data="item.graph"
+                :map-data="item.map"
+                :primary="false"
+                :timezone="user.settings.timezone">
+              </moloch-visualizations>
+            </div>
+          </div> <!-- /field visualization -->
+        </div>
+      </template> <!-- /values -->
 
       <!-- loading overlay -->
       <moloch-loading
-        v-if="loading && !error">
+        :can-cancel="true"
+        v-if="loading && !error"
+        @cancel="cancelAndLoad">
       </moloch-loading> <!-- /loading overlay -->
 
       <!-- page error -->
@@ -194,17 +197,26 @@
 </template>
 
 <script>
+// import external
+import Vue from 'vue';
+// import services
+import SpigraphService from './SpigraphService';
 import FieldService from '../search/FieldService';
+import ConfigService from '../utils/ConfigService';
+// import external
 import MolochError from '../utils/Error';
 import MolochSearch from '../search/Search';
 import MolochLoading from '../utils/Loading';
 import MolochNoResults from '../utils/NoResults';
 import MolochFieldTypeahead from '../utils/FieldTypeahead';
 import MolochVisualizations from '../visualizations/Visualizations';
+// import utils
+import Utils from '../utils/utils';
 
 let oldFieldObj;
 let refreshInterval;
 let respondedAt; // the time that the last data load succesfully responded
+let pendingPromise; // save a pending promise to be able to cancel it
 
 export default {
   name: 'Spigraph',
@@ -271,26 +283,26 @@ export default {
   },
   watch: {
     '$route.query.size': function (newVal, oldVal) {
-      this.loadData();
+      this.cancelAndLoad(true);
     },
     '$route.query.sort': function (newVal, oldVal) {
-      this.loadData();
+      this.cancelAndLoad(true);
     },
     '$route.query.field': function (newVal, oldVal) {
-      this.loadData();
+      this.cancelAndLoad(true);
     },
     // watch graph type and update sort
     'graphType': function (newVal, oldVal) {
       if (newVal && this.sortBy === 'graph') {
         this.query.sort = newVal;
-        if (oldVal) { this.loadData(); }
+        if (oldVal) { this.cancelAndLoad(true); }
       }
     }
   },
   created: function () {
     setTimeout(() => {
       // wait for query to be computed
-      this.loadData();
+      this.cancelAndLoad(true);
       this.changeRefreshInterval();
     });
 
@@ -317,6 +329,34 @@ export default {
   },
   methods: {
     /* exposed page functions ---------------------------------------------- */
+    /**
+     * Cancels the pending session query (if it's still pending) and runs a new
+     * query if requested
+     * @param {bool} runNewQuery  Whether to run a new spigraph query after
+     *                            canceling the request
+     */
+    cancelAndLoad: function (runNewQuery) {
+      if (pendingPromise) {
+        ConfigService.cancelEsTask(pendingPromise.cancelId)
+          .then((response) => {
+            pendingPromise.source.cancel();
+            pendingPromise = null;
+
+            if (!runNewQuery) {
+              this.loading = false;
+              if (!this.items.length) {
+                // show a page error if there is no data on the page
+                this.error = 'You canceled the search';
+              }
+              return;
+            }
+
+            this.loadData();
+          });
+      } else if (runNewQuery) {
+        this.loadData();
+      }
+    },
     changeMaxElements: function () {
       this.$router.push({
         query: {
@@ -342,10 +382,10 @@ export default {
       if (refreshInterval) { clearInterval(refreshInterval); }
 
       if (this.refresh && this.refresh > 0) {
-        this.loadData();
+        this.cancelAndLoad(true);
         refreshInterval = setInterval(() => {
           if (respondedAt && Date.now() - respondedAt >= parseInt(this.refresh * 1000)) {
-            this.loadData();
+            this.cancelAndLoad(true);
           }
         }, 500);
       }
@@ -372,20 +412,31 @@ export default {
         this.query.map = true;
       }
 
-      this.$http.get('spigraph.json', { params: this.query })
-        .then((response) => {
-          respondedAt = Date.now();
-          this.error = '';
-          this.loading = false;
-          this.items = []; // clear items
-          this.processData(response.data);
-          this.recordsTotal = response.data.recordsTotal;
-          this.recordsFiltered = response.data.recordsFiltered;
-        }, (error) => {
-          respondedAt = undefined;
-          this.loading = false;
-          this.error = error.text || error;
-        });
+      // create unique cancel id to make canel req for corresponding es task
+      const cancelId = Utils.createRandomString();
+      this.query.cancelId = cancelId;
+
+      const source = Vue.axios.CancelToken.source();
+      const cancellablePromise = SpigraphService.get(this.query, source.token);
+
+      // set pending promise info so it can be cancelled
+      pendingPromise = { cancellablePromise, source, cancelId };
+
+      cancellablePromise.then((response) => {
+        pendingPromise = null;
+        respondedAt = Date.now();
+        this.error = '';
+        this.loading = false;
+        this.items = []; // clear items
+        this.processData(response.data);
+        this.recordsTotal = response.data.recordsTotal;
+        this.recordsFiltered = response.data.recordsFiltered;
+      }).catch((error) => {
+        pendingPromise = null;
+        respondedAt = undefined;
+        this.loading = false;
+        this.error = error.text || error;
+      });
     },
     processData: function (json) {
       this.mapData = json.map;
@@ -408,6 +459,12 @@ export default {
       }
 
       return undefined;
+    }
+  },
+  beforeDestroy: function () {
+    if (pendingPromise) {
+      pendingPromise.source.cancel();
+      pendingPromise = null;
     }
   }
 };

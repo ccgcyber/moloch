@@ -143,21 +143,10 @@ LOCAL int tls_is_grease_value(uint32_t val)
     return 1;
 }
 /******************************************************************************/
-LOCAL void tls_process_server_hello(MolochSession_t *session, const unsigned char *data, int len)
+LOCAL void tls_session_version(MolochSession_t *session, uint16_t ver)
 {
-    BSB bsb;
-    BSB_INIT(bsb, data, len);
-
-    uint16_t ver = 0;
-    BSB_IMPORT_u16(bsb, ver);
-    BSB_IMPORT_skip(bsb, 32);     // Random
-
-    if(BSB_IS_ERROR(bsb))
-        return;
-
     char str[100];
 
-    /* Parse SSL/TLS version */
     switch (ver) {
     case 0x0300:
         moloch_field_string_add(verField, session, "SSLv3", 5, TRUE);
@@ -182,6 +171,28 @@ LOCAL void tls_process_server_hello(MolochSession_t *session, const unsigned cha
         snprintf(str, sizeof(str), "0x%04x", ver);
         moloch_field_string_add(verField, session, str, 6, TRUE);
     }
+}
+/******************************************************************************/
+LOCAL void tls_process_server_hello(MolochSession_t *session, const unsigned char *data, int len)
+{
+    BSB bsb;
+    BSB_INIT(bsb, data, len);
+
+    uint16_t ver = 0;
+    BSB_IMPORT_u16(bsb, ver);
+    BSB_IMPORT_skip(bsb, 32);     // Random
+
+    if(BSB_IS_ERROR(bsb))
+        return;
+
+    char str[100];
+    int  add12Later = FALSE;
+
+    // If ver is 0x303 that means there should be an extended header with actual version
+    if (ver != 0x0303)
+        tls_session_version(session, ver);
+    else
+        add12Later = TRUE;
 
     /* Parse sessionid, only for SSLv3 - TLSv1.2 */
     if (ver >= 0x0300 && ver <= 0x0303) {
@@ -244,10 +255,23 @@ LOCAL void tls_process_server_hello(MolochSession_t *session, const unsigned cha
             if (elen > BSB_REMAINING(ebsb))
                 break;
 
+            if (etype == 0x2b && elen == 2) { // etype 0x2b is supported version
+                uint16_t supported_version = 0;
+                BSB_IMPORT_u16(ebsb, supported_version);
+
+                if (supported_version == 0x0304) {
+                    tls_session_version(session, supported_version);
+                    add12Later = FALSE;
+                }
+            }
+
             BSB_IMPORT_skip (ebsb, elen);
         }
         BSB_EXPORT_rewind(eja3bsb, 1); // Remove last -
     }
+
+    if (add12Later)
+        tls_session_version(session, 0x303);
 
     BSB_EXPORT_sprintf(ja3bsb, "%d,%d,%.*s", ver, cipher, (int)BSB_LENGTH(eja3bsb), eja3);
 
@@ -264,90 +288,6 @@ LOCAL void tls_process_server_hello(MolochSession_t *session, const unsigned cha
     }
 }
 
-#define char2num(ch) (isdigit(ch)?((ch) - '0'):0)
-#define str2num(str) (char2num((str)[0]) * 10 + char2num((str)[1]))
-#define str4num(str) (char2num((str)[0]) * 1000 + char2num((str)[1]) * 100 + char2num((str)[2]) * 10 + char2num((str)[3]))
-
-/******************************************************************************/
-LOCAL uint64_t tls_parse_time(MolochSession_t *session, int tag, unsigned char* value, int len)
-{
-    int        offset = 0;
-    int        pos = 0;
-    struct tm  tm;
-    time_t     val;
-
-    //UTCTime
-    if (tag == 23 && len > 12) {
-        if (len > 17 && value[12] != 'Z')
-            offset = str2num(value+13) * 60 + str2num(value+15);
-
-        if (value[12] == '-')
-            offset = -offset;
-
-        tm.tm_year = str2num(value+0);
-        tm.tm_mon  = str2num(value+2) - 1;
-        tm.tm_mday = str2num(value+4);
-        tm.tm_hour = str2num(value+6);
-        tm.tm_min  = str2num(value+8);
-        tm.tm_sec  = str2num(value+10);
-
-        if (tm.tm_year < 50)
-            tm.tm_year += 100;
-
-        val = timegm(&tm) + offset;
-        if (val < 0) {
-            val = 0;
-            moloch_session_add_tag(session, "cert:pre-epoch-time");
-        }
-        return val;
-    }
-    //GeneralizedTime
-    else if (tag == 24 && len >= 10) {
-        memset(&tm, 0, sizeof(tm));
-        tm.tm_year = str4num(value+0) - 1900;
-        tm.tm_mon  = str2num(value+4) - 1;
-        tm.tm_mday = str2num(value+6);
-        tm.tm_hour = str2num(value+8);
-        if (len < 10 || value[10] == 'Z' || value[10] == '+' || value[10] == '-') {
-            pos = 10;
-            goto gtdone;
-        }
-        tm.tm_min  = str2num(value+10);
-        if (len < 12 || value[12] == 'Z' || value[12] == '+' || value[12] == '-') {
-            pos = 12;
-            goto gtdone;
-        }
-        tm.tm_sec  = str2num(value+12);
-        if (len < 14 || value[14] == 'Z' || value[14] == '+' || value[14] == '-') {
-            pos = 14;
-            goto gtdone;
-        }
-        if (value[14] == '.') {
-            pos = 18;
-        } else {
-            pos = 14;
-        }
-    gtdone:
-        if (pos == len) {
-            val = timegm(&tm);
-        } else {
-            if (pos + 5 < len && (value[pos] == '+' || value[pos] == '-')) {
-                offset = str2num(value+pos+1) * 60 +  str2num(value+pos+3);
-
-                if (value[pos] == '-')
-                    offset = -offset;
-            }
-            val = timegm(&tm) + offset;
-        }
-
-        if (val < 0) {
-            val = 0;
-            moloch_session_add_tag(session, "cert:pre-epoch-time");
-        }
-        return val;
-    }
-    return 0;
-}
 /******************************************************************************/
 LOCAL void tls_process_server_certificate(MolochSession_t *session, const unsigned char *data, int len)
 {
@@ -435,11 +375,11 @@ LOCAL void tls_process_server_certificate(MolochSession_t *session, const unsign
         BSB_INIT(tbsb, value, alen);
         if (!(value = moloch_parsers_asn_get_tlv(&tbsb, &apc, &atag, &alen)))
             {badreason = 7; goto bad_cert;}
-        certs->notBefore = tls_parse_time(session, atag, value, alen);
+        certs->notBefore = moloch_parsers_asn_parse_time(session, atag, value, alen);
 
         if (!(value = moloch_parsers_asn_get_tlv(&tbsb, &apc, &atag, &alen)))
             {badreason = 7; goto bad_cert;}
-        certs->notAfter = tls_parse_time(session, atag, value, alen);
+        certs->notAfter = moloch_parsers_asn_parse_time(session, atag, value, alen);
 
         /* subject */
         if (!(value = moloch_parsers_asn_get_tlv(&bsb, &apc, &atag, &alen)))
@@ -578,7 +518,7 @@ LOCAL void tls_process_client(MolochSession_t *session, const unsigned char *dat
                 BSB_IMPORT_skip(cbsb, skiplen);  // Session Id
 
                 BSB_IMPORT_u16(cbsb, skiplen);   // Ciper Suites Length
-                while (skiplen > 0) {
+                while (BSB_NOT_ERROR(cbsb) && skiplen > 0) {
                     uint16_t c = 0;
                     BSB_IMPORT_u16(cbsb, c);
                     if (!tls_is_grease_value(c)) {
@@ -672,7 +612,7 @@ LOCAL void tls_process_client(MolochSession_t *session, const unsigned char *dat
         }
         BSB_IMPORT_skip(sslbsb, ssllen + 5);
 
-        if (BSB_NOT_ERROR(ja3bsb) && BSB_NOT_ERROR(ecja3bsb) && BSB_NOT_ERROR(eja3bsb)) {
+        if (BSB_LENGTH(ja3bsb) > 0 && BSB_NOT_ERROR(ja3bsb) && BSB_NOT_ERROR(ecja3bsb) && BSB_NOT_ERROR(eja3bsb) && BSB_NOT_ERROR(ecfja3bsb)) {
             BSB_EXPORT_sprintf(ja3bsb, "%.*s,%.*s,%.*s", (int)BSB_LENGTH(eja3bsb), eja3, (int)BSB_LENGTH(ecja3bsb), ecja3, (int)BSB_LENGTH(ecfja3bsb), ecfja3);
 
             if (config.ja3Strings) {

@@ -54,7 +54,6 @@ import cubism from '../../../../public/cubism.v1.js';
 import '../../../../public/highlight.min.js';
 
 import '../../cubismoverrides.css';
-import ToggleBtn from '../utils/ToggleBtn';
 import MolochPaging from '../utils/Pagination';
 import MolochError from '../utils/Error';
 import MolochLoading from '../utils/Loading';
@@ -75,7 +74,6 @@ export default {
     'searchTerm'
   ],
   components: {
-    ToggleBtn,
     MolochPaging,
     MolochError,
     MolochLoading,
@@ -300,7 +298,7 @@ export default {
 
       // TODO instead of just showing the default columns, show the ones currently in the table
       let columns = this.columns.filter((column) => {
-        return column.default && column.id !== 'node' && column.id !== 'time';
+        return column.default && column.doStats;
       });
       let headerNames = columns.map(function (item) { return item.name; });
       let dataSrcs = columns.map(function (item) { return item.sort; });

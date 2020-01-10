@@ -17,7 +17,13 @@ export default {
   },
 
   logout: function () {
-    this.saveToken('');
+    Vue.axios.post('api/logout')
+      .then((response) => {
+        this.saveToken('');
+      })
+      .catch((error) =>  {
+        this.saveToken('');
+      });
   },
 
   saveToken: function (token) {
@@ -63,7 +69,6 @@ export default {
           resolve(response.data);
         })
         .catch((error) => {
-          this.saveToken('');
           reject(error.response.data);
         });
     });

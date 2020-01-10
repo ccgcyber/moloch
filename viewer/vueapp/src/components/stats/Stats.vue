@@ -6,6 +6,8 @@
     <form class="stats-form">
       <div class="form-inline mr-1 ml-1 mt-1 mb-1">
 
+        <div v-if="tabIndex === 7">&nbsp;</div>
+
         <!-- graph type select -->
         <div class="input-group input-group-sm"
           v-if="tabIndex === 0">
@@ -132,7 +134,7 @@
 
         <!-- table data interval select -->
         <div class="input-group input-group-sm ml-1"
-          v-if="tabIndex !== 0">
+          v-if="tabIndex !== 0 && tabIndex !== 7">
           <div class="input-group-prepend help-cursor"
             v-b-tooltip.hover
             title="Data refresh interval for Node and Elasticsearch stats">
@@ -193,7 +195,7 @@
 
         <!-- refresh button -->
         <div class="input-group input-group-sm ml-1"
-          v-if="tabIndex !== 0">
+          v-if="tabIndex !== 0 && tabIndex !== 7">
           <button type="button"
             class="btn btn-theme-tertiary btn-sm refresh-btn"
             @click="loadData">
@@ -246,12 +248,78 @@
           </button>
         </div> <!-- /error (from child component) -->
 
+        <!-- shrink index -->
+        <div v-if="shrinkIndex"
+          class="ml-4 form-inline">
+          <strong>
+            Shrink {{ shrinkIndex.index }}
+          </strong>
+          <!-- new # shards -->
+          <div class="input-group input-group-sm ml-2">
+            <div class="input-group-prepend">
+              <span class="input-group-text">
+                # Shards
+              </span>
+            </div>
+            <select v-model="shrinkFactor"
+              class="form-control"
+              style="-webkit-appearance:none;">
+              <option v-for="factor in shrinkFactors"
+                :key="factor"
+                :value="factor">
+                {{ factor }}
+              </option>
+            </select>
+          </div> <!-- /new # shards -->
+          <!-- temporary node -->
+          <div v-if="nodes && temporaryNode"
+            class="input-group input-group-sm ml-2">
+            <div class="input-group-prepend">
+              <span class="input-group-text">
+                Temporary Node
+              </span>
+            </div>
+            <select v-model="temporaryNode"
+              class="form-control"
+              style="-webkit-appearance:none;">
+              <option v-for="node in nodes"
+                :key="node.name"
+                :value="node.name">
+                {{ node.name }}
+              </option>
+            </select>
+          </div> <!-- /new shards input -->
+          <!-- ok button -->
+          <button class="btn btn-sm btn-success pull-right ml-2"
+            v-b-tooltip.hover
+            title="shrink"
+            @click="executeShrink(shrinkIndex)"
+            type="button">
+            <span class="fa fa-check">
+            </span>
+          </button> <!-- /ok button -->
+          <!-- cancel button -->
+          <button class="btn btn-sm btn-warning pull-right ml-2"
+            v-b-tooltip.hover
+            title="cancel"
+            @click="cancelShrink"
+            type="button">
+            <span class="fa fa-ban">
+            </span>
+          </button> <!-- /cancel button -->
+        </div>
+        <span v-if="shrinkIndex && shrinkError"
+          class="text-danger ml-2">
+          {{ shrinkError }}
+        </span> <!-- /shrink index -->
+
       </div>
     </form> <!-- /stats sub navbar -->
 
     <!-- stats content -->
     <div class="stats-tabs">
-      <div class="input-group input-group-sm pull-right mr-1 pt-1">
+      <div class="input-group input-group-sm pull-right mr-1 pt-1"
+        v-if="tabIndex !== 7">
         <div class="input-group-prepend">
           <span class="input-group-text input-group-text-fw">
             <span v-if="loadingData"
@@ -324,6 +392,7 @@
             :data-interval="dataInterval"
             @errored="onError"
             @confirm="confirm"
+            @shrink="shrink"
             :searchTerm="searchTerm"
             :issueConfirmation="issueConfirmation"
             :user="user">
@@ -361,6 +430,15 @@
             :user="user">
           </es-recovery>
         </b-tab>
+        <b-tab title="ES Admin"
+          @click="tabIndexChange(7)"
+          v-if="user.esAdminUser && !multiviewer">
+          <es-admin v-if="user && tabIndex === 7"
+            :data-interval="dataInterval"
+            :refreshData="refreshData"
+            :user="user">
+          </es-admin>
+        </b-tab>
       </b-tabs>
     </div> <!-- /stats content -->
 
@@ -374,16 +452,25 @@ import EsNodes from './EsNodes';
 import EsTasks from './EsTasks';
 import EsRecovery from './EsRecovery';
 import EsIndices from './EsIndices';
+import EsAdmin from './EsAdmin';
 import CaptureGraphs from './CaptureGraphs';
 import CaptureStats from './CaptureStats';
 import FocusInput from '../utils/FocusInput';
+import utils from '../utils/utils';
 
 let searchInputTimeout;
 
 export default {
   name: 'Stats',
   components: {
-    CaptureGraphs, CaptureStats, EsShards, EsNodes, EsIndices, EsTasks, EsRecovery
+    CaptureGraphs,
+    CaptureStats,
+    EsShards,
+    EsNodes,
+    EsIndices,
+    EsTasks,
+    EsRecovery,
+    EsAdmin
   },
   directives: { FocusInput },
   data: function () {
@@ -396,14 +483,20 @@ export default {
       recoveryShow: this.$route.query.recoveryShow || 'notdone',
       shardsShow: this.$route.query.shardsShow || 'notstarted',
       dataInterval: this.$route.query.refreshInterval || '15000',
-      pageSize: this.$route.query.size || '1000',
+      pageSize: this.$route.query.size || '500',
       refreshData: false,
       childError: '',
       multiviewer: this.$constants.MOLOCH_MULTIVIEWER,
       confirmMessage: '',
       itemToConfirm: undefined,
       issueConfirmation: undefined,
-      searchTerm: undefined
+      searchTerm: undefined,
+      shrinkIndex: undefined,
+      shrinkFactor: undefined,
+      shrinkFactors: undefined,
+      temporaryNode: undefined,
+      nodes: undefined,
+      shrinkError: undefined
     };
   },
   computed: {
@@ -487,7 +580,7 @@ export default {
       if (queryParams.refreshInterval) {
         this.dataInterval = queryParams.refreshInterval;
       }
-      this.pageSize = queryParams.size || 1000;
+      this.pageSize = queryParams.size || 500;
     },
     clear: function () {
       this.searchTerm = undefined;
@@ -527,6 +620,41 @@ export default {
         this.itemToConfirm = undefined;
         this.confirmMessage = '';
       });
+    },
+    shrink: function (index) {
+      this.shrinkIndex = index;
+      this.shrinkFactors = utils.findFactors(parseInt(index.pri));
+      this.shrinkFactors.length === 1
+        ? this.shrinkFactor = this.shrinkFactors[0]
+        : this.shrinkFactor = this.shrinkFactors[1];
+
+      // find nodes for dropdown
+      this.$http.get('esstats.json', {})
+        .then((response) => {
+          this.nodes = response.data.data;
+          this.temporaryNode = this.nodes[0].name;
+        });
+    },
+    cancelShrink: function () {
+      this.shrinkIndex = undefined;
+      this.shrinkFactor = undefined;
+      this.shrinkFactors = undefined;
+      this.temporaryNode = undefined;
+      this.shrinkError = undefined;
+    },
+    executeShrink: function (index) {
+      this.$http.post(`esindices/${index.index}/shrink`, {
+        target: this.temporaryNode,
+        numShards: this.shrinkFactor
+      }).then((response) => {
+        if (!response.data.success) {
+          this.shrinkError = response.data.text;
+          return;
+        }
+        this.cancelShrink();
+      }).catch((error) => {
+        this.shrinkError = error.text || error;
+      });
     }
   }
 };
@@ -563,7 +691,7 @@ form.stats-form {
   position: fixed;
   left: 0;
   right: 0;
-  z-index : 5;
+  z-index : 6;
   background-color: var(--color-quaternary-lightest);
 
   -webkit-box-shadow: var(--px-none) var(--px-none) var(--px-xxlg) -8px #333;

@@ -335,9 +335,8 @@
                 v-model="settings.sortColumn"
                 @change="update">
                 <option value="last">Last Used</option>
-                <option v-for="field in columns"
+                <option v-for="field in sortableColumns"
                   :key="field.dbField"
-                  v-if="field && !field.unsortable"
                   :value="field.dbField">
                   {{ field.friendlyName }}
                 </option>
@@ -374,6 +373,7 @@
             </label>
             <div class="col-sm-6">
               <moloch-field-typeahead
+                :dropup="true"
                 :fields="fields"
                 query-param="field"
                 :initial-value="spiGraphTypeahead"
@@ -399,6 +399,7 @@
             </label>
             <div class="col-sm-6">
               <moloch-field-typeahead
+                :dropup="true"
                 :fields="fields"
                 query-param="field"
                 :initial-value="connSrcFieldTypeahead"
@@ -424,6 +425,7 @@
             </label>
             <div class="col-sm-6">
               <moloch-field-typeahead
+                :dropup="true"
                 :fields="fieldsPlus"
                 query-param="field"
                 :initial-value="connDstFieldTypeahead"
@@ -499,59 +501,71 @@
                 </td>
                 <td>
                   <span v-if="item.sessionsColConfig">
-                    <label class="badge badge-secondary mr-1 mb-0 help-cursor"
-                      v-if="col && fieldsMap[col]"
-                      v-for="col in item.sessionsColConfig.visibleHeaders"
-                      v-b-tooltip.hover
-                      :title="fieldsMap[col].help"
-                      :key="col">
-                      {{ fieldsMap[col].friendlyName }}
-                    </label>
+                    <template v-for="col in item.sessionsColConfig.visibleHeaders">
+                      <label class="badge badge-secondary mr-1 mb-0 help-cursor"
+                        v-if="fieldsMap[col]"
+                        v-b-tooltip.hover
+                        :title="fieldsMap[col].help"
+                        :key="col">
+                        {{ fieldsMap[col].friendlyName }}
+                      </label>
+                    </template>
                   </span>
                 </td>
                 <td>
                   <span v-if="item.sessionsColConfig">
-                    <label class="badge badge-secondary mr-1 help-cursor"
-                      :title="fieldsMap[order[0]].help"
-                      v-for="order in item.sessionsColConfig.order"
-                      v-if="fieldsMap[order[0]]"
-                      v-b-tooltip.hover
-                      :key="order[0]">
-                      {{ fieldsMap[order[0]].friendlyName }}&nbsp;
-                      ({{ order[1] }})
-                    </label>
+                    <template v-for="order in item.sessionsColConfig.order">
+                      <label class="badge badge-secondary mr-1 help-cursor"
+                        :title="fieldsMap[order[0]].help"
+                        v-if="fieldsMap[order[0]]"
+                        v-b-tooltip.hover
+                        :key="order[0]">
+                        {{ fieldsMap[order[0]].friendlyName }}&nbsp;
+                        ({{ order[1] }})
+                      </label>
+                    </template>
                   </span>
                 </td>
                 <td>
-                  <div v-if="user.createEnabled || item.user === user.userId || !item.user">
-                    <div class="btn-group btn-group-sm pull-right"
-                      v-if="item.changed">
-                      <button type="button"
-                        v-b-tooltip.hover
-                        @click="updateView(key)"
-                        title="Save changes to this view"
-                        class="btn btn-theme-tertiary">
-                        <span class="fa fa-save">
-                        </span>
-                      </button>
-                      <button type="button"
-                        v-b-tooltip.hover
-                        class="btn btn-warning"
-                        @click="cancelViewChange(key)"
-                        title="Undo changes to this view">
-                        <span class="fa fa-ban">
-                        </span>
-                      </button>
-                    </div>
-                    <button v-else
-                      type="button"
-                      class="btn btn-sm btn-danger pull-right"
-                      @click="deleteView(item, key)">
-                      <span class="fa fa-trash-o">
-                      </span>&nbsp;
-                      Delete
+                  <span class="pull-right">
+                    <button type="button"
+                      v-b-tooltip.hover
+                      title="Copy this views's expression"
+                      class="btn btn-sm btn-theme-secondary"
+                      v-clipboard:copy="item.expression">
+                      <span class="fa fa-clipboard fa-fw">
+                      </span>
                     </button>
-                  </div>
+                    <span v-if="user.createEnabled || item.user === user.userId || !item.user">
+                      <span v-if="item.changed">
+                        <button type="button"
+                          v-b-tooltip.hover
+                          @click="updateView(key)"
+                          title="Save changes to this view"
+                          class="btn btn-sm btn-theme-tertiary">
+                          <span class="fa fa-save fa-fw">
+                          </span>
+                        </button>
+                        <button type="button"
+                          v-b-tooltip.hover
+                          class="btn btn-sm btn-warning"
+                          @click="cancelViewChange(key)"
+                          title="Undo changes to this view">
+                          <span class="fa fa-ban fa-fw">
+                          </span>
+                        </button>
+                      </span>
+                      <button v-else
+                        type="button"
+                        v-b-tooltip.hover
+                        title="Delete this view"
+                        class="btn btn-sm btn-danger"
+                        @click="deleteView(item, key)">
+                        <span class="fa fa-trash-o fa-fw">
+                        </span>
+                      </button>
+                    </span>
+                  </span>
                 </td>
               </tr> <!-- /views -->
               <!-- view list error -->
@@ -865,14 +879,15 @@
                   Moloch Default
                 </td>
                 <td>
-                  <label class="badge badge-secondary mr-1 help-cursor"
-                    v-b-tooltip.hover
-                    :title="fieldsMap[col].help"
-                    v-for="col in defaultColConfig.columns"
-                    v-if="col && fieldsMap[col]"
-                    :key="col">
-                    {{ fieldsMap[col].friendlyName }}
-                  </label>
+                  <template v-for="col in defaultColConfig.columns">
+                    <label class="badge badge-secondary mr-1 help-cursor"
+                      v-b-tooltip.hover
+                      :title="fieldsMap[col].help"
+                      v-if="fieldsMap[col]"
+                      :key="col">
+                      {{ fieldsMap[col].friendlyName }}
+                    </label>
+                  </template>
                 </td>
                 <td>
                   <span v-for="order in defaultColConfig.order"
@@ -889,44 +904,46 @@
                 <td>&nbsp;</td>
               </tr> <!-- /default col configs -->
               <!-- col configs -->
-              <tr v-if="fieldsMap"
-                v-for="(config, index) in colConfigs"
-                :key="config.name">
-                <td>
-                  {{ config.name }}
-                </td>
-                <td>
-                  <label class="badge badge-secondary mr-1 help-cursor"
-                    :title="fieldsMap[col].help"
-                    v-b-tooltip.hover
-                    v-for="col in config.columns"
-                    v-if="col && fieldsMap[col]"
-                    :key="col">
-                    {{ fieldsMap[col].friendlyName }}
-                  </label>
-                </td>
-                <td>
-                  <span v-for="order in config.order"
-                    :key="order[0]">
-                    <label class="badge badge-secondary mr-1 help-cursor"
-                      :title="fieldsMap[order[0]].help"
-                      v-if="fieldsMap[order[0]]"
-                      v-b-tooltip.hover>
-                      {{ fieldsMap[order[0]].friendlyName }}&nbsp;
-                      ({{ order[1] }})
-                    </label>
-                  </span>
-                </td>
-                <td>
-                  <button type="button"
-                    class="btn btn-sm btn-danger pull-right"
-                    @click="deleteColConfig(config.name, index)">
-                    <span class="fa fa-trash-o">
-                    </span>&nbsp;
-                    Delete
-                  </button>
-                </td>
-              </tr> <!-- /col configs -->
+              <template v-if="fieldsMap">
+                <tr v-for="(config, index) in colConfigs"
+                  :key="config.name">
+                  <td>
+                    {{ config.name }}
+                  </td>
+                  <td>
+                    <template v-for="col in config.columns">
+                      <label class="badge badge-secondary mr-1 help-cursor"
+                        :title="fieldsMap[col].help"
+                        v-b-tooltip.hover
+                        v-if="fieldsMap[col]"
+                        :key="col">
+                        {{ fieldsMap[col].friendlyName }}
+                      </label>
+                    </template>
+                  </td>
+                  <td>
+                    <span v-for="order in config.order"
+                      :key="order[0]">
+                      <label class="badge badge-secondary mr-1 help-cursor"
+                        :title="fieldsMap[order[0]].help"
+                        v-if="fieldsMap[order[0]]"
+                        v-b-tooltip.hover>
+                        {{ fieldsMap[order[0]].friendlyName }}&nbsp;
+                        ({{ order[1] }})
+                      </label>
+                    </span>
+                  </td>
+                  <td>
+                    <button type="button"
+                      class="btn btn-sm btn-danger pull-right"
+                      @click="deleteColConfig(config.name, index)">
+                      <span class="fa fa-trash-o">
+                      </span>&nbsp;
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              </template> <!-- /col configs -->
               <!-- col config list error -->
               <tr v-if="colConfigError">
                 <td colspan="3">
@@ -997,32 +1014,33 @@
                 <td>&nbsp;</td>
               </tr> <!-- /default spiview field confg -->
               <!-- spiview field configs -->
-              <tr v-if="fieldsMap"
-                v-for="(config, index) in spiviewConfigs"
-                :key="config.name">
-                <td>
-                  {{ config.name }}
-                </td>
-                <td>
-                  <label class="badge badge-secondary mr-1 help-cursor"
-                    :title="fieldObj.help"
-                    v-b-tooltip.hover
-                    v-for="fieldObj in config.fieldObjs"
-                    :key="fieldObj.dbField">
-                    {{fieldObj.friendlyName}}
-                    ({{fieldObj.count}})
-                  </label>
-                </td>
-                <td>
-                  <button type="button"
-                    class="btn btn-sm btn-danger pull-right"
-                    @click="deleteSpiviewConfig(config.name, index)">
-                    <span class="fa fa-trash-o">
-                    </span>&nbsp;
-                    Delete
-                  </button>
-                </td>
-              </tr> <!-- /spiview field configs -->
+              <template v-if="fieldsMap">
+                <tr v-for="(config, index) in spiviewConfigs"
+                  :key="config.name">
+                  <td>
+                    {{ config.name }}
+                  </td>
+                  <td>
+                    <label class="badge badge-secondary mr-1 help-cursor"
+                      :title="fieldObj.help"
+                      v-b-tooltip.hover
+                      v-for="fieldObj in config.fieldObjs"
+                      :key="fieldObj.dbField">
+                      {{fieldObj.friendlyName}}
+                      ({{fieldObj.count}})
+                    </label>
+                  </td>
+                  <td>
+                    <button type="button"
+                      class="btn btn-sm btn-danger pull-right"
+                      @click="deleteSpiviewConfig(config.name, index)">
+                      <span class="fa fa-trash-o">
+                      </span>&nbsp;
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              </template> <!-- /spiview field configs -->
               <!-- spiview field config list error -->
               <tr v-if="spiviewConfigError">
                 <td colspan="3">
@@ -1622,20 +1640,21 @@
 
           <h3>
             Notifiers
-            <button v-if="notifierTypes"
-              v-for="notifier of notifierTypes"
-              :key="notifier.name"
-              class="btn btn-theme-tertiary btn-sm pull-right ml-1"
-              type="button"
-              @click="createNewNotifier(notifier)">
-              <span class="fa fa-plus-circle">
-              </span>&nbsp;
-              Create {{ notifier.name }} Notifier
-            </button>
+            <template v-if="notifierTypes">
+              <button v-for="notifier of notifierTypes"
+                :key="notifier.name"
+                class="btn btn-theme-tertiary btn-sm pull-right ml-1"
+                type="button"
+                @click="createNewNotifier(notifier)">
+                <span class="fa fa-plus-circle">
+                </span>&nbsp;
+                Create {{ notifier.name }} Notifier
+              </button>
+            </template>
           </h3>
 
           <p>
-            Configure notifiers that can be added to cron queries.
+            Configure notifiers that can be added to cron queries and hunt jobs.
           </p>
 
           <hr>
@@ -1855,13 +1874,51 @@
             Use <code>$</code> to autocomplete shortcuts in search expressions.
           </p>
 
-          <table v-if="shortcuts && shortcuts.length"
+          <div class="row">
+            <div class="col-5">
+              <div class="input-group input-group-sm">
+                <div class="input-group-prepend">
+                  <div class="input-group-text">
+                    <span class="fa fa-search"></span>
+                  </div>
+                </div>
+                <input type="text"
+                  class="form-control"
+                  v-model="shortcutsQuery.search"
+                  @input="getShortcutsTimeout"
+                />
+              </div>
+            </div>
+            <div class="col-7">
+              <moloch-paging v-if="shortcuts.data"
+                class="pull-right"
+                @changePaging="changeShortcutsPaging"
+                :length-default="shortcutsSize"
+                :records-total="shortcuts.recordsTotal"
+                :records-filtered="shortcuts.recordsFiltered">
+              </moloch-paging>
+            </div>
+          </div>
+
+          <table v-if="shortcuts.data"
             class="table table-striped table-sm">
             <thead>
               <tr>
                 <th>Shared</th>
-                <th>Name</th>
-                <th>Description</th>
+                <th class="cursor-pointer"
+                  @click.self="sortShortcuts('name')">
+                  Name
+                  <span v-show="shortcutsQuery.sortField === 'name' && !shortcutsQuery.desc" class="fa fa-sort-asc"></span>
+                  <span v-show="shortcutsQuery.sortField === 'name' && shortcutsQuery.desc" class="fa fa-sort-desc"></span>
+                  <span v-show="shortcutsQuery.sortField !== 'name'" class="fa fa-sort"></span>
+                </th>
+                <th class="cursor-pointer"
+                  @click.self="sortShortcuts('description')">
+                  Description
+                  <span v-show="shortcutsQuery.sortField === 'description' && !shortcutsQuery.desc" class="fa fa-sort-asc"></span>
+                  <span v-show="shortcutsQuery.sortField === 'description' && shortcutsQuery.desc" class="fa fa-sort-desc"></span>
+                  <span v-show="shortcutsQuery.sortField !== 'description'" class="fa fa-sort"></span>
+                </th>
                 <th>Value(s)</th>
                 <th>Type</th>
                 <th>&nbsp;</th>
@@ -1869,11 +1926,11 @@
             </thead>
             <tbody>
               <!-- shortcuts -->
-              <template v-for="(item, index) in shortcuts">
+              <template v-for="(item, index) in shortcuts.data">
                 <tr :key="`${item.id}-content`">
                   <td>
                     <input type="checkbox"
-                      :disabled="!user.createEnabled && item.userId !== user.userId"
+                      :disabled="(!user.createEnabled && item.userId !== user.userId) || item.locked"
                       v-model="item.shared"
                       @input="toggleShortcutShared(item)"
                     />
@@ -1891,42 +1948,64 @@
                     {{ item.type }}
                   </td>
                   <td class="shortcut-btns">
-                    <span v-if="user.createEnabled || item.userId === user.userId">
-                      <span v-if="!item.newValue">
-                        <button type="button"
-                          v-b-tooltip.hover
-                          @click="toggleEditShortcut(item)"
-                          title="Make changes to this shortcut's value"
-                          class="btn btn-sm btn-theme-tertiary pull-right ml-1">
-                          <span class="fa fa-pencil">
-                          </span>
-                        </button>
+                    <span class="pull-right">
+                      <button type="button"
+                        v-b-tooltip.hover
+                        title="Copy this shortcut's value"
+                        class="btn btn-sm btn-theme-secondary"
+                        v-clipboard:copy="item.value">
+                        <span class="fa fa-clipboard fa-fw">
+                        </span>
+                      </button>
+                      <span v-if="user.createEnabled || item.userId === user.userId">
                         <button type="button"
                           v-b-tooltip.hover
                           title="Delete this shortcut"
-                          class="btn btn-sm btn-danger pull-right"
+                          class="btn btn-sm btn-danger"
                           @click="deleteShortcut(item, index)">
-                          <span class="fa fa-trash-o">
+                          <span class="fa fa-trash-o fa-fw">
                           </span>
                         </button>
-                      </span>
-                      <span v-else>
-                        <button type="button"
-                          v-b-tooltip.hover
-                          @click="updateShortcut(item)"
-                          title="Save changes to this shortcut's value"
-                          class="btn btn-sm btn-theme-tertiary pull-right ml-1">
-                          <span class="fa fa-save">
-                          </span>
-                        </button>
-                        <button type="button"
-                          v-b-tooltip.hover
-                          title="Cancel changes to this shortcut's value"
-                          class="btn btn-sm btn-warning pull-right"
-                          @click="toggleEditShortcut(item)">
-                          <span class="fa fa-ban">
-                          </span>
-                        </button>
+                        <span v-if="!item.newValue">
+                          <div v-if="item.locked"
+                            v-b-tooltip.hover
+                            style="display:inline-block"
+                            title="Locked shortcut. Ask your admin to use db.pl to update this shortcut.">
+                            <button :disabled="true"
+                              type="button"
+                              class="btn btn-sm btn-warning disabled cursor-help">
+                              <span class="fa fa-lock fa-fw">
+                              </span>
+                            </button>
+                          </div>
+                          <button type="button"
+                            v-b-tooltip.hover
+                            v-else
+                            @click="toggleEditShortcut(item)"
+                            title="Make changes to this shortcut's value"
+                            class="btn btn-sm btn-theme-tertiary">
+                            <span class="fa fa-pencil fa-fw">
+                            </span>
+                          </button>
+                        </span>
+                        <span v-else>
+                          <button type="button"
+                            v-b-tooltip.hover
+                            title="Cancel changes to this shortcut's value"
+                            class="btn btn-sm btn-warning"
+                            @click="toggleEditShortcut(item)">
+                            <span class="fa fa-ban fa-fw">
+                            </span>
+                          </button>
+                          <button type="button"
+                            v-b-tooltip.hover
+                            @click="updateShortcut(item)"
+                            title="Save changes to this shortcut's value"
+                            class="btn btn-sm btn-theme-tertiary">
+                            <span class="fa fa-save fa-fw">
+                            </span>
+                          </button>
+                        </span>
                       </span>
                     </span>
                   </td>
@@ -1942,6 +2021,16 @@
                   </td>
                 </tr>
               </template> <!-- /shortcuts -->
+              <!-- no shortcuts -->
+              <tr v-if="shortcuts.data && shortcuts.data.length === 0">
+                <td colspan="6">
+                  <p class="text-center mb-0">
+                    <span class="fa fa-folder-open">
+                    </span>&nbsp;
+                    No shortcuts or none that match your search
+                  </p>
+                </td>
+              </tr> <!-- /no shortcuts -->
               <!-- shortcuts list error -->
               <tr v-if="shortcutsListError">
                 <td colspan="6">
@@ -2078,6 +2167,8 @@ import MolochPaging from '../utils/Pagination';
 
 let clockInterval;
 
+let shortcutsInputTimeout;
+
 const defaultSpiviewConfig = { fields: ['dstIp', 'protocol', 'srcIp'] };
 const defaultColConfig = {
   order: [['firstPacket', 'desc']],
@@ -2166,14 +2257,21 @@ export default {
       newNotifier: undefined,
       newNotifierError: '',
       // shortcut settings vars
-      shortcuts: undefined,
+      shortcuts: {},
       shortcutsListError: '',
       newShortcutShared: false,
       newShortcutName: '',
       newShortcutDescription: '',
       newShortcutValue: '',
       newShortcutType: 'string',
-      shortcutFormError: ''
+      shortcutFormError: '',
+      shortcutsStart: 0,
+      shortcutsSize: 50,
+      shortcutsQuery: {
+        desc: false,
+        sortField: 'name',
+        search: ''
+      }
     };
   },
   computed: {
@@ -2187,6 +2285,9 @@ export default {
       set: function (newValue) {
         this.$store.commit('setViews', newValue);
       }
+    },
+    sortableColumns: function () {
+      return this.columns.filter(column => !column.unsortable);
     }
   },
   created: function () {
@@ -2897,6 +2998,35 @@ export default {
         });
     },
     /* SHORTCUTS --------------------------------------- */
+    /**
+     * triggered when shortcuts paging is changed
+     * @param {object} newParams Object containing length & start
+     */
+    changeShortcutsPaging: function (newParams) {
+      this.shortcutsSize = newParams.length;
+      this.shortcutsStart = newParams.start;
+      this.getShortcuts();
+    },
+    /* triggered when shortcuts search input is changed
+     * debounces the input so it only issues a request after keyups cease for 400ms */
+    getShortcutsTimeout: function () {
+      if (shortcutsInputTimeout) { clearTimeout(shortcutsInputTimeout); }
+      shortcutsInputTimeout = setTimeout(() => {
+        shortcutsInputTimeout = null;
+        this.getShortcuts();
+      }, 400);
+    },
+    /**
+     * triggered when a sortable shortcuts column is clicked
+     * if the sort field is the same as the current sort field, toggle the desc
+     * flag, otherwise set it to default (false)
+     * @param {string} sort The field to sort on
+     */
+    sortShortcuts: function (sort) {
+      this.shortcutsQuery.desc = this.shortcutsQuery.sortField === sort ? !this.shortcutsQuery.desc : false;
+      this.shortcutsQuery.sortField = sort;
+      this.getShortcuts();
+    },
     /* toggles shared var on a shortcut and saves the shortcut */
     toggleShortcutShared: function (shortcut) {
       this.$set(shortcut, 'shared', !shortcut.shared);
@@ -2933,7 +3063,7 @@ export default {
       this.$http.post('lookups', { var: data })
         .then((response) => {
           // add it to the list
-          this.shortcuts.push(response.data.var);
+          this.shortcuts.data.push(response.data.var);
           // clear the inputs and any error
           this.shortcutFormError = false;
           this.newShortcutName = '';
@@ -2987,7 +3117,7 @@ export default {
       this.$http.delete(`lookups/${shortcut.id}`)
         .then((response) => {
           // remove it from the array
-          this.shortcuts.splice(index, 1);
+          this.shortcuts.data.splice(index, 1);
           // display success message to user
           this.msg = response.data.text;
           this.msgType = 'success';
@@ -3235,10 +3365,21 @@ export default {
     },
     getShortcuts: function () {
       let url = 'lookups';
-      if (this.userId) { url += `?userId=${this.userId}`; }
-      this.$http.get(url)
+
+      let queryParams = {
+        length: this.shortcutsSize,
+        start: this.shortcutsStart,
+        desc: this.shortcutsQuery.desc,
+        sort: this.shortcutsQuery.sortField
+      };
+
+      if (this.shortcutsQuery.search) { queryParams.searchTerm = this.shortcutsQuery.search; }
+      if (this.userId) { queryParams.userId = this.userId; }
+
+      this.$http.get(url, { params: queryParams })
         .then((response) => {
           this.shortcuts = response.data;
+          this.shortcutsListError = '';
         }, (error) => {
           this.shortcutsListError = error.text || error;
         });
@@ -3264,6 +3405,7 @@ export default {
   },
   beforeDestroy: function () {
     if (clockInterval) { clearInterval(clockInterval); }
+    if (shortcutsInputTimeout) { clearTimeout(shortcutsInputTimeout); }
 
     // remove userId route query parameter so that when a user
     // comes back to this page, they are on their own settings
@@ -3278,12 +3420,6 @@ export default {
 </script>
 
 <style>
-/* fix dropdown location */
-.settings-page .dropdown-menu.field-typeahead {
-  margin-top: -15px;
-  left: 15px;
-}
-
 /* settings page, navbar, and content styles - */
 .settings-page {
   margin-top: 36px;

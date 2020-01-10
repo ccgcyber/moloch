@@ -33,11 +33,11 @@ sub doGeo {
     }
 
     if (! -f "GeoLite2-Country.mmdb") {
-        system("wget -O GeoLite2-Country.mmdb.gz 'https://updates.maxmind.com/app/update_secure?edition_id=GeoLite2-Country'; gunzip GeoLite2-Country.mmdb.gz");
+        system("wget https://s3.amazonaws.com/files.molo.ch/testing/GeoLite2-Country.mmdb");
     }
 
     if (! -f "GeoLite2-ASN.mmdb") {
-        system("wget -O GeoLite2-ASN.mmdb.gz 'https://updates.maxmind.com/app/update_secure?edition_id=GeoLite2-ASN'; gunzip GeoLite2-ASN.mmdb.gz");
+        system("wget https://s3.amazonaws.com/files.molo.ch/testing/GeoLite2-ASN.mmdb");
     }
 
     if (! -f "plugins/test.so" || (stat('../capture/moloch.h'))[9] > (stat('plugins/test.so'))[9]) {
@@ -45,17 +45,39 @@ sub doGeo {
     }
 }
 ################################################################################
+sub sortObj {
+    my ($parentkey,$obj) = @_;
+    for my $key (keys %{$obj}) {
+        my $r = ref $obj->{$key};
+        if ($r eq "HASH") {
+            sortObj($key, $obj->{$key});
+        } elsif ($r eq "ARRAY") {
+            if (substr($key, -3) eq "ASN") {
+                $obj->{$key} = [map {s/ .+$//g; $_} @{$obj->{$key}}];
+            }
+
+            next if (scalar (@{$obj->{$key}}) < 2);
+            next if ($key =~ /(packetPos|packetLen|cert)/);
+            if ("$parentkey.$key" =~ /.vlan|http.statuscode|icmp.type|icmp.code/) {
+                my @tmp = sort { $a <=> $b } (@{$obj->{$key}});
+                $obj->{$key} = \@tmp;
+            } else {
+                my @tmp = sort (@{$obj->{$key}});
+                $obj->{$key} = \@tmp;
+            }
+        } else {
+            if (substr($key, -3) eq "ASN") {
+                $obj->{$key} =~ s/ .+$//g;
+            }
+        }
+    }
+}
+################################################################################
 sub sortJson {
     my ($json) = @_;
 
     foreach my $session (@{$json->{sessions2}}) {
-        my $body = $session->{body};
-        foreach my $i ("tags", "srcMac", "dstMac", "srcOui", "dstOui") {
-            if (exists $body->{$i}) {
-                my @tmp = sort (@{$body->{$i}});
-                $body->{$i} = \@tmp;
-            }
-        }
+        sortObj("", $session->{body});
     }
     return $json;
 }
@@ -141,6 +163,7 @@ my ($json) = @_;
         if ($body->{dstIp} =~ /:/) {
             $body->{dstIp} = join ":", (unpack("H*", inet_pton(AF_INET6, $body->{dstIp})) =~ m/(....)/g );
         }
+
         if (exists $body->{dns} && exists $body->{dns}->{ip}) {
             for (my $i = 0; $i < @{$body->{dns}->{ip}}; $i++) {
                 if ($body->{dns}->{ip}[$i] =~ /:/) {
@@ -173,7 +196,10 @@ my ($json) = @_;
         }
     }
 
-    @{$json->{sessions2}} = sort {$a->{body}->{firstPacket} <=> $b->{body}->{firstPacket}} @{$json->{sessions2}};
+    @{$json->{sessions2}} = sort {
+        return $a->{body}->{firstPacket} <=> $b->{body}->{firstPacket} if ($a->{body}->{firstPacket} != $b->{body}->{firstPacket});
+        return $a->{body}->{srcIp} <=> $b->{body}->{srcIp};
+    } @{$json->{sessions2}};
 }
 
 ################################################################################
@@ -392,6 +418,8 @@ if ($main::cmd eq "--fix") {
     print "  --reip file ip newip  Create file.tmp, replace ip with newip\n";
     print "  --viewer              viewer tests\n";
     print "                        This will init local ES, import data, start a viewer, run tests\n";
+    print "  --viewerstart         viewer tests without reloading pcap\n";
+    print "  --fuzz                Run fuzzloch\n";
     print " [default]              Run each .pcap file thru ../capture/moloch-capture and compare to .test file\n";
 } elsif ($main::cmd =~ "^--viewer") {
     doGeo();

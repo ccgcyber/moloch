@@ -10,7 +10,7 @@
       :num-matching-sessions="sessions.recordsFiltered"
       :start="query.start"
       :timezone="user.settings.timezone"
-      @changeSearch="loadData">
+      @changeSearch="cancelAndLoad(true)">
     </moloch-search> <!-- /search navbar -->
 
     <!-- paging navbar -->
@@ -34,7 +34,7 @@
         :map-data="mapData"
         :primary="true"
         :timezone="user.settings.timezone"
-        @fetchMapData="loadData">
+        @fetchMapData="cancelAndLoad(true)">
       </moloch-visualizations> <!-- /session visualizations -->
 
       <!-- sticky (opened) sessions -->
@@ -51,8 +51,7 @@
       </transition> <!-- /sticky (opened) sessions -->
 
       <!-- sessions results -->
-      <table v-if="headers && headers.length"
-        class="table-striped sessions-table"
+      <table class="table-striped sessions-table"
         :style="tableStyle"
         id="sessionsTable">
         <thead>
@@ -84,30 +83,31 @@
                 </b-dropdown-header>
                 <b-dropdown-divider>
                 </b-dropdown-divider>
-                <template v-if="colVisMenuOpen"
-                  v-for="(group, key) in filteredFields">
-                  <b-dropdown-header
-                    :key="key"
-                    v-if="group.length"
-                    class="group-header">
-                    {{ key }}
-                  </b-dropdown-header>
-                  <template v-for="(field, k) in group">
-                    <b-dropdown-item
-                      :id="key + k + 'item'"
-                      :key="key + k + 'item'"
-                      :class="{'active':isColVisible(field.dbField) >= 0}"
-                      @click.stop.prevent="toggleColVis(field.dbField)">
-                      {{ field.friendlyName }}
-                      <small>({{ field.exp }})</small>
-                    </b-dropdown-item>
-                    <b-tooltip v-if="field.help"
-                      :key="key + k + 'tooltip'"
-                      :target="key + k + 'item'"
-                      placement="right"
-                      boundary="window">
-                      {{ field.help }}
-                    </b-tooltip>
+                <template v-if="colVisMenuOpen">
+                  <template v-for="(group, key) in filteredFields">
+                    <b-dropdown-header
+                      :key="key"
+                      v-if="group.length"
+                      class="group-header">
+                      {{ key }}
+                    </b-dropdown-header>
+                    <template v-for="(field, k) in group">
+                      <b-dropdown-item
+                        :id="key + k + 'item'"
+                        :key="key + k + 'item'"
+                        :class="{'active':isColVisible(field.dbField) >= 0}"
+                        @click.stop.prevent="toggleColVis(field.dbField)">
+                        {{ field.friendlyName }}
+                        <small>({{ field.exp }})</small>
+                      </b-dropdown-item>
+                      <b-tooltip v-if="field.help"
+                        :key="key + k + 'tooltip'"
+                        :target="key + k + 'item'"
+                        placement="right"
+                        boundary="window">
+                        {{ field.help }}
+                      </b-tooltip>
+                    </template>
                   </template>
                 </template>
               </b-dropdown> <!-- /column visibility button -->
@@ -191,190 +191,202 @@
               </b-dropdown> <!-- /column save button -->
             </th> <!-- /table options -->
             <!-- table headers -->
-            <th v-for="header of headers"
-              :key="header.dbField"
-              class="moloch-col-header"
-              :style="{'width': header.width + 'px'}"
-              :class="{'active':isSorted(header.sortBy || header.dbField) >= 0, 'info-col-header': header.dbField === 'info'}">
-              <!-- non-sortable column -->
-              <span v-if="header.dbField === 'info'"
-                class="cursor-pointer">
-                {{ header.friendlyName }}
-                <!-- info field visibility button -->
-                <b-dropdown
-                  size="sm"
-                  no-flip
-                  no-caret
-                  right
-                  class="col-vis-menu info-vis-menu pull-right"
-                  variant="theme-primary"
-                  @show="infoFieldVisMenuOpen = true"
-                  @hide="infoFieldVisMenuOpen = false">
-                  <template slot="button-content">
-                    <span class="fa fa-th-list"
-                      v-b-tooltip.hover
-                      title="Toggle visible fields">
-                    </span>
-                  </template>
-                  <b-dropdown-header>
-                    <input type="text"
-                      v-model="colQuery"
-                      class="form-control form-control-sm dropdown-typeahead"
-                      placeholder="Search for fields..."
-                    />
-                  </b-dropdown-header>
-                  <b-dropdown-divider>
-                  </b-dropdown-divider>
-                  <template>
-                    <b-dropdown-item
-                      id="infodefault"
-                      @click.stop.prevent="resetInfoVisibility">
-                      Moloch Default
-                    </b-dropdown-item>
-                    <b-tooltip target="infodefault"
-                      placement="left"
-                      boundary="window">
-                      Reset info column to default fields
-                    </b-tooltip>
-                  </template>
-                  <b-dropdown-divider>
-                  </b-dropdown-divider>
-                  <template v-if="infoFieldVisMenuOpen"
-                    v-for="(group, key) in filteredFields">
-                    <b-dropdown-header
-                      :key="key"
-                      v-if="group.length"
-                      class="group-header">
-                      {{ key }}
+            <template v-if="headers && headers.length">
+              <th v-for="header of headers"
+                :key="header.dbField"
+                class="moloch-col-header"
+                :style="{'width': header.width + 'px'}"
+                :class="{'active':isSorted(header.sortBy || header.dbField) >= 0, 'info-col-header': header.dbField === 'info'}">
+                <!-- non-sortable column -->
+                <span v-if="header.dbField === 'info'"
+                  class="cursor-pointer">
+                  {{ header.friendlyName }}
+                  <!-- info field visibility button -->
+                  <b-dropdown
+                    size="sm"
+                    no-flip
+                    no-caret
+                    right
+                    class="col-vis-menu info-vis-menu pull-right"
+                    variant="theme-primary"
+                    @show="infoFieldVisMenuOpen = true"
+                    @hide="infoFieldVisMenuOpen = false">
+                    <template slot="button-content">
+                      <span class="fa fa-th-list"
+                        v-b-tooltip.hover
+                        title="Toggle visible fields">
+                      </span>
+                    </template>
+                    <b-dropdown-header>
+                      <input type="text"
+                        v-model="colQuery"
+                        class="form-control form-control-sm dropdown-typeahead"
+                        placeholder="Search for fields..."
+                      />
                     </b-dropdown-header>
-                    <template v-for="(field, k) in group">
+                    <b-dropdown-divider>
+                    </b-dropdown-divider>
+                    <template>
                       <b-dropdown-item
-                        :id="key + k + 'infoitem'"
-                        :key="key + k + 'infoitem'"
-                        :class="{'active':isInfoVisible(field.dbField) >= 0}"
-                        @click.stop.prevent="toggleInfoVis(field.dbField)">
-                        {{ field.friendlyName }}
-                        <small>({{ field.exp }})</small>
+                        id="infodefault"
+                        @click.stop.prevent="resetInfoVisibility">
+                        Moloch Default
                       </b-dropdown-item>
-                      <b-tooltip v-if="field.help"
-                        :key="key + k + 'infotooltip'"
-                        :target="key + k + 'infoitem'"
+                      <b-tooltip target="infodefault"
                         placement="left"
                         boundary="window">
-                        {{ field.help }}
+                        Reset info column to default fields
                       </b-tooltip>
                     </template>
-                  </template>
-                </b-dropdown> <!-- /info field visibility button -->
-              </span> <!-- /non-sortable column -->
-              <!-- column dropdown menu -->
-              <b-dropdown
-                right
-                no-flip
-                size="sm"
-                class="pull-right">
-                <b-dropdown-item
-                  @click="toggleColVis(header.dbField, header.sortBy)">
-                  Hide Column
-                </b-dropdown-item>
-                <!-- single field column -->
-                <template v-if="!header.children && header.type !== 'seconds'">
-                  <b-dropdown-divider>
-                  </b-dropdown-divider>
+                    <b-dropdown-divider>
+                    </b-dropdown-divider>
+                    <template v-if="infoFieldVisMenuOpen">
+                      <template v-for="(group, key) in filteredInfoFields">
+                        <b-dropdown-header
+                          :key="key"
+                          v-if="group.length"
+                          class="group-header">
+                          {{ key }}
+                        </b-dropdown-header>
+                        <template v-for="(field, k) in group">
+                          <b-dropdown-item
+                            :id="key + k + 'infoitem'"
+                            :key="key + k + 'infoitem'"
+                            :class="{'active':isInfoVisible(field.dbField) >= 0}"
+                            @click.stop.prevent="toggleInfoVis(field.dbField)">
+                            {{ field.friendlyName }}
+                            <small>({{ field.exp }})</small>
+                          </b-dropdown-item>
+                          <b-tooltip v-if="field.help"
+                            :key="key + k + 'infotooltip'"
+                            :target="key + k + 'infoitem'"
+                            placement="left"
+                            boundary="window">
+                            {{ field.help }}
+                          </b-tooltip>
+                        </template>
+                      </template>
+                    </template>
+                  </b-dropdown> <!-- /info field visibility button -->
+                </span> <!-- /non-sortable column -->
+                <!-- column dropdown menu -->
+                <b-dropdown
+                  right
+                  no-flip
+                  size="sm"
+                  class="pull-right">
                   <b-dropdown-item
-                    @click="exportUnique(header.rawField || header.exp, 0)">
-                    Export Unique {{ header.friendlyName }}
+                    @click="toggleColVis(header.dbField, header.sortBy)">
+                    Hide Column
                   </b-dropdown-item>
-                  <b-dropdown-item
-                    @click="exportUnique(header.rawField || header.exp, 1)">
-                    Export Unique {{ header.friendlyName }} with counts
-                  </b-dropdown-item>
-                  <template v-if="header.portField">
-                    <b-dropdown-item
-                      @click="exportUnique(header.rawField || header.exp + ':' + header.portField, 0)">
-                      Export Unique {{ header.friendlyName }}:Ports
-                    </b-dropdown-item>
-                    <b-dropdown-item
-                      @click="exportUnique(header.rawField || header.exp + ':' + header.portField, 1)">
-                      Export Unique {{ header.friendlyName }}:Ports with counts
-                    </b-dropdown-item>
-                  </template>
-                  <b-dropdown-item
-                    @click="openSpiGraph(header.dbField)">
-                    Open {{ header.friendlyName }} in SPI Graph
-                  </b-dropdown-item>
-                  <b-dropdown-item
-                    @click="fieldExists(header.exp, '==')">
-                    Add {{ header.friendlyName }} EXISTS! to query
-                  </b-dropdown-item>
-                </template> <!-- /single field column -->
-                <!-- multiple field column -->
-                <template v-else-if="header.children && header.type !== 'seconds'">
-                  <span v-for="child in header.children"
-                    v-if="child"
-                    :key="child.dbField">
+                  <!-- single field column -->
+                  <template v-if="!header.children && header.type !== 'seconds'">
                     <b-dropdown-divider>
                     </b-dropdown-divider>
                     <b-dropdown-item
-                      @click="exportUnique(child.rawField || child.exp, 0)">
-                      Export Unique {{ child.friendlyName }}
+                      @click="exportUnique(header.rawField || header.exp, 0)">
+                      Export Unique {{ header.friendlyName }}
                     </b-dropdown-item>
                     <b-dropdown-item
-                      @click="exportUnique(child.rawField || child.exp, 1)">
-                      Export Unique {{ child.friendlyName }} with counts
+                      @click="exportUnique(header.rawField || header.exp, 1)">
+                      Export Unique {{ header.friendlyName }} with counts
                     </b-dropdown-item>
-                    <template v-if="child.portField">
+                    <template v-if="header.portField">
                       <b-dropdown-item
-                        @click="exportUnique(child.rawField || child.exp + ':' + child.portField, 0)">
-                        Export Unique {{ child.friendlyName }}:Ports
+                        @click="exportUnique(header.rawField || header.exp + ':' + header.portField, 0)">
+                        Export Unique {{ header.friendlyName }}:Ports
                       </b-dropdown-item>
                       <b-dropdown-item
-                        @click="exportUnique(child.rawField || child.exp + ':' + child.portField, 1)">
-                        Export Unique {{ child.friendlyName }}:Ports with counts
+                        @click="exportUnique(header.rawField || header.exp + ':' + header.portField, 1)">
+                        Export Unique {{ header.friendlyName }}:Ports with counts
                       </b-dropdown-item>
                     </template>
                     <b-dropdown-item
-                      @click="openSpiGraph(child.dbField)">
-                      Open {{ child.friendlyName }} in SPI Graph
+                      @click="openSpiGraph(header.dbField)">
+                      Open {{ header.friendlyName }} in SPI Graph
                     </b-dropdown-item>
                     <b-dropdown-item
-                      @click="fieldExists(child.exp, '==')">
-                      Add {{ child.friendlyName }} EXISTS! to query
+                      @click="fieldExists(header.exp, '==')">
+                      Add {{ header.friendlyName }} EXISTS! to query
                     </b-dropdown-item>
-                  </span>
-                </template> <!-- /multiple field column -->
-              </b-dropdown> <!-- /column dropdown menu -->
-              <!-- sortable column -->
-              <span v-if="(header.exp || header.sortBy) && !header.unsortable"
-                @mousedown="mouseDown"
-                @mouseup="mouseUp"
-                @click="sortBy($event, header.sortBy || header.dbField)"
-                class="cursor-pointer">
-                <div class="header-sort">
-                  <span v-if="isSorted(header.sortBy || header.dbField) < 0"
-                    class="fa fa-sort text-muted-more">
-                  </span>
-                  <span v-if="isSorted(header.sortBy || header.dbField) >= 0 && getSortOrder(header.sortBy || header.dbField) === 'asc'"
-                    class="fa fa-sort-asc">
-                  </span>
-                  <span v-if="isSorted(header.sortBy || header.dbField) >= 0 && getSortOrder(header.sortBy || header.dbField) === 'desc'"
-                    class="fa fa-sort-desc">
-                  </span>
-                </div>
-                <div class="header-text">
-                  {{ header.friendlyName }}
-                </div>
-              </span> <!-- /sortable column -->
-            </th> <!-- /table headers -->
-            <button type="button"
-              v-if="showFitButton && !loading"
-              class="btn btn-xs btn-theme-quaternary fit-btn"
-              @click="fitTable"
-              v-b-tooltip.hover
-              title="Fit the table to the current window size">
-              <span class="fa fa-arrows-h">
-              </span>
-            </button>
+                    <b-dropdown-item
+                      @click="pivot(header.dbField, header.exp)">
+                      Pivot on {{ header.friendlyName }}
+                    </b-dropdown-item>
+                  </template> <!-- /single field column -->
+                  <!-- multiple field column -->
+                  <template v-else-if="header.children && header.type !== 'seconds'">
+                    <span v-for="(child, key) in header.children"
+                      :key="`child${key}`">
+                      <template v-if="child">
+                        <b-dropdown-divider>
+                        </b-dropdown-divider>
+                        <b-dropdown-item
+                          @click="exportUnique(child.rawField || child.exp, 0)">
+                          Export Unique {{ child.friendlyName }}
+                        </b-dropdown-item>
+                        <b-dropdown-item
+                          @click="exportUnique(child.rawField || child.exp, 1)">
+                          Export Unique {{ child.friendlyName }} with counts
+                        </b-dropdown-item>
+                        <template v-if="child.portField">
+                          <b-dropdown-item
+                            @click="exportUnique(child.rawField || child.exp + ':' + child.portField, 0)">
+                            Export Unique {{ child.friendlyName }}:Ports
+                          </b-dropdown-item>
+                          <b-dropdown-item
+                            @click="exportUnique(child.rawField || child.exp + ':' + child.portField, 1)">
+                            Export Unique {{ child.friendlyName }}:Ports with counts
+                          </b-dropdown-item>
+                        </template>
+                        <b-dropdown-item
+                          @click="openSpiGraph(child.dbField)">
+                          Open {{ child.friendlyName }} in SPI Graph
+                        </b-dropdown-item>
+                        <b-dropdown-item
+                          @click="fieldExists(child.exp, '==')">
+                          Add {{ child.friendlyName }} EXISTS! to query
+                        </b-dropdown-item>
+                        <b-dropdown-item
+                          @click="pivot(child.dbField, child.exp)">
+                          Pivot on {{ child.friendlyName }}
+                        </b-dropdown-item>
+                      </template>
+                    </span>
+                  </template> <!-- /multiple field column -->
+                </b-dropdown> <!-- /column dropdown menu -->
+                <!-- sortable column -->
+                <span v-if="(header.exp || header.sortBy) && !header.unsortable"
+                  @mousedown="mouseDown"
+                  @mouseup="mouseUp"
+                  @click="sortBy($event, header.sortBy || header.dbField)"
+                  class="cursor-pointer">
+                  <div class="header-sort">
+                    <span v-if="isSorted(header.sortBy || header.dbField) < 0"
+                      class="fa fa-sort text-muted-more">
+                    </span>
+                    <span v-if="isSorted(header.sortBy || header.dbField) >= 0 && getSortOrder(header.sortBy || header.dbField) === 'asc'"
+                      class="fa fa-sort-asc">
+                    </span>
+                    <span v-if="isSorted(header.sortBy || header.dbField) >= 0 && getSortOrder(header.sortBy || header.dbField) === 'desc'"
+                      class="fa fa-sort-desc">
+                    </span>
+                  </div>
+                  <div class="header-text">
+                    {{ header.friendlyName }}
+                  </div>
+                </span> <!-- /sortable column -->
+              </th> <!-- /table headers -->
+              <button type="button"
+                v-if="showFitButton && !loading"
+                class="btn btn-xs btn-theme-quaternary fit-btn"
+                @click="fitTable"
+                v-b-tooltip.hover
+                title="Fit the table to the current window size">
+                <span class="fa fa-arrows-h">
+                </span>
+              </button>
+            </template>
           </tr>
         </thead>
         <tbody class="small">
@@ -449,7 +461,9 @@
 
       <!-- loading overlay -->
       <moloch-loading
-        v-if="loading && !error">
+        :can-cancel="true"
+        v-if="loading && !error"
+        @cancel="cancelAndLoad(false)">
       </moloch-loading> <!-- /loading overlay -->
 
       <!-- page error -->
@@ -474,10 +488,16 @@
 </template>
 
 <script>
-import UserService from '../users/UserService';
-import MolochSearch from '../search/Search';
+// IMPORTANT: don't change the order of imports (it messes up the flot graph)
+import Vue from 'vue';
+// import services
 import FieldService from '../search/FieldService';
 import SessionsService from './SessionsService';
+import UserService from '../users/UserService';
+import ConfigService from '../utils/ConfigService';
+import Utils from '../utils/utils';
+// import components
+import MolochSearch from '../search/Search';
 import customCols from './customCols.json';
 import MolochPaging from '../utils/Pagination';
 import ToggleBtn from '../utils/ToggleBtn';
@@ -487,14 +507,9 @@ import MolochNoResults from '../utils/NoResults';
 import MolochSessionDetail from './SessionDetail';
 import MolochVisualizations from '../visualizations/Visualizations';
 import MolochStickySessions from './StickySessions';
-
+// import external
 import Sortable from 'sortablejs';
 import '../../../../public/colResizable.js';
-
-const defaultTableState = {
-  order: [['firstPacket', 'desc']],
-  visibleHeaders: ['firstPacket', 'lastPacket', 'src', 'srcPort', 'dst', 'dstPort', 'totPackets', 'dbby', 'node', 'info']
-};
 
 let defaultInfoFields = JSON.parse(JSON.stringify(customCols.info.children));
 
@@ -522,6 +537,9 @@ const defaultColWidths = {
   'node': 100,
   'info': 250
 };
+
+// save a pending promise to be able to cancel it
+let pendingPromise;
 
 export default {
   name: 'Sessions',
@@ -601,16 +619,10 @@ export default {
       return this.$store.state.user;
     },
     filteredFields: function () {
-      let filteredGroupedFields = {};
-
-      for (let group in this.groupedFields) {
-        filteredGroupedFields[group] = this.$options.filters.searchFields(
-          this.colQuery,
-          this.groupedFields[group]
-        );
-      }
-
-      return filteredGroupedFields;
+      return this.filterFields(false, true, false);
+    },
+    filteredInfoFields: function () {
+      return this.filterFields(false, true, true);
     },
     views: function () {
       return this.$store.state.views;
@@ -633,6 +645,37 @@ export default {
   },
   methods: {
     /* exposed page functions ---------------------------------------------- */
+    /* SESSIONS DATA */
+    /**
+     * Cancels the pending session query (if it's still pending) and runs a new
+     * query if requested
+     * @param {bool} runNewQuery  Whether to run a new sessions query after
+     *                            canceling the request
+     * @param {bool} updateTable  Whether the table needs updating
+     */
+    cancelAndLoad: function (runNewQuery, updateTable) {
+      if (pendingPromise) {
+        ConfigService.cancelEsTask(pendingPromise.cancelId)
+          .then((response) => {
+            pendingPromise.source.cancel();
+            pendingPromise = null;
+
+            if (!runNewQuery) {
+              this.loading = false;
+              if (!this.sessions.data) {
+                // show a page error if there is no data on the page
+                this.error = 'You canceled the search';
+              }
+              return;
+            }
+
+            this.loadData(updateTable);
+          });
+      } else if (runNewQuery) {
+        this.loadData(updateTable);
+      }
+    },
+
     /* SESSION DETAIL */
     /**
      * Toggles the display of the session detail for each session
@@ -730,7 +773,7 @@ export default {
 
       this.saveTableState();
 
-      this.loadData(true);
+      this.cancelAndLoad(true, true);
     },
     /**
      * Determines the sort order of a column
@@ -859,7 +902,7 @@ export default {
       this.saveTableState();
 
       if (reloadData) { // need data from the server
-        this.loadData(true);
+        this.cancelAndLoad(true, true);
       } else { // have all the data, just need to reload the table
         this.reloadTable();
       }
@@ -903,8 +946,8 @@ export default {
       this.loading = true;
 
       if (index === -1) { // default columns
-        this.tableState.visibleHeaders = defaultTableState.visibleHeaders.slice();
-        this.tableState.order = defaultTableState.order.slice();
+        this.tableState.visibleHeaders = Utils.getDefaultTableState().visibleHeaders.slice();
+        this.tableState.order = Utils.getDefaultTableState().order.slice();
         this.colWidths = {}; // clear out column widths to load defaults
         setTimeout(() => { this.saveColumnWidths(); });
         // reset field widths
@@ -921,7 +964,7 @@ export default {
 
       this.saveTableState();
 
-      this.loadData(true);
+      this.cancelAndLoad(true, true);
     },
     /**
      * Deletes a previously saved custom column configuration
@@ -1024,7 +1067,7 @@ export default {
       this.saveInfoFields();
 
       if (reloadData) { // need data from the server
-        this.loadData(true);
+        this.cancelAndLoad(true, true);
       } else { // have all the data, just need to reload the table
         this.reloadTable();
       }
@@ -1040,7 +1083,7 @@ export default {
       // unset the user setting for info fields
       this.saveInfoFields();
       // load the table data (assume missing fields)
-      this.loadData(true);
+      this.cancelAndLoad(true, true);
     },
     /* Saves the info fields on the user settings */
     saveInfoFields: function () {
@@ -1092,6 +1135,36 @@ export default {
       SessionsService.exportUniqueValues(exp, counts, this.$route.query);
     },
     /**
+     * Opens a new sessions page with a list of values as the search expression
+     * @param {string} dbField  The key to access the data from sessions
+     * @param {string} exp      The field to add to the search expression
+     */
+    pivot: function (dbField, exp) {
+      let values = [];
+      let existingVals = {}; // save map of existing values for deduping
+      for (let session of this.sessions.data) {
+        if (session[dbField]) {
+          let value = session[dbField];
+          if (existingVals[value]) { continue; }
+          values.push(value);
+          existingVals[value] = true;
+        }
+      }
+
+      const valueStr = `[${values.join(',')}]`;
+      const expression = this.$options.filters.buildExpression(exp, valueStr, '==');
+
+      const routeData = this.$router.resolve({
+        path: '/sessions',
+        query: {
+          ...this.$route.query,
+          expression: expression
+        }
+      });
+
+      window.open(routeData.href, '_blank');
+    },
+    /**
      * Adds field == EXISTS! to the search expression
      * @param {string} field  The field name
      * @param {string} op     The relational operator
@@ -1099,6 +1172,27 @@ export default {
     fieldExists: function (field, op) {
       const fullExpression = this.$options.filters.buildExpression(field, 'EXISTS!', op);
       this.$store.commit('addToExpression', { expression: fullExpression });
+    },
+    /**
+     * Filters grouped fields based on a query string
+     * @param {boolean} excludeTokens   Whether to exclude token fields
+     * @param {boolean} excludeFilename Whether to exclude the filename field
+     * @param {boolean} excludeInfo     Whether to exclude the special info "field"
+     */
+    filterFields: function (excludeTokens, excludeFilename, excludeInfo) {
+      let filteredGroupedFields = {};
+
+      for (let group in this.groupedFields) {
+        filteredGroupedFields[group] = this.$options.filters.searchFields(
+          this.colQuery,
+          this.groupedFields[group],
+          excludeTokens,
+          excludeFilename,
+          excludeInfo
+        );
+      }
+
+      return filteredGroupedFields;
     },
 
     /* helper functions ---------------------------------------------------- */
@@ -1126,7 +1220,7 @@ export default {
           this.$store.commit('setSessionsTableState', this.tableState);
           if (Object.keys(this.tableState).length === 0 ||
             !this.tableState.visibleHeaders || !this.tableState.order) {
-            this.tableState = JSON.parse(JSON.stringify(defaultTableState));
+            this.tableState = JSON.parse(JSON.stringify(Utils.getDefaultTableState()));
           } else if (this.tableState.visibleHeaders[0] === '') {
             this.tableState.visibleHeaders.shift();
           }
@@ -1179,7 +1273,7 @@ export default {
       if (!this.user.settings.manualQuery ||
         !JSON.parse(this.user.settings.manualQuery) ||
         componentInitialized) {
-        this.loadData();
+        this.cancelAndLoad(true);
       } else {
         this.loading = false;
         this.error = 'Now, issue a query!';
@@ -1202,17 +1296,19 @@ export default {
         expandedSessions.push(session.id);
       }
 
-      this.sorts = this.tableState.order || JSON.parse(JSON.stringify(defaultTableState.order));
+      this.sorts = this.tableState.order || JSON.parse(JSON.stringify(Utils.getDefaultTableState().order));
 
       if (this.viewChanged && this.views) {
+        this.mapHeadersToFields();
+
         for (let view in this.views) {
           if (view === this.query.view && this.views[view].sessionsColConfig) {
             this.tableState = JSON.parse(JSON.stringify(this.views[view].sessionsColConfig));
-            this.mapHeadersToFields();
             this.sorts = this.tableState.order;
             this.saveTableState();
           }
         }
+
         this.updateTable = true;
         this.viewChanged = false;
       } else {
@@ -1241,41 +1337,51 @@ export default {
         }
       }
 
-      SessionsService.get(this.query)
-        .then((response) => {
-          this.stickySessions = []; // clear sticky sessions
-          this.error = '';
-          this.loading = false;
-          this.sessions = response.data;
-          this.mapData = response.data.map;
-          this.graphData = response.data.graph;
+      // create unique cancel id to make canel req for corresponding es task
+      const cancelId = Utils.createRandomString();
+      this.query.cancelId = cancelId;
 
-          if (updateTable) { this.reloadTable(); }
+      const source = Vue.axios.CancelToken.source();
+      const cancellablePromise = SessionsService.get(this.query, source.token);
 
-          if (parseInt(this.$route.query.openAll) === 1) {
-            this.openAll();
-          } else { // open the previously opened sessions
-            for (let sessionId of expandedSessions) {
-              for (let session of this.sessions.data) {
-                if (session.id === sessionId) {
-                  session.expanded = true;
-                  this.stickySessions.push(session);
-                }
+      // set pending promise info so it can be cancelled
+      pendingPromise = { cancellablePromise, source, cancelId };
+
+      cancellablePromise.then((response) => {
+        pendingPromise = null;
+        this.stickySessions = []; // clear sticky sessions
+        this.error = '';
+        this.loading = false;
+        this.sessions = response.data;
+        this.mapData = response.data.map;
+        this.graphData = response.data.graph;
+
+        if (updateTable) { this.reloadTable(); }
+
+        if (parseInt(this.$route.query.openAll) === 1) {
+          this.openAll();
+        } else { // open the previously opened sessions
+          for (let sessionId of expandedSessions) {
+            for (let session of this.sessions.data) {
+              if (session.id === sessionId) {
+                session.expanded = true;
+                this.stickySessions.push(session);
               }
             }
           }
+        }
 
-          // initialize resizable columns now that there is data
-          if (!colResizeInitialized) { this.initializeColResizable(); }
+        // initialize resizable columns now that there is data
+        if (!colResizeInitialized) { this.initializeColResizable(); }
 
-          // initialize sortable table
-          if (!colDragDropInitialized) { this.initializeColDragDrop(); }
-        })
-        .catch((error) => {
-          this.sessions.data = undefined;
-          this.error = error.text || error;
-          this.loading = false;
-        });
+        // initialize sortable table
+        if (!colDragDropInitialized) { this.initializeColDragDrop(); }
+      }).catch((error) => {
+        pendingPromise = null;
+        this.sessions.data = undefined;
+        this.error = error.text || error;
+        this.loading = false;
+      });
     },
     /**
      * Saves the table state
@@ -1401,6 +1507,8 @@ export default {
     },
     /* Initializes column drag and drop */
     initializeColDragDrop: function () {
+      if (!this.$refs.draggableColumns) { return; }
+
       colDragDropInitialized = true;
       draggableColumns = Sortable.create(this.$refs.draggableColumns, {
         animation: 100,
@@ -1509,7 +1617,7 @@ export default {
     changePaging: function (args) {
       this.query.start = args.start;
       this.query.length = args.length;
-      this.loadData();
+      this.cancelAndLoad(true);
     }
   },
   beforeDestroy: function () {
@@ -1518,6 +1626,11 @@ export default {
     componentInitialized = false;
     colResizeInitialized = false;
     colDragDropInitialized = false;
+
+    if (pendingPromise) {
+      pendingPromise.source.cancel();
+      pendingPromise = null;
+    }
 
     if (timeout) { clearTimeout(timeout); }
 

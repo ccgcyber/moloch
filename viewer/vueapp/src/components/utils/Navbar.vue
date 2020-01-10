@@ -13,7 +13,7 @@
       <router-link
         :to="{ path: helpLink.href, query: helpLink.query, params: { nav: true } }">
         <div id="helpTooltipContainer">
-          <img src="../../assets/logo.png"
+          <img src="@/assets/logo.png"
             class="moloch-logo"
             alt="hoot"
             v-b-tooltip.hover
@@ -154,12 +154,15 @@ export default {
       return helpLink;
     },
     activePage: function () {
+      let activeLink;
       for (let page in this.menu) {
         let link = this.menu[page].link;
         if (link === this.$route.path.split('/')[1]) {
-          return link;
+          activeLink = link;
+          break;
         }
       }
+      return activeLink;
     },
     user: function () {
       return this.$store.state.user;
@@ -195,7 +198,7 @@ export default {
 
 <style scoped>
 nav.navbar {
-  z-index: 6;
+  z-index: 7;
   max-height: 36px;
   min-height: 36px;
 }

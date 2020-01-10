@@ -34,14 +34,15 @@ var internals = {fileId2File: {},
                  lookupsCache: {},
                  nodesStatsCache: {},
                  nodesInfoCache: {},
+                 masterCache: {},
                  qInProgress: 0,
-                 apiVersion: "6.6",
+                 apiVersion: "6.7",
                  q: []};
 
 exports.initialize = function (info, cb) {
-  internals.dontMapTags = info.dontMapTags === 'true' || info.dontMapTags === true || false;
+  internals.multiES = info.multiES === 'true' || info.multiES === true || false;
   internals.debug = info.debug || 0;
-  delete info.dontMapTags;
+  delete info.multiES;
   delete info.debug;
 
   internals.info = info;
@@ -60,6 +61,9 @@ exports.initialize = function (info, cb) {
 
   internals.nodeName = info.nodeName;
   delete info.nodeName;
+
+  internals.esProfile = info.esProfile || false;
+  delete info.esProfile;
 
   var esSSLOptions =  {rejectUnauthorized: !internals.info.insecure, ca: internals.info.ca};
   if(info.esClientKey) {
@@ -84,8 +88,8 @@ exports.initialize = function (info, cb) {
     if (err) {
       console.log(err, data);
     }
-    if (data.version.number.match(/^(6.[0-5]|[0-5]|7)/)) {
-      console.log("ERROR - ES", data.version.number, "not supported, ES 6.6.x or later required.");
+    if (data.version.number.match(/^(6.[0-6]|[0-5]|8)/)) {
+      console.log("ERROR - ES", data.version.number, "not supported, ES 6.7.x or later required.");
       process.exit();
       throw new Error("Exiting");
     }
@@ -107,9 +111,15 @@ exports.initialize = function (info, cb) {
   });
 
   // Replace tag implementation
-  if (internals.dontMapTags) {
+  if (internals.multiES) {
     exports.isLocalView = function(node, yesCB, noCB) {return noCB(); };
     internals.prefix = "MULTIPREFIX_";
+  }
+
+  // Update aliases cache so -shrink works
+  if (internals.nodeName !== undefined) {
+    exports.getAliasesCache('sessions2-*', () => {});
+    setInterval(() => {exports.getAliasesCache('sessions2-*', () => {});}, 2*60*1000);
   }
 };
 
@@ -131,11 +141,17 @@ function fixIndex(index) {
     });
   }
 
-  if (index.lastIndexOf(internals.prefix, 0) === 0) {
-    return index;
-  } else {
-    return internals.prefix + index;
+  // If prefix isn't there, add it
+  if (index.lastIndexOf(internals.prefix, 0) !== 0) {
+    index = internals.prefix + index;
   }
+
+  // If the index doesn't exist but the shrink version does exist, add -shrink
+  if (internals.aliasesCache && !internals.aliasesCache[index] && internals.aliasesCache[index + '-shrink']) {
+    index += '-shrink';
+  }
+
+  return index;
 }
 
 exports.merge = function(to, from) {
@@ -163,13 +179,46 @@ exports.indexNow = function (index, type, id, document, cb) {
 };
 
 exports.search = function (index, type, query, options, cb) {
-  if (!cb) {
+  if (!cb && typeof options === 'function') {
     cb = options;
     options = undefined;
   }
-  var params = {index: fixIndex(index), type: type, body: query};
+  query.profile = internals.esProfile;
+
+  let params = {
+    index: fixIndex(index),
+    type: type,
+    body: query, rest_total_hits_as_int: true
+  };
+
   exports.merge(params, options);
+
   return internals.elasticSearchClient.search(params, cb);
+};
+
+exports.cancelByOpaqueId = function(cancelId, cb) {
+  internals.elasticSearchClient.tasks.list({detailed: "false", group_by: "parents"})
+    .then((results) => {
+      let found = false;
+
+      for (let resultKey in results.tasks) {
+        let result = results.tasks[resultKey];
+        if (result.headers &&
+          result.headers['X-Opaque-Id'] &&
+          result.headers['X-Opaque-Id'] === cancelId) {
+          found = true;
+          internals.elasticSearchClient.tasks.cancel({ taskId: resultKey }, () => {});
+        }
+      }
+
+      // not found, return error
+      if (!found) { return cb('cancel id not found, cannot cancel es task(s)'); }
+
+      return cb();
+    })
+    .catch((error) => {
+      return cb(error);
+    });
 };
 
 function searchScrollInternal(index, type, query, options, cb) {
@@ -183,6 +232,7 @@ function searchScrollInternal(index, type, query, options, cb) {
   var params = {scroll: '5m'};
   exports.merge(params, options);
   query.size = 1000; // Get 1000 items per scroll call
+  query.profile = internals.esProfile;
   exports.search(index, type, query, params,
     function getMoreUntilDone(error, response) {
       if (error) {
@@ -239,18 +289,20 @@ exports.searchScroll = function (index, type, query, options, cb) {
 };
 
 exports.searchPrimary = function (index, type, query, options, cb) {
-  if (!cb) {
-    cb = options;
-    options = undefined;
+  // ALW - FIXME - 6.1+ has removed primary_first :(
+  let params = { preference: 'primaries', ignore_unavailable: 'true' };
+
+  if (options && options.cancelId) {
+    // set X-Opaque-Id header on the params so the task can be canceled
+    params.headers = { 'X-Opaque-Id': options.cancelId };
   }
 
-  // ALW - FIXME - 6.1+ has removed primary_first :(
-  var params = {preference: "_primary_first", ignore_unavailable: "true"};
   exports.merge(params, options);
+  delete params.cancelId;
   return exports.searchScroll(index, type, query, params, cb);
 };
 
-exports.msearch = function (index, type, queries, cb) {
+exports.msearch = function (index, type, queries, options, cb) {
   var body = [];
 
   for(var i = 0, ilen = queries.length; i < ilen; i++){
@@ -258,10 +310,18 @@ exports.msearch = function (index, type, queries, cb) {
     body.push(queries[i]);
   }
 
-  return internals.elasticSearchClient.msearch({body: body}, cb);
+  let params = {body: body, rest_total_hits_as_int: true};
+
+  if (options && options.cancelId) {
+    // set X-Opaque-Id header on the params so the task can be canceled
+    params.headers = { 'X-Opaque-Id': options.cancelId };
+  }
+
+  return internals.elasticSearchClient.msearch(params, cb);
 };
 
 exports.scroll = function (params, callback) {
+  params.rest_total_hits_as_int = true;
   return internals.elasticSearchClient.scroll(params, callback);
 };
 
@@ -278,7 +338,7 @@ exports.deleteByQuery = function (index, type, query, cb) {
 };
 
 exports.deleteDocument = function (index, type, id, options, cb) {
-  if (!cb) {
+  if (!cb && typeof options === 'function') {
     cb = options;
     options = undefined;
   }
@@ -289,7 +349,7 @@ exports.deleteDocument = function (index, type, id, options, cb) {
 
 // This API does not call fixIndex
 exports.deleteIndex = function (index, options, cb) {
-  if (!cb) {
+  if (!cb && typeof options === 'function') {
     cb = options;
     options = undefined;
   }
@@ -300,7 +360,7 @@ exports.deleteIndex = function (index, options, cb) {
 
 // This API does not call fixIndex
 exports.optimizeIndex = function (index, options, cb) {
-  if (!cb) {
+  if (!cb && typeof options === 'function') {
     cb = options;
     options = undefined;
   }
@@ -311,7 +371,7 @@ exports.optimizeIndex = function (index, options, cb) {
 
 // This API does not call fixIndex
 exports.closeIndex = function (index, options, cb) {
-  if (!cb) {
+  if (!cb && typeof options === 'function') {
     cb = options;
     options = undefined;
   }
@@ -322,13 +382,19 @@ exports.closeIndex = function (index, options, cb) {
 
 // This API does not call fixIndex
 exports.openIndex = function (index, options, cb) {
-  if (!cb) {
+  if (!cb && typeof options === 'function') {
     cb = options;
     options = undefined;
   }
   var params = {index: index};
   exports.merge(params, options);
   return internals.elasticSearchClient.indices.open(params, cb);
+};
+
+exports.shrinkIndex = function (index, options, cb) {
+  let params = { index: index, target: `${index}-shrink` };
+  exports.merge(params, options);
+  return internals.elasticSearchClient.indices.shrink(params, cb);
 };
 
 exports.indexStats = function(index, cb) {
@@ -375,6 +441,21 @@ exports.indicesSettings = function(cb, index) {
   return internals.elasticSearchClient.indices.getSettings({flatSettings: true, index: fixIndex(index)}, cb);
 };
 
+exports.setIndexSettings = (index, options, cb) => {
+  return internals.elasticSearchClient.indices.putSettings(
+    {
+      index: index,
+      body: options.body,
+      timeout: '10m',
+      masterTimeout: '10m'
+    },
+    () => {
+      internals.healthCache = {};
+      if (cb) { cb(); }
+    }
+  );
+};
+
 exports.shards = function(cb) {
   return internals.elasticSearchClient.cat.shards({format: "json", bytes: "b", h: "index,shard,prirep,state,docs,store,ip,node,ur,uf,fm,sm"}, cb);
 };
@@ -383,20 +464,28 @@ exports.recovery = function(sortField, cb) {
   return internals.elasticSearchClient.cat.recovery({format: "json", bytes: "b", s: sortField}, cb);
 };
 
+exports.master = function(cb) {
+  return internals.elasticSearchClient.cat.master({format: "json"}, cb);
+};
+
 exports.getClusterSettings = function(options, cb) {
   return internals.elasticSearchClient.cluster.getSettings(options, cb);
 };
 
 exports.putClusterSettings = function(options, cb) {
+  options.timeout = '10m';
+  options.masterTimeout = '10m';
   return internals.elasticSearchClient.cluster.putSettings(options, cb);
 };
 
 exports.tasks = function(cb) {
-  return internals.elasticSearchClient.tasks.list({detailed: "true", group_by: "parents"}, cb);
+  return internals.elasticSearchClient.tasks.list({detailed: "false", group_by: "parents"}, cb);
 };
 
 exports.taskCancel = function(taskId, cb) {
-  return internals.elasticSearchClient.tasks.cancel({taskId: taskId}, cb);
+  let params = {};
+  if (taskId) { params.taskId = taskId; }
+  return internals.elasticSearchClient.tasks.cancel(params, cb);
 };
 
 exports.nodesStats = function (options, cb) {
@@ -408,12 +497,12 @@ exports.nodesInfo = function (options, cb) {
 };
 
 exports.update = function (index, type, id, document, options, cb) {
-  if (!cb) {
+  if (!cb && typeof options === 'function') {
     cb = options;
     options = undefined;
   }
 
-  var params = {index: fixIndex(index), type: type, body: document, id: id};
+  var params = {index: fixIndex(index), type: type, body: document, id: id, timeout: '10m'};
   exports.merge(params, options);
   return internals.elasticSearchClient.update(params, cb);
 };
@@ -422,12 +511,28 @@ exports.close = function () {
   return internals.elasticSearchClient.close();
 };
 
+exports.reroute = function (cb) {
+  return internals.elasticSearchClient.cluster.reroute({
+    timeout: '10m',
+    masterTimeout: '10m',
+    retryFailed: true
+  }, cb);
+};
+
 exports.flush = function (index, cb) {
-  return internals.usersElasticSearchClient.indices.flush({index: fixIndex(index)}, cb);
+  if (index === 'users') {
+    return internals.usersElasticSearchClient.indices.flush({index: fixIndex(index)}, cb);
+  } else {
+    return internals.elasticSearchClient.indices.flush({index: fixIndex(index)}, cb);
+  }
 };
 
 exports.refresh = function (index, cb) {
-  return internals.usersElasticSearchClient.indices.refresh({index: fixIndex(index)}, cb);
+  if (index === 'users') {
+    return internals.usersElasticSearchClient.indices.refresh({index: fixIndex(index)}, cb);
+  } else {
+    return internals.elasticSearchClient.indices.refresh({index: fixIndex(index)}, cb);
+  }
 };
 
 exports.addTagsToSession = function (index, id, tags, node, cb) {
@@ -435,7 +540,8 @@ exports.addTagsToSession = function (index, id, tags, node, cb) {
     retry_on_conflict: 3,
     index: fixIndex(index),
     type: 'session',
-    id: id
+    id: id,
+    timeout: '10m'
   };
 
   let script = `
@@ -472,7 +578,8 @@ exports.removeTagsFromSession = function (index, id, tags, node, cb) {
     retry_on_conflict: 3,
     index: fixIndex(index),
     type: 'session',
-    id: id
+    id: id,
+    timeout: '10m'
   };
 
   let script = `
@@ -509,7 +616,8 @@ exports.addHuntToSession = function (index, id, huntId, huntName, cb) {
     retry_on_conflict: 3,
     index: fixIndex(index),
     type: 'session',
-    id: id
+    id: id,
+    timeout: '10m'
   };
 
   let script = `
@@ -552,7 +660,7 @@ exports.flushCache = function () {
   delete internals.aliasesCache;
 };
 exports.searchUsers = function(query, cb) {
-  return internals.usersElasticSearchClient.search({index: internals.usersPrefix + 'users', type: 'user', body: query}, cb);
+  return internals.usersElasticSearchClient.search({index: internals.usersPrefix + 'users', type: 'user', body: query, rest_total_hits_as_int: true}, cb);
 };
 
 exports.getUser = function (name, cb) {
@@ -590,10 +698,16 @@ exports.deleteUser = function (name, cb) {
 
 exports.setUser = function(name, doc, cb) {
   delete internals.usersCache[name];
-  return internals.usersElasticSearchClient.index({index: internals.usersPrefix + 'users', type: 'user', body: doc, id: name, refresh: true}, (err) => {
+  return internals.usersElasticSearchClient.index({index: internals.usersPrefix + 'users', type: 'user', body: doc, id: name, refresh: true, timeout: '10m'}, (err) => {
     delete internals.usersCache[name]; // Delete again after db says its done refreshing
     cb(err);
   });
+};
+
+exports.setLastUsed = function(name, now, cb) {
+  var params = {index: internals.usersPrefix + 'users', type: 'user', body: {doc: {lastUsed: now}}, id: name};
+
+  return internals.usersElasticSearchClient.update(params, cb);
 };
 
 function twoDigitString(value) {
@@ -607,10 +721,10 @@ exports.historyIt = function(doc, cb) {
     twoDigitString(d.getUTCFullYear()%100) + 'w' +
     twoDigitString(Math.floor((d - jan) / 604800000));
 
-  return internals.elasticSearchClient.index({index:iname, type:'history', body:doc, refresh: true}, cb);
+  return internals.elasticSearchClient.index({index:iname, type:'history', body:doc, refresh: true, timeout: '10m'}, cb);
 };
 exports.searchHistory = function(query, cb) {
-  return internals.elasticSearchClient.search({index:fixIndex('history_v1-*'), type:"history", body:query}, cb);
+  return internals.elasticSearchClient.search({index:fixIndex('history_v1-*'), type:"history", body:query, rest_total_hits_as_int: true}, cb);
 };
 exports.numberOfLogs = function(cb) {
   return internals.elasticSearchClient.count({index:fixIndex('history_v1-*'), type:"history", ignoreUnavailable:true}, cb);
@@ -620,10 +734,10 @@ exports.deleteHistoryItem = function (id, index, cb) {
 };
 
 exports.createHunt = function (doc, cb) {
-  return internals.elasticSearchClient.index({index:fixIndex('hunts'), type:'hunt', body:doc, refresh: "wait_for"}, cb);
+  return internals.elasticSearchClient.index({index:fixIndex('hunts'), type:'hunt', body:doc, refresh: "wait_for", timeout: '10m'}, cb);
 };
 exports.searchHunt = function (query, cb) {
-  return internals.elasticSearchClient.search({index:fixIndex('hunts'), type:'hunt', body:query}, cb);
+  return internals.elasticSearchClient.search({index:fixIndex('hunts'), type:'hunt', body:query, rest_total_hits_as_int: true}, cb);
 };
 exports.numberOfHunts = function(cb) {
   return internals.elasticSearchClient.count({index:fixIndex('hunts'), type:'hunt'}, cb);
@@ -632,15 +746,15 @@ exports.deleteHuntItem = function (id, cb) {
   return internals.elasticSearchClient.delete({index:fixIndex('hunts'), type:'hunt', id:id, refresh:true}, cb);
 };
 exports.setHunt = function (id, doc, cb) {
-  return internals.elasticSearchClient.index({index:fixIndex('hunts'), type: 'hunt', body:doc, id: id, refresh:true}, cb);
+  return internals.elasticSearchClient.index({index:fixIndex('hunts'), type: 'hunt', body:doc, id: id, refresh:true, timeout: '10m'}, cb);
 };
 
 exports.searchLookups = function (query, cb) {
-  return internals.elasticSearchClient.search({index:fixIndex('lookups'), type:'lookup', body:query}, cb);
+  return internals.elasticSearchClient.search({index:fixIndex('lookups'), type:'lookup', body:query, rest_total_hits_as_int: true}, cb);
 };
 exports.createLookup = function (doc, username, cb) {
   internals.lookupsCache = {};
-  return internals.elasticSearchClient.index({index:fixIndex('lookups'), type:'lookup', body:doc, refresh: "wait_for"}, cb);
+  return internals.elasticSearchClient.index({index:fixIndex('lookups'), type:'lookup', body:doc, refresh: "wait_for", timeout: '10m'}, cb);
 };
 exports.deleteLookup = function (id, username, cb) {
   internals.lookupsCache = {};
@@ -648,7 +762,7 @@ exports.deleteLookup = function (id, username, cb) {
 };
 exports.setLookup = function (id, username, doc, cb) {
   internals.lookupsCache = {};
-  return internals.elasticSearchClient.index({index:fixIndex('lookups'), type: 'lookup', body:doc, id: id, refresh:true}, cb);
+  return internals.elasticSearchClient.index({index:fixIndex('lookups'), type: 'lookup', body:doc, id: id, refresh:true, timeout: '10m'}, cb);
 };
 exports.getLookup = function (id, cb) {
   return internals.elasticSearchClient.get({index:fixIndex('lookups'), type:'lookup', id:id}, cb);
@@ -732,7 +846,7 @@ exports.healthCache = function (cb) {
       return cb(err, null);
     }
 
-    internals.elasticSearchClient.indices.getTemplate({name: fixIndex("sessions2_template"), filter_path: "**._meta"}, (err, doc) => {
+    internals.elasticSearchClient.indices.getTemplate({name: fixIndex("sessions2_template"), filter_path: "**._meta", include_type_name: true}, (err, doc) => {
       if (err) {
         return cb(null, health);
       }
@@ -768,6 +882,24 @@ exports.nodesInfoCache = function () {
       } else {
         internals.nodesInfoCache = data;
         internals.nodesInfoCache._timeStamp = Date.now();
+        resolve(data);
+      }
+    });
+  });
+};
+
+exports.masterCache = function () {
+  if (internals.masterCache._timeStamp !== undefined && internals.masterCache._timeStamp > Date.now() - 60000) {
+    return new Promise((resolve, reject) => {resolve(internals.masterCache);});
+  }
+
+  return new Promise((resolve, reject) => {
+    exports.master((err, data) => {
+      if (err) {
+        reject(err);
+      } else {
+        internals.masterCache = data;
+        internals.masterCache._timeStamp = Date.now();
         resolve(data);
       }
     });
@@ -915,19 +1047,23 @@ exports.getSequenceNumber = function (name, cb) {
 };
 
 exports.numberOfDocuments = function (index, cb) {
-  if (cb === undefined) {
-    // Promise version
+  // count interface is slow for larget data sets, don't use for sessions unless multiES
+  if (index !== "sessions2-*" || internals.multiES) {
     return internals.elasticSearchClient.count({index: fixIndex(index), ignoreUnavailable:true});
-  } else {
-    // cb version - remove in future
-    internals.elasticSearchClient.count({index: fixIndex(index), ignoreUnavailable:true}, (err, result) => {
-      if (err || result.error) {
-        return cb(null, 0);
-      }
-
-      return cb(null, result.count);
-    });
   }
+
+  return new Promise((resolve, reject) => {
+    let count = 0;
+    let str = internals.prefix + 'sessions2-';
+    exports.indicesCache((err, indices) => {
+      for (let i = 0; i < indices.length; i++) {
+        if (indices[i].index.includes(str)) {
+          count += parseInt(indices[i]['docs.count']);
+        }
+      }
+      resolve({count: count});
+    });
+  });
 };
 
 exports.updateFileSize = function (item, filesize) {
@@ -953,7 +1089,7 @@ exports.checkVersion = function(minVersion, checkUsers) {
     });
   });
 
-  internals.elasticSearchClient.indices.getTemplate({name: fixIndex("sessions2_template"), filter_path: "**._meta"}, (err, doc) => {
+  internals.elasticSearchClient.indices.getTemplate({name: fixIndex("sessions2_template"), filter_path: "**._meta", include_type_name: true}, (err, doc) => {
     if (err) {
       console.log("ERROR - Couldn't retrieve database version, is ES running?  Have you run ./db.pl host:port init?", err);
       process.exit(0);
@@ -969,7 +1105,7 @@ exports.checkVersion = function(minVersion, checkUsers) {
         process.exit(1);
       }
     } catch (e) {
-      console.log("ERROR - Couldn't find database version.  Have you run ./db.pl host:port upgrade?");
+      console.log("ERROR - Couldn't find database version.  Have you run ./db.pl host:port upgrade?", e);
       process.exit(0);
     }
   });
@@ -1044,72 +1180,69 @@ exports.loadFields = function(cb) {
 };
 
 exports.getIndices = function(startTime, stopTime, rotateIndex, cb) {
-  var indices = [];
   exports.getAliasesCache("sessions2-*", (err, aliases) => {
 
     if (err || aliases.error) {
-      return cb("");
+      return cb('');
     }
 
-    var offset = 86400;
-    var hourlyN;
-    if (rotateIndex === "hourly") {
-      offset = 3600;
-      hourlyN = 1;
-    } else if (rotateIndex.startsWith("hourly")) {
-      var match = rotateIndex.match(/^hourly(\d+)$/);
-      hourlyN = +match[1];
-      offset = 3600 * hourlyN;
-      rotateIndex = "hourly";
+    let indices = [];
+
+    // Guess how long hour indices we find are
+    let hlength = 0;
+    if (rotateIndex === 'hourly') {
+      hlength = 60*60;
+    } else if (rotateIndex.startsWith('hourly')) {
+      hlength = +rotateIndex.substring(6)*60*60;
+    } else {
+      hlength = 12*60*60; // Max hourly can be is 12 hours
     }
 
-    startTime = Math.floor(startTime/offset)*offset;
+    // Go thru each index, convert to start/stop range and see if our time range overlaps
+    // For hourly and month indices we may search extra
+    for (let iname in aliases) {
+      let index = iname;
+      if (index.endsWith('-shrink')) {
+        index = index.substring(0,index.length-7);
+      }
+      index = index.substring(internals.prefix.length + 10);
+      let year, month, day = 0, hour = 0, length;
 
-    while (startTime < stopTime) {
-      var iname;
-      var d = new Date(startTime*1000);
-      switch (rotateIndex) {
-      case "monthly":
-        iname = internals.prefix + "sessions2-" +
-          twoDigitString(d.getUTCFullYear()%100) + 'm' +
-          twoDigitString(d.getUTCMonth()+1);
-        break;
-      case "weekly":
-        var jan = new Date(d.getUTCFullYear(), 0, 0);
-        iname = internals.prefix + "sessions2-" +
-          twoDigitString(d.getUTCFullYear()%100) + 'w' +
-          twoDigitString(Math.floor((d - jan) / 604800000));
-        break;
-      case "hourly":
-        iname = internals.prefix + "sessions2-" +
-          twoDigitString(d.getUTCFullYear()%100) +
-          twoDigitString(d.getUTCMonth()+1) +
-          twoDigitString(d.getUTCDate()) + 'h' +
-          twoDigitString((d.getUTCHours()/hourlyN)*hourlyN);
-        break;
-      default:
-        iname = internals.prefix + "sessions2-" +
-          twoDigitString(d.getUTCFullYear()%100) +
-          twoDigitString(d.getUTCMonth()+1) +
-          twoDigitString(d.getUTCDate());
-        break;
+      if (+index[0] >= 6) {
+        year = 1900 + (+index[0])*10 + (+index[1]);
+      } else {
+        year = 2000 + (+index[0])*10 + (+index[1]);
       }
 
-      startTime += offset;
-
-      if (aliases[iname] && (indices.length === 0 || iname !== indices[indices.length-1])) {
-        indices.push(iname);
+      if (index[2] === 'w') {
+        length = 7*24*60*60;
+        month = 1;
+        day = (+index[3]*10 + (+index[4]))*7;
+      } else if (index[2] === 'm') {
+        month = (+index[3])*10 + (+index[4]);
+        day = 1;
+        length = 31*24*60*60;
+      } else if (index.length === 6) {
+        month = (+index[2])*10 + (+index[3]);
+        day = (+index[4])*10 + (+index[5]);
+        length = 24*60*60;
+      } else {
+        month = (+index[2])*10 + (+index[3]);
+        day = (+index[4])*10 + (+index[5]);
+        hour = (+index[7])*10 + (+index[8]);
+        length = hlength;
       }
 
-      // Check for shrink version
-      iname += '-shrink';
-      if (aliases[iname] && (indices.length === 0 || iname !== indices[indices.length-1])) {
+      let start = Date.UTC(year, month-1, day, hour)/1000;
+      let stop = Date.UTC(year, month-1, day, hour)/1000+length;
+
+      if (stop >= startTime && start <= stopTime) {
         indices.push(iname);
       }
     }
 
     if (indices.length === 0) {
-      return cb("sessions2-*");
+      return cb(internals.prefix + 'sessions2-*');
     }
 
     return cb(indices.join());

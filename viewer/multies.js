@@ -117,7 +117,14 @@ function node2Prefix(node) {
   return "";
 }
 
+var activeESNodes = [];
+
+function getActiveNodes(){
+  return activeESNodes.slice();
+}
+
 function simpleGather(req, res, bodies, doneCb) {
+  var nodes = getActiveNodes();
   async.map(nodes, (node, asyncCb) => {
     var result = "";
     var url = node2Url(node) + req.url;
@@ -141,7 +148,7 @@ function simpleGather(req, res, bodies, doneCb) {
       pres.on('end', () => {
         if (result.length) {
           result = result.replace(new RegExp('(index":\s*|[,{]|  )"' + prefix + "(sessions2|sessions|stats|dstats|sequence|files|users|history)", "g"), "$1\"MULTIPREFIX_$2");
-          result = result.replace(new RegExp('(index":\s*)"' + prefix + "(fields_v[12])\"", "g"), "$1\"MULTIPREFIX_$2\"");
+          result = result.replace(new RegExp('(index":\s*)"' + prefix + "(fields_v[1-4])\"", "g"), "$1\"MULTIPREFIX_$2\"");
           result = JSON.parse(result);
         } else {
           result = {};
@@ -272,6 +279,12 @@ app.get("/users/user/:user", (req, res) => {
 
 app.post("/users/user/:user", (req, res) => {
   clients[nodes[0]].index({index: "users", type: "user", id: req.params.user, body: req.body, refresh: true}, (err, result) => {
+    res.send(result);
+  });
+});
+
+app.get("/_cat/master", (req, res) => {
+  clients[nodes[0]].cat.master({format: "json"}, (err, result) => {
     res.send(result);
   });
 });
@@ -464,7 +477,8 @@ function fixQuery(node, body, doneCb) {
   if (body.size) {
     body.size = (+body.size) + ((+body.from) || 0);
   }
-  body.from = 0;
+
+  delete body.from;
 
   var outstanding = 0;
   var finished = 0;
@@ -632,7 +646,7 @@ app.post("/:index/:type/_search", function(req, res) {
   var bodies = {};
   var search = JSON.parse(req.body);
   //console.log("DEBUG - INCOMING SEARCH", JSON.stringify(search, null, 2));
-
+  var nodes = getActiveNodes();
   async.each(nodes, (node, asyncCb) => {
     fixQuery(node, req.body, (err, body) => {
       //console.log("DEBUG - OUTGOING SEARCH", node, JSON.stringify(body, null, 2));
@@ -665,7 +679,7 @@ app.post("/:index/:type/_search", function(req, res) {
 function msearch(req, res) {
   var lines = req.body.split(/[\r\n]/);
   var bodies = {};
-
+  var nodes = getActiveNodes();
   async.each(nodes, (node, nodeCb) => {
     var nlines = [];
     async.eachSeries(lines, (line, lineCb) => {
@@ -783,6 +797,43 @@ nodes.forEach((node) => {
     }
   });
 });
+
+activeESNodes = nodes.slice();
+
+// Ping (HEAD /) periodically to maintian a list of active ES nodes
+function pingESNode(client, node){
+  return new Promise((resolve, reject) => {
+      client.ping({
+        requestTimeout: 3*1000 //ping usually has a 3000ms timeout
+      }, function (error) {
+        resolve({isActive: error ? false : true, node: node});
+      });
+    });
+}
+
+function enumerateActiveNodes(){
+  var ping_tasks = [];
+  for (var i = 0; i < nodes.length; i++) {
+    ping_tasks.push(pingESNode(clients[nodes[i]], nodes[i]));
+  }
+  Promise.all(ping_tasks).then(function(values) {
+    var active_nodes = [];
+    for (var i = 0; i < values.length; i++) {
+      if(values[i].isActive) { // true -> node is active
+        active_nodes.push(values[i].node);
+      } else { // false -> node is down
+        // remove credential from the url
+        var host = values[i].node.split("://");
+        host = host[host.length > 1 ? 1 : 0 ].split("@"); // user:pass@elastic.com:9200
+        host = host [host.length > 1 ? host.length-1 : 0];
+        console.log("Elasticsearch is down at ", host);
+      }
+    }
+    activeESNodes = active_nodes.slice();
+  });
+}
+
+setInterval(enumerateActiveNodes, 1*60*1000); // 1*60*1000 ms
 
 console.log(nodes);
 

@@ -33,27 +33,51 @@
         table-state-name="esNodesCols"
         table-widths-state-name="esNodesColWidths">
         <template slot="actions"
-          slot-scope="{ item }">
-          <b-dropdown size="sm"
-            class="row-actions-btn"
-            v-has-permission="'createEnabled'">
-            <b-dropdown-item v-if="!item.nodeExcluded"
-              @click="exclude('name', item)">
-              Exclude node {{ item.name }}
-            </b-dropdown-item>
-            <b-dropdown-item v-else
-              @click="include('name', item)">
-              Include node {{ item.name }}
-            </b-dropdown-item>
-            <b-dropdown-item v-if="!item.ipExcluded"
-              @click="exclude('ip', item)">
-              Exclude IP {{ item.ip }}
-            </b-dropdown-item>
-            <b-dropdown-item v-else
-              @click="include('ip', item)">
-              Include IP {{ item.ip }}
-            </b-dropdown-item>
-          </b-dropdown>
+          slot-scope="{ item }"
+          class="display-inline">
+          <span class="no-wrap">
+            <b-dropdown size="sm"
+              class="row-actions-btn"
+              v-has-permission="'createEnabled'">
+              <b-dropdown-item v-if="!item.nodeExcluded"
+                @click="exclude('name', item)">
+                Exclude node {{ item.name }}
+              </b-dropdown-item>
+              <b-dropdown-item v-else
+                @click="include('name', item)">
+                Include node {{ item.name }}
+              </b-dropdown-item>
+              <b-dropdown-item v-if="!item.ipExcluded"
+                @click="exclude('ip', item)">
+                Exclude IP {{ item.ip }}
+              </b-dropdown-item>
+              <b-dropdown-item v-else
+                @click="include('ip', item)">
+                Include IP {{ item.ip }}
+              </b-dropdown-item>
+            </b-dropdown>
+            <span class="ml-1">
+              <span class="node-badge badge badge-primary badge-pill"
+                :class="{'show-badge cursor-help': item.roles.indexOf('master') > -1, 'badge-master':item.isMaster}">
+                <span v-if="item.roles.indexOf('master') > -1"
+                  title="Master Node"
+                  v-b-tooltip.hover>
+                  M
+                </span>
+                <span v-else>&nbsp;</span>
+              </span>
+              <span class="node-badge badge badge-primary badge-pill"
+                style="padding-left:.5rem;"
+                :class="{'show-badge cursor-help': item.roles.indexOf('data') > -1}">
+                <span v-if="item.roles.indexOf('data') > -1"
+                  title="Data Node"
+                  v-b-tooltip.hover>
+                  D
+                </span>
+                <span v-else>&nbsp;</span>
+              </span>
+            </span>
+          </span>
         </template>
       </moloch-table>
 
@@ -105,13 +129,14 @@ export default {
         { id: 'read', name: 'Read/s', sort: 'read', doStats: true, default: true, width: 90, dataFunction: (item) => { return this.$options.filters.humanReadableBytes(item.read); } },
         { id: 'write', name: 'Write/s', sort: 'write', doStats: true, default: true, width: 90, dataFunction: (item) => { return this.$options.filters.humanReadableBytes(item.write); } },
         { id: 'searches', name: 'Searches/s', sort: 'searches', doStats: true, width: 100, default: true, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.searches); } },
+        { id: 'writesRejected', name: 'Write Tasks Rejected', sort: 'writesRejected', doStats: true, width: 100, default: true, canClear: true, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.writesRejected); } },
+
         // all the rest of the available stats
         { id: 'ip', name: 'IP', sort: 'ip', doStats: false, width: 100 },
         { id: 'ipExcluded', name: 'IP Excluded', sort: 'ipExcluded', doStats: false, width: 100 },
         { id: 'nodeExcluded', name: 'Node Excluded', sort: 'nodeExcluded', doStats: false, width: 125 },
         { id: 'nonHeapSize', name: 'Non Heap Size', sort: 'nonHeapSize', doStats: false, width: 100, dataFunction: (item) => { return this.$options.filters.humanReadableBytes(item.nonHeapSize); } },
         { id: 'searchesTime', name: 'Search Time', sort: 'searchesTime', doStats: true, width: 100, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.searchesTime); } },
-        { id: 'writesRejected', name: 'Write Tasks Rejected', sort: 'writesRejected', doStats: true, width: 100, canClear: true, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.writesRejected); } },
         { id: 'writesRejectedDelta', name: 'Write Tasks Rejected/s', sort: 'writesRejectedDelta', doStats: true, width: 100, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.writesRejectedDelta); } },
         { id: 'writesCompleted', name: 'Write Tasks Completed', sort: 'writesCompleted', doStats: true, width: 100, canClear: true, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.writesCompleted); } },
         { id: 'writesCompletedDelta', name: 'Write Tasks Completed/s', sort: 'writesCompletedDelta', doStats: true, width: 100, dataFunction: (item) => { return this.$options.filters.roundCommaString(item.writesCompletedDelta); } },
@@ -245,5 +270,20 @@ table.table tr.border-top-bold > td {
 }
 .table .hover-menu .btn-group {
   visibility: hidden;
+}
+
+.node-badge {
+  opacity: 0;
+  width: 1.6rem;
+  line-height: 1.2;
+  font-size: 0.75rem;
+  background-color: var(--color-primary);
+
+}
+.node-badge.show-badge {
+  opacity: 1;
+}
+.badge-master {
+  background-color: var(--color-primary-darker);
 }
 </style>

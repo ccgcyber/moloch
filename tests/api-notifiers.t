@@ -1,4 +1,4 @@
-use Test::More tests => 31;
+use Test::More tests => 33;
 use Cwd;
 use URI::Escape;
 use MolochTest;
@@ -18,7 +18,7 @@ my $notAdminToken = getTokenCookie('notadmin');
 
 # empty notifiers
   my $notifiers = viewerGetToken("/notifiers", $token);
-  ok(!keys $notifiers, "Empty notifiers");
+  ok(!keys %{$notifiers}, "Empty notifiers");
 
 # create notifier required items
   my $json = viewerPostToken("/notifiers", '{}', $token);
@@ -85,6 +85,11 @@ my $notAdminToken = getTokenCookie('notadmin');
   $notifiers = viewerGetToken("/notifiers", $token);
   ok(exists $notifiers->{test1a}, "notifier update");
   is($notifiers->{test1a}->{fields}[0]->{slackWebhookUrl}->{value}, "test1aurl", "notifier field value update");
+
+# non admin no fields
+  $notifiers = viewerGetToken("/notifiers?molochRegressionUser=notadmin", $notAdminToken);
+  ok(exists $notifiers->{test1a}, "notifier update");
+  ok(!exists $notifiers->{test1a}->{fields}, "fields shouldn't exist for non admin");
 
 # cleanup
   $json = viewerDeleteToken("/notifiers/test1a", $token);

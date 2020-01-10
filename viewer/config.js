@@ -31,12 +31,14 @@ var ini    = require('iniparser'),
 
 exports.debug = 0;
 exports.insecure = false;
+exports.esProfile = false;
 var internals = {
     configFile: "/data/moloch/etc/config.ini",
     hostName: os.hostname(),
     fields: [],
     fieldsMap: {},
-    categories: {}
+    categories: {},
+    options: {}
   };
 
 function processArgs() {
@@ -51,10 +53,21 @@ function processArgs() {
     } else if (process.argv[i] === "-n") {
       i++;
       internals.nodeName = process.argv[i];
+    } else if (process.argv[i] === "-o" || process.argv[i] === "--option") {
+      i++;
+      let equal = process.argv[i].indexOf('=');
+      if (equal === -1) {
+        console.log('Missing equal sign in', process.argv[i]);
+        process.exit(1);
+      }
+
+      internals.options[process.argv[i].slice(0,equal)] = process.argv[i].slice(equal+1);
     } else if (process.argv[i] === "--debug") {
       exports.debug++;
     } else if (process.argv[i] === "--insecure") {
       exports.insecure = true;
+    } else if (process.argv[i] === "--esprofile") {
+      exports.esProfile = true;
     } else {
       args.push(process.argv[i]);
     }
@@ -81,40 +94,146 @@ exports.md5 = function (str, encoding){
     .digest(encoding || 'hex');
 };
 
+// Hash (MD5) and encrypt the password before storing.
+// Encryption is used because ES is insecure by default and we don't want others adding accounts.
 exports.pass2store = function(userid, password) {
+  // md5 is required because of http digest
   var m = exports.md5(userid + ":" + exports.getFull("default", "httpRealm", "Moloch") + ":" + password);
-  var c = crypto.createCipher('aes192', exports.getFull("default", "passwordSecret", "password"));
-  var e = c.update(m, "binary", "hex");
-  e += c.final("hex");
-  return e;
+
+  if (internals.aes256Encryption) {
+    // New style with IV: IV.E
+    let iv = crypto.randomBytes(16);
+    let c = crypto.createCipheriv('aes-256-cbc', internals.passwordSecret256, iv);
+    let e = c.update(m, 'binary', 'hex');
+    e += c.final('hex');
+    return iv.toString('hex') + '.' + e;
+  } else {
+    // Old style without IV: E
+    var c = crypto.createCipher('aes192', internals.passwordSecret);
+    var e = c.update(m, "binary", "hex");
+    e += c.final("hex");
+    return e;
+  }
 };
 
+// Decrypt the encrypted hashed password, it is still hashed
 exports.store2ha1 = function(passstore) {
   try {
-    var c = crypto.createDecipher('aes192', exports.getFull("default", "passwordSecret", "password"));
-    var d = c.update(passstore, "hex", "binary");
-    d += c.final("binary");
-    return d;
+    var parts = passstore.split('.');
+    if (parts.length === 2) {
+      // New style with IV: IV.E
+      let c = crypto.createDecipheriv('aes-256-cbc', internals.passwordSecret256, Buffer.from(parts[0], 'hex'));
+      let d = c.update(parts[1], 'hex', 'binary');
+      d += c.final('binary');
+      return d;
+    } else {
+      // Old style without IV: E
+      var c = crypto.createDecipher('aes192', internals.passwordSecret);
+      var d = c.update(passstore, "hex", "binary");
+      d += c.final("binary");
+      return d;
+    }
   } catch (e) {
     console.log("passwordSecret set in the [default] section can not decrypt information.  You may need to re-add users if you've changed the secret.", e);
     process.exit(1);
   }
 };
 
-exports.obj2auth = function(obj, secret) {
-  secret = secret || exports.getFull("default", "serverSecret") || exports.getFull("default", "passwordSecret", "password");
-  var c = crypto.createCipher('aes192', secret);
-  var e = c.update(JSON.stringify(obj), "binary", "hex");
-  e += c.final("hex");
-  return e;
+// Encrypt an object into an auth string
+exports.obj2auth = function(obj, c2s, secret) {
+  if (internals.aes256Encryption) {
+    // New style with IV: IV.E.H
+    if (secret) {
+      secret = crypto.createHash('sha256').update(secret).digest();
+    } else {
+      secret = internals.serverSecret256;
+    }
+
+    let iv = crypto.randomBytes(16);
+    let c = crypto.createCipheriv('aes-256-cbc', secret, iv);
+    let e = c.update(JSON.stringify(obj), "binary", "hex");
+    e += c.final('hex');
+    e = iv.toString('hex') + '.' + e;
+    let h = crypto.createHmac('sha256', secret).update(e).digest('hex');
+    return e + '.' + h;
+  } else {
+    // Old style without IV: E or E.H
+    secret = secret || internals.serverSecret;
+
+    let c = crypto.createCipher('aes192', secret);
+    let e = c.update(JSON.stringify(obj), "binary", "hex");
+    e += c.final("hex");
+
+    let h = crypto.createHmac('sha256', secret).update(e, 'hex').digest('hex');
+
+    // include sig if c2s or s2sSignedAuth
+    if (c2s || internals.s2sSignedAuth) {
+      return e + '.' + h;
+    }
+
+    return e;
+  }
 };
 
-exports.auth2obj = function(auth, secret) {
-  secret = secret || exports.getFull("default", "serverSecret") || exports.getFull("default", "passwordSecret", "password");
-  var c = crypto.createDecipher('aes192', secret);
-  var d = c.update(auth, "hex", "binary");
-  d += c.final("binary");
-  return JSON.parse(d);
+// Decrypt the auth string into an object
+exports.auth2obj = function(auth, c2s, secret) {
+  let parts = auth.split('.');
+
+  if (parts.length === 3) {
+    // New style with IV: IV.E.H
+    if (secret) {
+      secret = crypto.createHash('sha256').update(secret).digest();
+    } else {
+      secret = internals.serverSecret256;
+    }
+
+    let signature = Buffer.from(parts[2], 'hex');
+    let h = crypto.createHmac('sha256', secret).update(parts[0] + '.' + parts[1]).digest();
+
+    if (!crypto.timingSafeEqual(signature, h)) {
+      throw 'Incorrect signature';
+    }
+
+    try {
+      let c = crypto.createDecipheriv('aes-256-cbc', secret, Buffer.from(parts[0], 'hex'));
+      let d = c.update(parts[1], "hex", "binary");
+      d += c.final("binary");
+      return JSON.parse(d);
+    }
+    catch(error) {
+      console.log(error);
+      throw 'Incorrect auth supplied';
+    }
+  } else {
+    // Old style without IV: E or E.H
+
+    secret = secret || internals.serverSecret;
+
+    // if sig missing error if c2s or s2sSignedAuth
+    if (parts.length === 1 && (c2s || internals.s2sSignedAuth)) {
+      throw 'Missing signature';
+    }
+
+    if (parts.length > 1) {
+      let signature = Buffer.from(parts[1], 'hex');
+      let h = crypto.createHmac('sha256', secret).update(parts[0], 'hex').digest();
+
+      if (!crypto.timingSafeEqual(signature, h)) {
+        throw 'Incorrect signature';
+      }
+    }
+
+    try {
+      let c = crypto.createDecipher('aes192', secret);
+      let d = c.update(parts[0], "hex", "binary");
+      d += c.final("binary");
+      return JSON.parse(d);
+    }
+    catch(error) {
+      console.log(error);
+      throw 'Incorrect auth supplied';
+    }
+  }
 };
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -150,8 +269,12 @@ exports.sectionGet = function(section, key, defaultValue) {
 };
 
 exports.getFull = function(node, key, defaultValue) {
+
+
   var value;
-  if (internals.config[node] && internals.config[node][key] !== undefined ) {
+  if (internals.options[key] !== undefined && (node === 'default' || node === internals.nodeName)) {
+    value = internals.options[key];
+  } else if (internals.config[node] && internals.config[node][key] !== undefined ) {
     value = internals.config[node][key];
   } else if (internals.config[node] && internals.config[node].nodeClass && internals.config[internals.config[node].nodeClass] && internals.config[internals.config[node].nodeClass][key]) {
     value = internals.config[internals.config[node].nodeClass][key];
@@ -160,6 +283,7 @@ exports.getFull = function(node, key, defaultValue) {
   } else {
     value = defaultValue;
   }
+
   if (value === "false") {
     return false;
   }
@@ -168,6 +292,11 @@ exports.getFull = function(node, key, defaultValue) {
 
 exports.get = function(key, defaultValue) {
   return exports.getFull(internals.nodeName, key, defaultValue);
+};
+
+// Return an array split on separator, remove leading/trailing spaces, remove empty elements
+exports.getArray = function(key, separator, defaultValue) {
+  return exports.get(key, defaultValue).split(separator).map(s=>s.trim()).filter(s=>s.match(/^\S+$/));
 };
 
 exports.getObj = function(key, defaultValue) {
@@ -375,3 +504,21 @@ exports.loadFields = function(data) {
     internals.categories[cat] = internals.categories[cat].sort(sortFunc);
   }
 };
+
+//////////////////////////////////////////////////////////////////////////////////
+// Globals
+//////////////////////////////////////////////////////////////////////////////////
+internals.s2sSignedAuth = exports.getFull("default", "s2sSignedAuth", true);
+internals.aes256Encryption = exports.getFull("default", "aes256Encryption", false);
+
+// If passwordSecret isn't set, viewer will treat accounts as anonymous
+internals.passwordSecret = exports.getFull("default", "passwordSecret", "password");
+internals.passwordSecret256 = crypto.createHash('sha256').update(internals.passwordSecret).digest();
+
+if (exports.getFull("default", "serverSecret")) {
+  internals.serverSecret = exports.getFull("default", "serverSecret");
+  internals.serverSecret256 = crypto.createHash('sha256').update(internals.serverSecret).digest();
+} else {
+  internals.serverSecret = internals.passwordSecret;
+  internals.serverSecret256 = internals.passwordSecret256;
+}

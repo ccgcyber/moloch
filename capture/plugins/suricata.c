@@ -159,7 +159,7 @@ LOCAL void suricata_plugin_save(MolochSession_t *session, int UNUSED(final))
     int h = session->h_hash % alerts.num;
 
     for (item = alerts.items[h]; item; item = item->items_next) {
-        if (item->timestamp < session->firstPacket.tv_sec - 60*60) {
+        if (item->timestamp < session->firstPacket.tv_sec - suricataExpireSeconds) {
             suricata_alerts_del(item);
             continue;
         }
@@ -308,8 +308,27 @@ LOCAL void suricata_process()
 
         if (MATCH(line, "timestamp")) {
             struct tm tm;
-            strptime(line + out[i+2], "%Y-%m-%dT%H:%M:%S.%%06u%z", &tm);
+            strptime(line + out[i+2], "%Y-%m-%dT%H:%M:%S.%%06u", &tm);
             item->timestamp = timegm(&tm);
+
+            if (out[i+3] > 30) {
+                char *t = line + out[i+2];
+                int offset = (t[27] - '0')*10*3600 +
+                             (t[28] - '0')*3600 +
+                             (t[29] - '0')*10*60 +
+                             (t[30] - '0')*60;
+                if (t[26] == '-')
+                    offset *= -1;
+                item->timestamp -= offset;
+            }
+
+            if (config.debug > 2) {
+                char buf[100];
+                ctime_r(&item->timestamp, buf);
+                LOG("Parsed date  = %24.24s from %lu which %s >= %lu", buf, item->timestamp,
+                        item->timestamp >= currentTime.tv_sec - suricataExpireSeconds?"is":"is not",
+                        currentTime.tv_sec - suricataExpireSeconds);
+            }
 
             if (item->timestamp < currentTime.tv_sec - suricataExpireSeconds) {
                 suricata_item_free(item);
@@ -317,11 +336,6 @@ LOCAL void suricata_process()
             }
         } else if (MATCH(line, "event_type")) {
             if (strncmp("alert", line + out[i+2], 5) != 0) {
-                suricata_item_free(item);
-                return;
-            }
-        } else if (MATCH(line, "event_type")) {
-            if (out[i+3] != 5 || strncmp("alert", line + out[i+2], 5) != 0) {
                 suricata_item_free(item);
                 return;
             }
@@ -343,7 +357,7 @@ LOCAL void suricata_process()
                 item->ses = SESSION_TCP;
             else if (strncmp("UDP", line + out[i+2], 3) == 0 || strncmp("017", line + out[i+2], 3) == 0)
                 item->ses = SESSION_UDP;
-            else if (strncmp("ICMP", line + out[i+2], 3) == 0 || strncmp("001", line + out[i+2], 3) == 0)
+            else if (strncmp("ICMP", line + out[i+2], 4) == 0 || strncmp("001", line + out[i+2], 3) == 0)
                 item->ses = SESSION_ICMP;
             else {
                 suricata_item_free(item);
@@ -455,6 +469,7 @@ LOCAL gboolean suricata_timer(gpointer UNUSED(user_data))
         fileSize = sb.st_size;
     } else if (fileSize > sb.st_size) {
         // File got smaller
+        suricata_read();
         suricata_close();
         suricata_open(&sb);
         fileSize = sb.st_size;

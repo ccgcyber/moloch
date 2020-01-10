@@ -150,7 +150,7 @@
             <div class="col-sm-12">
               <a class="btn btn-link" href="https://molo.ch">Home Page</a> |
               <a class="btn btn-link" href="https://molo.ch/faq">FAQ</a> |
-              <a class="btn btn-link" href="https://github.com/aol/moloch/wiki">Wiki</a> |
+              <a class="btn btn-link" href="https://molo.ch/learn">Docs</a> |
               <a class="btn btn-link" href="https://github.com/aol/moloch">GitHub</a> |
               <a class="btn btn-link" href="https://slackinvite.molo.ch/">Request Slack Invite</a>
             </div>
@@ -224,6 +224,7 @@
                 is run against the full text strings, after case normalization (if enabled) for the field.
                 For example <code>http.uri == /.*www\.f.*k\.com.*/.</code> It uses the
                 Lucene regex implementation which doesn't support most PCRE features.
+                Check out the ES <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/regexp-syntax.html">Regexp Syntax</a> guide.
               </dd>
               <dt>Lists</dt>
               <dd>

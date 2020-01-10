@@ -69,6 +69,7 @@ LOCAL MolochSimple_t        *currentInfo[MOLOCH_MAX_PACKET_THREADS];
 LOCAL MolochSimpleHead_t     freeList[MOLOCH_MAX_PACKET_THREADS];
 LOCAL uint32_t               pageSize;
 LOCAL enum MolochSimpleMode  simpleMode;
+LOCAL int                    simpleMaxQ;
 LOCAL const EVP_CIPHER      *cipher;
 LOCAL int                    openOptions;
 LOCAL struct timeval         lastSave[MOLOCH_MAX_PACKET_THREADS];
@@ -148,6 +149,7 @@ LOCAL void writer_simple_free(MolochSimple_t *info)
 LOCAL void writer_simple_process_buf(int thread, int closing)
 {
     MolochSimple_t *info = currentInfo[thread];
+    static uint32_t lastError;
 
     info->closing = closing;
     if (!closing) {
@@ -169,8 +171,9 @@ LOCAL void writer_simple_process_buf(int thread, int closing)
     MOLOCH_LOCK(simpleQ);
     gettimeofday(&lastSave[thread], NULL);
     DLL_PUSH_TAIL(simple_, &simpleQ, info);
-    if ((DLL_COUNT(simple_, &simpleQ) % 100) == 0) {
-        LOG("WARNING - Disk Q of %d is too large, check the Moloch FAQ about testing disk speed", DLL_COUNT(simple_, &simpleQ));
+    if (DLL_COUNT(simple_, &simpleQ) > 100 && lastSave[thread].tv_sec > lastError + 60) {
+        lastError = lastSave[thread].tv_sec;
+        LOG("WARNING - Disk Q of %d is too large, check the Moloch FAQ about (https://molo.ch/faq#why-am-i-dropping-packets) testing disk speed", DLL_COUNT(simple_, &simpleQ));
     }
     MOLOCH_COND_SIGNAL(simpleQ);
     MOLOCH_UNLOCK(simpleQ);
@@ -260,9 +263,17 @@ LOCAL char *writer_simple_get_kekId ()
             j += 2;
             break;
         case 'N':
-            memcpy(okek+j, config.nodeName, strlen(config.nodeName));
-            j += strlen(config.nodeName);
+        {
+            int namelen = strlen(config.nodeName);
+            int bufboundary = j + namelen;
+            
+            if(bufboundary >= (int) sizeof(okek)) {
+                LOGEXIT("ERROR - node name '%s' is too long", config.nodeName);
+            }
+            memcpy(okek+j, config.nodeName, namelen);
+            j = bufboundary;
             break;
+        }
         }
     }
     g_free(kek);
@@ -271,6 +282,19 @@ LOCAL char *writer_simple_get_kekId ()
 /******************************************************************************/
 LOCAL void writer_simple_write(const MolochSession_t * const session, MolochPacket_t * const packet)
 {
+    static uint32_t lastError;
+    static uint32_t notSaved;
+
+    if (DLL_COUNT(simple_, &simpleQ) > simpleMaxQ) {
+        packet->writerFilePos = 0;
+        notSaved++;
+        if (packet->ts.tv_sec > lastError + 60) {
+            lastError = packet->ts.tv_sec;
+            LOG("WARNING - Disk Q of %d is too large and exceed simpleMaxQ setting so not saving %u packets. Check the Moloch FAQ about (https://molo.ch/faq#why-am-i-dropping-packets) testing disk speed", DLL_COUNT(simple_, &simpleQ), notSaved);
+        }
+        return;
+    }
+
     int thread = session->thread;
 
     if (!currentInfo[thread]) {
@@ -480,6 +504,7 @@ void writer_simple_init(char *name)
     moloch_writer_exit         = writer_simple_exit;
     moloch_writer_write        = writer_simple_write;
 
+    simpleMaxQ = moloch_config_int(NULL, "simpleMaxQ", 2000, 50, 0xffff);
     char *mode = moloch_config_str(NULL, "simpleEncoding", NULL);
 
     if (mode && !mode[0]) {

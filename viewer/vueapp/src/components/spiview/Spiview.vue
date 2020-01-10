@@ -132,7 +132,7 @@
 
     <div class="spiview-content mr-1 ml-1">
 
-    <!-- session visualizations -->
+      <!-- session visualizations -->
       <div class="spiview-visualizations">
         <moloch-visualizations
           v-if="mapData && graphData"
@@ -270,86 +270,91 @@
               <div v-if="categoryObjects[category].spi"
                 class="mt-3">
                 <!-- spiview field -->
-                <div v-for="(value, key) in categoryObjects[category].spi"
-                  :key="key"
-                  class="spi-buckets pr-1 pl-1 pb-1"
-                  v-if="value.active">
-                  <!-- spiview field label button -->
-                  <b-dropdown
-                    size="sm"
-                    variant="default"
-                    class="field-dropdown"
-                    :text="value.field.friendlyName">
-                    <b-dropdown-item
-                      @click="toggleSpiData(value.field, true, true)">
-                      Hide {{ value.field.friendlyName }}
-                    </b-dropdown-item>
-                    <b-dropdown-item
-                      @click="exportUnique(value.field.dbField, 0)">
-                      Export Unique {{ value.field.friendlyName }}
-                    </b-dropdown-item>
-                    <b-dropdown-item
-                      @click="exportUnique(value.field.dbField, 1)">
-                      Export Unique {{ value.field.friendlyName }} with counts
-                    </b-dropdown-item>
-                    <b-dropdown-item
-                      @click="openSpiGraph(value.field.dbField)">
-                      Open {{ value.field.friendlyName }} SPI Graph
-                    </b-dropdown-item>
-                  </b-dropdown> <!-- spiview field label button -->
-                  <!-- spiview field data -->
-                  <span v-if="value && value.value && value.value.buckets">
-                    <span v-for="bucket in value.value.buckets"
-                      :key="bucket.key">
-                      <span v-if="bucket.key || bucket.key === 0"
-                        class="small spi-bucket mr-1 no-wrap">
-                        <moloch-session-field
-                          :field="value.field"
-                          :value="bucket.key"
-                          :expr="value.field.exp"
-                          :parse="true"
-                          :pull-left="true"
-                          :session-btn="true"
-                          :timezone="user.settings.timezone">
-                        </moloch-session-field>
-                        <sup>({{ bucket.doc_count | commaString }})</sup>
+                <template v-for="(value, key) in categoryObjects[category].spi">
+                  <div :key="key"
+                    v-if="value.active"
+                    class="spi-buckets pr-1 pl-1 pb-1">
+                    <!-- spiview field label button -->
+                    <b-dropdown
+                      size="sm"
+                      variant="default"
+                      class="field-dropdown"
+                      :text="value.field.friendlyName">
+                      <b-dropdown-item
+                        @click="toggleSpiData(value.field, true, true)">
+                        Hide {{ value.field.friendlyName }}
+                      </b-dropdown-item>
+                      <b-dropdown-item
+                        @click="exportUnique(value.field.dbField, 0)">
+                        Export Unique {{ value.field.friendlyName }}
+                      </b-dropdown-item>
+                      <b-dropdown-item
+                        @click="exportUnique(value.field.dbField, 1)">
+                        Export Unique {{ value.field.friendlyName }} with counts
+                      </b-dropdown-item>
+                      <b-dropdown-item
+                        @click="openSpiGraph(value.field.dbField)">
+                        Open {{ value.field.friendlyName }} SPI Graph
+                      </b-dropdown-item>
+                      <b-dropdown-item
+                        @click="pivot(value)">
+                        Pivot on {{ value.field.friendlyName }}
+                      </b-dropdown-item>
+                    </b-dropdown> <!-- spiview field label button -->
+                    <!-- spiview field data -->
+                    <span v-if="value && value.value && value.value.buckets">
+                      <span v-for="bucket in value.value.buckets"
+                        :key="bucket.key">
+                        <span v-if="bucket.key || bucket.key === 0"
+                          class="small spi-bucket mr-1 no-wrap">
+                          <moloch-session-field
+                            :field="value.field"
+                            :value="bucket.key"
+                            :expr="value.field.exp"
+                            :parse="true"
+                            :pull-left="true"
+                            :session-btn="true"
+                            :timezone="user.settings.timezone">
+                          </moloch-session-field>
+                          <sup>({{ bucket.doc_count | commaString }})</sup>
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  <!-- /spiview field data -->
-                  <!-- spiview no data -->
-                  <em class="small"
-                    v-if="!value.loading && !value.error && (!value.value || !value.value.buckets.length)">
-                    No data for this field
-                    <span v-if="canceled && !value.value">
-                      (request was canceled)
-                    </span>
-                  </em> <!-- /spiview no data -->
-                  <!-- spiview field more/less values -->
-                  <a v-if="value.count && value.count > 100"
-                     @click="showValues(value, false)"
-                     class="btn btn-link btn-xs"
-                     style="text-decoration:none;">
-                    ...less
-                  </a>
-                  <a v-if="value && value.value && value.value.doc_count_error_upper_bound < value.value.sum_other_doc_count"
-                    @click="showValues(value, true)"
-                    class="btn btn-link btn-xs"
-                    style="text-decoration:none;">
-                    more...
-                  </a> <!-- /spiview field more/less values -->
-                  <!-- spiview field loading -->
-                  <span v-if="value.loading"
-                    class="fa fa-spinner fa-spin">
-                  </span> <!-- /spiview field loading -->
-                  <!-- spiview field error -->
-                  <span v-if="value.error"
-                    class="text-danger ml-2">
-                    <span class="fa fa-exclamation-triangle">
-                    </span>&nbsp;
-                    {{ value.error }}
-                  </span> <!-- /spiview field error -->
-                </div> <!-- /spiview field -->
+                    <!-- /spiview field data -->
+                    <!-- spiview no data -->
+                    <em class="small"
+                      v-if="!value.loading && !value.error && (!value.value || !value.value.buckets.length)">
+                      No data for this field
+                      <span v-if="canceled && !value.value">
+                        (request was canceled)
+                      </span>
+                    </em> <!-- /spiview no data -->
+                    <!-- spiview field more/less values -->
+                    <a v-if="value.count && value.count > 100"
+                       @click="showValues(value, false)"
+                       class="btn btn-link btn-xs"
+                       style="text-decoration:none;">
+                      ...less
+                    </a>
+                    <a v-if="value && value.value && value.value.doc_count_error_upper_bound < value.value.sum_other_doc_count"
+                      @click="showValues(value, true)"
+                      class="btn btn-link btn-xs"
+                      style="text-decoration:none;">
+                      more...
+                    </a> <!-- /spiview field more/less values -->
+                    <!-- spiview field loading -->
+                    <span v-if="value.loading"
+                      class="fa fa-spinner fa-spin">
+                    </span> <!-- /spiview field loading -->
+                    <!-- spiview field error -->
+                    <span v-if="value.error"
+                      class="text-danger ml-2">
+                      <span class="fa fa-exclamation-triangle">
+                      </span>&nbsp;
+                      {{ value.error }}
+                    </span> <!-- /spiview field error -->
+                  </div>
+                </template> <!-- /spiview field -->
               </div>
             </b-card-body>
           </b-collapse>
@@ -658,6 +663,31 @@ export default {
     openSpiGraph: function (fieldID) {
       SessionsService.openSpiGraph(fieldID, this.$route.query);
     },
+    /**
+     * Opens a new sessions page with a list of values as the search expression
+     * @param {object} bucket The bucket of data
+     */
+    pivot: function (bucket) {
+      const fieldExp = bucket.field.exp;
+
+      let values = [];
+      for (let val of bucket.value.buckets) {
+        values.push(val.key);
+      }
+
+      const valueStr = `[${values.join(',')}]`;
+      const expression = this.$options.filters.buildExpression(fieldExp, valueStr, '==');
+
+      const routeData = this.$router.resolve({
+        path: '/sessions',
+        query: {
+          ...this.$route.query,
+          expression: expression
+        }
+      });
+
+      window.open(routeData.href, '_blank');
+    },
     /* Saves a custom spiview fields configuration */
     saveFieldConfiguration: function () {
       if (!this.newFieldConfigName) {
@@ -826,7 +856,10 @@ export default {
 
             field.active = false;
 
-            if (field.noFacet || field.regex || field.type.match(/textfield/)) { continue; }
+            if (field.noFacet || field.regex ||
+              (field.type && field.type.match(/textfield/))) {
+              continue;
+            }
 
             if (this.categoryObjects.hasOwnProperty(field.group)) {
               // already created, just add a new field

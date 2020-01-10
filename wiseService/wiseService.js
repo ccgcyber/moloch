@@ -31,6 +31,7 @@ const ini            = require('iniparser')
     , wiseCache      = require('./wiseCache.js')
     , cluster        = require("cluster")
     , crypto         = require("crypto")
+    , redis          = require("ioredis")
   ;
 
 require('console-stamp')(console, '[HH:MM:ss.l]');
@@ -123,6 +124,16 @@ process.on('SIGINT', function() {
 });
 
 //////////////////////////////////////////////////////////////////////////////////
+//// Util
+//////////////////////////////////////////////////////////////////////////////////
+function noCacheJson(req, res, next) {
+  res.header('Cache-Control', 'no-cache, private, no-store, must-revalidate, max-stale=0, post-check=0, pre-check=0');
+  res.header("Content-Type", 'application/json');
+  res.header('X-Content-Type-Options', 'nosniff');
+  return next();
+}
+
+//////////////////////////////////////////////////////////////////////////////////
 //// Sources
 //////////////////////////////////////////////////////////////////////////////////
 function newFieldsTS()
@@ -212,6 +223,7 @@ internals.sourceApi = {
   getConfigSections: getConfigSections,
   getConfigSection: getConfigSection,
   addField: addField,
+  createRedisClient: createRedisClient,
   addView: function (name, input) {
     if (input.includes("require:")) {
       var match = input.match(/require:([^;]+)/);
@@ -275,11 +287,11 @@ function loadSources() {
 //////////////////////////////////////////////////////////////////////////////////
 //// APIs
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/_ns_/nstest.html", function(req, res) {
+app.get("/_ns_/nstest.html", [noCacheJson], function(req, res) {
   res.end();
 });
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/fields", function(req, res) {
+app.get("/fields", [noCacheJson], function(req, res) {
   if (req.query.ver === undefined || req.query.ver === "0") {
     if (internals.fields.length < 256) {
       res.send(internals.fieldsBuf0);
@@ -292,11 +304,11 @@ app.get("/fields", function(req, res) {
   }
 });
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/views", function(req, res) {
+app.get("/views", [noCacheJson], function(req, res) {
   res.send(internals.views);
 });
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/rightClicks", function(req, res) {
+app.get("/rightClicks", [noCacheJson], function(req, res) {
   res.send(internals.rightClicks);
 });
 //////////////////////////////////////////////////////////////////////////////////
@@ -574,27 +586,32 @@ app.post("/get", function(req, res) {
     buffers.push(chunk);
   }).once('end', (err) => {
     var queries = [];
-    for (var buf = Buffer.concat(buffers); offset < buf.length; ) {
-      var type = buf[offset];
-      offset++;
+    try {
+      for (var buf = Buffer.concat(buffers); offset < buf.length; ) {
+        var type = buf[offset];
+        offset++;
 
-      var typeName;
-      if (type & 0x80) {
-        typeName = buf.toString('utf8', offset, offset + (type & ~0x80));
-        offset += (type & ~0x80);
-      } else {
-        typeName = internals.type2Name[type];
+        var typeName;
+        if (type & 0x80) {
+          typeName = buf.toString('utf8', offset, offset + (type & ~0x80));
+          offset += (type & ~0x80);
+        } else {
+          typeName = internals.type2Name[type];
+        }
+
+        var len  = buf.readUInt16BE(offset);
+        offset += 2;
+
+        var value = buf.toString('utf8', offset, offset+len);
+        if (internals.debug > 1) {
+          console.log(typeName, value);
+        }
+        offset += len;
+        queries.push({typeName: typeName, value: value});
       }
-
-      var len  = buf.readUInt16BE(offset);
-      offset += 2;
-
-      var value = buf.toString('utf8', offset, offset+len);
-      if (internals.debug > 1) {
-        console.log(typeName, value);
-      }
-      offset += len;
-      queries.push({typeName: typeName, value: value});
+    }
+    catch (err) {
+      return res.end("Received malformed packet");
     }
 
     async.map(queries, (query, cb) => {
@@ -614,7 +631,7 @@ app.post("/get", function(req, res) {
   });
 });
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/:source/:typeName/:value", function(req, res) {
+app.get("/:source/:typeName/:value", [noCacheJson], function(req, res) {
   var source = internals.sources[req.params.source];
   if (!source) {
     return res.end("Unknown source " + req.params.source);
@@ -632,7 +649,7 @@ app.get("/:source/:typeName/:value", function(req, res) {
   });
 });
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/dump/:source", function(req, res) {
+app.get("/dump/:source", [noCacheJson], function(req, res) {
   var source = internals.sources[req.params.source];
   if (!source) {
     return res.end("Unknown source " + req.params.source);
@@ -647,7 +664,7 @@ app.get("/dump/:source", function(req, res) {
 //////////////////////////////////////////////////////////////////////////////////
 //ALW - Need to rewrite to use performQuery
 /*
-app.get("/bro/:type", function(req, res) {
+app.get("/bro/:type", [noCacheJson], function(req, res) {
   var hashes = req.query.items.split(",");
   var needsep = false;
 
@@ -705,7 +722,7 @@ app.get("/bro/:type", function(req, res) {
 });
 */
 //////////////////////////////////////////////////////////////////////////////////
-app.get("/:typeName/:value", function(req, res) {
+app.get("/:typeName/:value", [noCacheJson], function(req, res) {
   var query = {typeName: req.params.typeName,
                value: req.params.value};
 
@@ -722,6 +739,32 @@ if (getConfig("wiseService", "regressionTests")) {
     process.exit(0);
     throw new Error("Exiting");
   });
+}
+//////////////////////////////////////////////////////////////////////////////////
+function createRedisClient(redisType, section) {
+
+  if (redisType === 'redis') {
+    return new redis(getConfig(section, 'url'));
+  } else if (redisType === 'redis-sentinel') {
+    let options = {sentinels: [], name: getConfig(section, 'redisName')}
+    getConfig(section, 'redisSentinels', 'localhost').split(';').forEach((key) => {
+      let parts = key.split(':');
+      options.sentinels.push({host: parts[0], port: parts[1] || 26379});
+    });
+    options.sentinelPassword = getConfig(section, 'sentinelPassword');
+    options.password = getConfig(section, 'redisPassword');
+    return new redis(options);
+  } else if (redisType === 'redis-cluster') {
+    let options = [];
+    getConfig(section, 'redisClusters').split(';').forEach((key) => {
+      let parts = key.split(':');
+      options.push({host: parts[0], port: parts[1] || 26379});
+    });
+    return new redis.Cluster(options);
+  } else {
+      console.log(`${section} - ERROR - unknown redisType '${redisType}'`);
+      process.exit();
+  }
 }
 //////////////////////////////////////////////////////////////////////////////////
 function printStats()
@@ -751,7 +794,7 @@ function printStats()
 
   for (var section in internals.sources) {
     let src = internals.sources[section];
-    console.log(sprintf("SRC %-30s    cached: %7d lookup: %7d refresh: %7d dropped: %7d avgMS: %7d",
+    console.log(sprintf("SRC %-30s    cached: %7d lookup: %9d refresh: %7d dropped: %7d avgMS: %7d",
       section, src.cacheHitStat, src.cacheMissStat, src.cacheRefreshStat, src.cacheDroppedStat, src.average100MS));
   }
 }
@@ -777,7 +820,7 @@ b=="?"||b=="_"?".":b=="#"?"\\d":d&&b.charAt(0)=="{"?b+g:b=="<"?"\\b(?=\\w)":b=="
 //// Main
 //////////////////////////////////////////////////////////////////////////////////
 function main() {
-  internals.cache = wiseCache.createCache({getConfig: getConfig});
+  internals.cache = wiseCache.createCache({getConfig: getConfig, createRedisClient: createRedisClient});
 
   addField("field:tags"); // Always add tags field so we have at least 1 field
 
